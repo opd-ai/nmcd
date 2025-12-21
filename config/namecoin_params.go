@@ -11,7 +11,7 @@ import (
 
 // Namecoin network magic bytes
 var (
-	// MainNetMagic is the magic bytes for Namecoin mainnet: 0xfeb4bef9
+	// MainNetMagic is the magic value for Namecoin mainnet (little-endian wire bytes 0xf9, 0xbe, 0xb4, 0xfe): 0xf9beb4fe
 	MainNetMagic = wire.BitcoinNet(0xf9beb4fe)
 	// TestNetMagic is the magic bytes for Namecoin testnet
 	TestNetMagic = wire.BitcoinNet(0x0709110b)
@@ -54,6 +54,120 @@ const (
 // Namecoin genesis block timestamp
 var genesisTimestamp = time.Unix(1303000001, 0)
 
+// genesisCoinbaseTx is the coinbase transaction for the genesis block
+var genesisCoinbaseTx = wire.MsgTx{
+	Version: 1,
+	TxIn: []*wire.TxIn{
+		{
+			PreviousOutPoint: wire.OutPoint{
+				Hash:  chainhash.Hash{},
+				Index: 0xffffffff,
+			},
+			SignatureScript: []byte{
+				0x04, 0xff, 0xff, 0x00, 0x1d, 0x01, 0x04, 0x45, /* |.......E| */
+				0x54, 0x68, 0x65, 0x20, 0x54, 0x69, 0x6d, 0x65, /* |The Time| */
+				0x73, 0x20, 0x30, 0x33, 0x2f, 0x4a, 0x61, 0x6e, /* |s 03/Jan| */
+				0x2f, 0x32, 0x30, 0x30, 0x39, 0x20, 0x43, 0x68, /* |/2009 Ch| */
+				0x61, 0x6e, 0x63, 0x65, 0x6c, 0x6c, 0x6f, 0x72, /* |ancellor| */
+				0x20, 0x6f, 0x6e, 0x20, 0x62, 0x72, 0x69, 0x6e, /* | on brin| */
+				0x6b, 0x20, 0x6f, 0x66, 0x20, 0x73, 0x65, 0x63, /* |k of sec| */
+				0x6f, 0x6e, 0x64, 0x20, 0x62, 0x61, 0x69, 0x6c, /* |ond bail| */
+				0x6f, 0x75, 0x74, 0x20, 0x66, 0x6f, 0x72, 0x20, /* |out for | */
+				0x62, 0x61, 0x6e, 0x6b, 0x73, /* |banks| */
+			},
+			Sequence: 0xffffffff,
+		},
+	},
+	TxOut: []*wire.TxOut{
+		{
+			Value: 0x12a05f200, // 50 NMC
+			PkScript: []byte{
+				0x41, 0x04, 0x67, 0x8a, 0xfd, 0xb0, 0xfe, 0x55, /* |A.g....U| */
+				0x48, 0x27, 0x19, 0x67, 0xf1, 0xa6, 0x71, 0x30, /* |H'.g..q0| */
+				0xb7, 0x10, 0x5c, 0xd6, 0xa8, 0x28, 0xe0, 0x39, /* |..\..(.9| */
+				0x09, 0xa6, 0x79, 0x62, 0xe0, 0xea, 0x1f, 0x61, /* |..yb...a| */
+				0xde, 0xb6, 0x49, 0xf6, 0xbc, 0x3f, 0x4c, 0xef, /* |..I..?L.| */
+				0x38, 0xc4, 0xf3, 0x55, 0x04, 0xe5, 0x1e, 0xc1, /* |8..U....| */
+				0x12, 0xde, 0x5c, 0x38, 0x4d, 0xf7, 0xba, 0x0b, /* |..\8M...| */
+				0x8d, 0x57, 0x8a, 0x4c, 0x70, 0x2b, 0x6b, 0xf1, /* |.W.Lp+k.| */
+				0x1d, 0x5f, 0xac, /* |._.| */
+			},
+		},
+	},
+	LockTime: 0,
+}
+
+// genesisBlock is the mainnet genesis block
+var genesisBlock = wire.MsgBlock{
+	Header: wire.BlockHeader{
+		Version:    1,
+		PrevBlock:  chainhash.Hash{},
+		MerkleRoot: MainNetGenesisMerkleRoot,
+		Timestamp:  genesisTimestamp,
+		Bits:       0x1c007fff,
+		Nonce:      0xa21ea192,
+	},
+	Transactions: []*wire.MsgTx{&genesisCoinbaseTx},
+}
+
+// Testnet genesis block data
+var testNetGenesisTimestamp = time.Unix(1296688602, 0)
+
+var testNetGenesisMerkleRoot = chainhash.Hash([chainhash.HashSize]byte{
+	0x3b, 0xa3, 0xed, 0xfd, 0x7a, 0x7b, 0x12, 0xb2,
+	0x7a, 0xc7, 0x2c, 0x3e, 0x67, 0x76, 0x8f, 0x61,
+	0x7f, 0xc8, 0x1b, 0xc3, 0x88, 0x8a, 0x51, 0x32,
+	0x3a, 0x9f, 0xb8, 0xaa, 0x4b, 0x1e, 0x5e, 0x4a,
+})
+
+var testNetGenesisHash = chainhash.Hash([chainhash.HashSize]byte{
+	0x43, 0x49, 0x7f, 0xd7, 0xf8, 0x26, 0x95, 0x71,
+	0x08, 0xf4, 0xa3, 0x0f, 0xd9, 0xce, 0xc3, 0xae,
+	0xba, 0x79, 0x97, 0x20, 0x84, 0xe9, 0x0e, 0xad,
+	0x01, 0xea, 0x33, 0x09, 0x00, 0x00, 0x00, 0x00,
+})
+
+var testNetGenesisBlock = wire.MsgBlock{
+	Header: wire.BlockHeader{
+		Version:    1,
+		PrevBlock:  chainhash.Hash{},
+		MerkleRoot: testNetGenesisMerkleRoot,
+		Timestamp:  testNetGenesisTimestamp,
+		Bits:       0x1d00ffff,
+		Nonce:      0x18aea41a,
+	},
+	Transactions: []*wire.MsgTx{&genesisCoinbaseTx},
+}
+
+// Regtest genesis block data
+var regTestGenesisTimestamp = time.Unix(1296688602, 0)
+
+var regTestGenesisMerkleRoot = chainhash.Hash([chainhash.HashSize]byte{
+	0x3b, 0xa3, 0xed, 0xfd, 0x7a, 0x7b, 0x12, 0xb2,
+	0x7a, 0xc7, 0x2c, 0x3e, 0x67, 0x76, 0x8f, 0x61,
+	0x7f, 0xc8, 0x1b, 0xc3, 0x88, 0x8a, 0x51, 0x32,
+	0x3a, 0x9f, 0xb8, 0xaa, 0x4b, 0x1e, 0x5e, 0x4a,
+})
+
+var regTestGenesisHash = chainhash.Hash([chainhash.HashSize]byte{
+	0x06, 0x22, 0x6e, 0x46, 0x11, 0x1a, 0x0b, 0x59,
+	0xca, 0xaf, 0x12, 0x60, 0x43, 0xeb, 0x5b, 0xbf,
+	0x28, 0xc3, 0x4f, 0x3a, 0x5e, 0x33, 0x2a, 0x1f,
+	0xc7, 0xb2, 0xb7, 0x3c, 0xf1, 0x88, 0x91, 0x0f,
+})
+
+var regTestGenesisBlock = wire.MsgBlock{
+	Header: wire.BlockHeader{
+		Version:    1,
+		PrevBlock:  chainhash.Hash{},
+		MerkleRoot: regTestGenesisMerkleRoot,
+		Timestamp:  regTestGenesisTimestamp,
+		Bits:       0x207fffff,
+		Nonce:      0,
+	},
+	Transactions: []*wire.MsgTx{&genesisCoinbaseTx},
+}
+
 // NamecoinMainNetParams defines the Namecoin mainnet network parameters.
 // These override btcd's Bitcoin mainnet parameters for Namecoin compatibility.
 var NamecoinMainNetParams = chaincfg.Params{
@@ -66,8 +180,8 @@ var NamecoinMainNetParams = chaincfg.Params{
 
 	// Address encoding magics
 	PubKeyHashAddrID:        0x34, // starts with N
-	ScriptHashAddrID:        0x0d, // starts with 6
-	PrivateKeyID:            0xb4, // starts with 6 or K/L (compressed)
+	ScriptHashAddrID:        0x0d, // starts with 7
+	PrivateKeyID:            0xb4, // starts with 7 (uncompressed) or T (compressed)
 	WitnessPubKeyHashAddrID: 0x00, // starts with nc1q
 	WitnessScriptHashAddrID: 0x00, // starts with nc1q
 
@@ -79,17 +193,8 @@ var NamecoinMainNetParams = chaincfg.Params{
 	HDCoinType: 7, // Namecoin
 
 	// Genesis block
-	GenesisBlock: &wire.MsgBlock{
-		Header: wire.BlockHeader{
-			Version:    1,
-			PrevBlock:  chainhash.Hash{},
-			MerkleRoot: MainNetGenesisMerkleRoot,
-			Timestamp:  genesisTimestamp,
-			Bits:       0x1c007fff, // Namecoin initial difficulty
-			Nonce:      0xa21ea192,
-		},
-	},
-	GenesisHash: &MainNetGenesisHash,
+	GenesisBlock: &genesisBlock,
+	GenesisHash:  &MainNetGenesisHash,
 
 	// Proof of work parameters
 	PowLimit:                 new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 224), big.NewInt(1)),
@@ -134,6 +239,10 @@ var NamecoinTestNetParams = chaincfg.Params{
 	// BIP44 coin type
 	HDCoinType: 1, // Testnet (all coins)
 
+	// Genesis block
+	GenesisBlock: &testNetGenesisBlock,
+	GenesisHash:  &testNetGenesisHash,
+
 	// Proof of work parameters
 	PowLimit:                 new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 224), big.NewInt(1)),
 	PowLimitBits:             0x1d00ffff,
@@ -176,6 +285,10 @@ var NamecoinRegTestParams = chaincfg.Params{
 
 	// BIP44 coin type
 	HDCoinType: 1, // Testnet (all coins)
+
+	// Genesis block
+	GenesisBlock: &regTestGenesisBlock,
+	GenesisHash:  &regTestGenesisHash,
 
 	// Proof of work parameters
 	// Regtest uses a much higher PowLimit (255 bits vs 224 for mainnet/testnet)

@@ -92,6 +92,22 @@ func TestNamecoinGenesisBlock(t *testing.T) {
 		t.Errorf("Expected genesis block version 1, got %d",
 			NamecoinMainNetParams.GenesisBlock.Header.Version)
 	}
+
+	// Verify genesis block contains at least one transaction (coinbase)
+	if len(NamecoinMainNetParams.GenesisBlock.Transactions) == 0 {
+		t.Error("Genesis block should contain at least one transaction (coinbase)")
+	}
+
+	// Verify the coinbase transaction has proper structure
+	if len(NamecoinMainNetParams.GenesisBlock.Transactions) > 0 {
+		coinbase := NamecoinMainNetParams.GenesisBlock.Transactions[0]
+		if len(coinbase.TxIn) == 0 {
+			t.Error("Coinbase transaction should have at least one input")
+		}
+		if len(coinbase.TxOut) == 0 {
+			t.Error("Coinbase transaction should have at least one output")
+		}
+	}
 }
 
 // TestNamecoinTestNetParams verifies testnet parameters
@@ -109,6 +125,17 @@ func TestNamecoinTestNetParams(t *testing.T) {
 	if NamecoinTestNetParams.PubKeyHashAddrID != 0x6f {
 		t.Errorf("Expected testnet PubKeyHashAddrID 0x6f, got 0x%02x",
 			NamecoinTestNetParams.PubKeyHashAddrID)
+	}
+
+	// Verify testnet has genesis block
+	if NamecoinTestNetParams.GenesisBlock == nil {
+		t.Error("Testnet GenesisBlock is nil")
+	}
+	if NamecoinTestNetParams.GenesisHash == nil {
+		t.Error("Testnet GenesisHash is nil")
+	}
+	if NamecoinTestNetParams.GenesisBlock != nil && len(NamecoinTestNetParams.GenesisBlock.Transactions) == 0 {
+		t.Error("Testnet genesis block should contain at least one transaction")
 	}
 }
 
@@ -129,6 +156,17 @@ func TestNamecoinRegTestParams(t *testing.T) {
 	// Regtest should allow generation
 	if !NamecoinRegTestParams.GenerateSupported {
 		t.Error("Regtest should support block generation")
+	}
+
+	// Verify regtest has genesis block
+	if NamecoinRegTestParams.GenesisBlock == nil {
+		t.Error("Regtest GenesisBlock is nil")
+	}
+	if NamecoinRegTestParams.GenesisHash == nil {
+		t.Error("Regtest GenesisHash is nil")
+	}
+	if NamecoinRegTestParams.GenesisBlock != nil && len(NamecoinRegTestParams.GenesisBlock.Transactions) == 0 {
+		t.Error("Regtest genesis block should contain at least one transaction")
 	}
 }
 
