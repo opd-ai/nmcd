@@ -8,8 +8,9 @@ import (
 
 // TestNamecoinMainNetMagic verifies the Namecoin mainnet magic bytes
 func TestNamecoinMainNetMagic(t *testing.T) {
-	// Namecoin mainnet magic bytes: 0xfeb4bef9
-	// In little-endian wire format: 0xf9beb4fe
+	// Namecoin mainnet magic bytes are 0xf9, 0xbe, 0xb4, 0xfe on the wire
+	// When read as a little-endian uint32: 0xfeb4bef9
+	// btcd's wire.BitcoinNet stores this as the little-endian value
 	expectedMagic := wire.BitcoinNet(0xf9beb4fe)
 	if MainNetMagic != expectedMagic {
 		t.Errorf("Expected mainnet magic 0x%x, got 0x%x", expectedMagic, MainNetMagic)

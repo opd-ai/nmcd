@@ -178,6 +178,9 @@ var NamecoinRegTestParams = chaincfg.Params{
 	HDCoinType: 1, // Testnet (all coins)
 
 	// Proof of work parameters
+	// Regtest uses a much higher PowLimit (255 bits vs 224 for mainnet/testnet)
+	// to allow instant block generation without actual mining hardware.
+	// This matches Bitcoin Core's regtest behavior.
 	PowLimit:                 new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 255), big.NewInt(1)),
 	PowLimitBits:             0x207fffff,
 	ReduceMinDifficulty:      true,
@@ -199,15 +202,14 @@ var NamecoinRegTestParams = chaincfg.Params{
 
 func init() {
 	// Register Namecoin networks with btcd's chaincfg
-	// This allows proper address encoding/decoding
-	if err := chaincfg.Register(&NamecoinMainNetParams); err != nil {
-		// Already registered or conflict - that's okay for testing
-		_ = err
-	}
-	if err := chaincfg.Register(&NamecoinTestNetParams); err != nil {
-		_ = err
-	}
-	if err := chaincfg.Register(&NamecoinRegTestParams); err != nil {
-		_ = err
-	}
+	// This allows proper address encoding/decoding.
+	// Note: Registration errors are intentionally ignored because:
+	// 1. The network may already be registered from a previous import
+	// 2. Tests may register networks multiple times
+	// 3. btcd's chaincfg does not provide an "is registered" check
+	// The actual error would only occur if a different network with the same
+	// magic bytes was already registered, which would be a build-time bug.
+	_ = chaincfg.Register(&NamecoinMainNetParams)
+	_ = chaincfg.Register(&NamecoinTestNetParams)
+	_ = chaincfg.Register(&NamecoinRegTestParams)
 }
