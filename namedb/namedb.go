@@ -170,7 +170,7 @@ func (ndb *NameDatabase) AddHistory(txHash chainhash.Hash, record *NameRecord) e
 func encodeNameRecord(record *NameRecord) []byte {
 	// Version 1 encoding: version byte + value + txhash + height + expiresAt + address + timestamp
 	data := make([]byte, 0, 1+len(record.Value)+32+4+4+len(record.Address)+8)
-	
+
 	// Version byte (v1)
 	data = append(data, byte(1))
 
@@ -214,11 +214,11 @@ func decodeNameRecord(data []byte) *NameRecord {
 	}
 
 	offset := 0
-	
+
 	// Check version byte
 	version := data[offset]
 	offset++
-	
+
 	// Handle legacy format (no version byte) - check if first byte looks like a length
 	if version > 1 {
 		// Likely legacy format without version byte, rewind

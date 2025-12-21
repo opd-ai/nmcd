@@ -264,7 +264,7 @@ func (s *Server) nameUpdate(req *Request) *Response {
 	return &Response{
 		Jsonrpc: "2.0",
 		Error: &Error{
-			Code:    -1,
+			Code: -1,
 			Message: "name_update is currently unavailable because wallet functionality is not implemented in this node. " +
 				"Use a wallet-enabled node or refer to the project documentation for how to update names.",
 		},
