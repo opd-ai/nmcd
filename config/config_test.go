@@ -4,8 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/btcsuite/btcd/chaincfg"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -28,10 +26,11 @@ func TestChainParams(t *testing.T) {
 	tests := []struct {
 		network      string
 		expectedName string
+		expectedPort string
 	}{
-		{"mainnet", chaincfg.MainNetParams.Name},
-		{"testnet", chaincfg.TestNet3Params.Name},
-		{"regtest", chaincfg.RegressionNetParams.Name},
+		{"mainnet", "mainnet", MainNetDefaultPort},
+		{"testnet", "testnet", TestNetDefaultPort},
+		{"regtest", "regtest", RegTestDefaultPort},
 	}
 
 	for _, tt := range tests {
@@ -39,7 +38,10 @@ func TestChainParams(t *testing.T) {
 			cfg := &Config{Network: tt.network}
 			params := cfg.ChainParams()
 			if params.Name != tt.expectedName {
-				t.Errorf("Expected %s, got %s", tt.expectedName, params.Name)
+				t.Errorf("Expected name %s, got %s", tt.expectedName, params.Name)
+			}
+			if params.DefaultPort != tt.expectedPort {
+				t.Errorf("Expected port %s, got %s", tt.expectedPort, params.DefaultPort)
 			}
 		})
 	}
