@@ -78,7 +78,7 @@ func TestNameExpiration(t *testing.T) {
 	defer db.Close()
 
 	hash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000002")
-	
+
 	// Add expired name
 	record1 := &NameRecord{
 		Name:      "d/expired",
