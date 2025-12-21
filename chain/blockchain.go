@@ -196,6 +196,13 @@ func (bc *BlockChain) GetName(name string) (*namedb.NameRecord, error) {
 	return bc.nameDB.GetName(name)
 }
 
+// ListNames retrieves all names from the database
+func (bc *BlockChain) ListNames() ([]*namedb.NameRecord, error) {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	return bc.nameDB.ListNames()
+}
+
 // parseNameScript extracts name operation from script
 func parseNameScript(script []byte) (namedb.NameOperation, string, string, error) {
 	// Simple parsing - in real implementation would use proper script parsing

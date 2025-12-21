@@ -122,6 +122,10 @@ func (s *Server) processRequest(req *Request) *Response {
 		return s.getPeerInfo(req)
 	case "name_show":
 		return s.nameShow(req)
+	case "name_update":
+		return s.nameUpdate(req)
+	case "name_list":
+		return s.nameList(req)
 	case "name_history":
 		return s.nameHistory(req)
 	default:
@@ -232,6 +236,53 @@ func (s *Server) nameShow(req *Request) *Response {
 		"height":     record.Height,
 		"expires_in": record.ExpiresAt - s.blockchain.BestSnapshot().Height,
 		"address":    record.Address,
+	}
+
+	return &Response{
+		Jsonrpc: "2.0",
+		Result:  result,
+		ID:      req.ID,
+	}
+}
+
+// nameUpdate updates a name (placeholder - requires wallet integration)
+func (s *Server) nameUpdate(req *Request) *Response {
+	return &Response{
+		Jsonrpc: "2.0",
+		Error: &Error{
+			Code:    -1,
+			Message: "name_update requires wallet functionality (not yet implemented)",
+		},
+		ID: req.ID,
+	}
+}
+
+// nameList returns all names in the database
+func (s *Server) nameList(req *Request) *Response {
+	names, err := s.blockchain.ListNames()
+	if err != nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: fmt.Sprintf("Failed to list names: %v", err),
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Format names for response
+	result := make([]map[string]interface{}, len(names))
+	bestHeight := s.blockchain.BestSnapshot().Height
+	for i, record := range names {
+		result[i] = map[string]interface{}{
+			"name":       record.Name,
+			"value":      record.Value,
+			"txid":       record.TxHash.String(),
+			"height":     record.Height,
+			"expires_in": record.ExpiresAt - bestHeight,
+			"address":    record.Address,
+		}
 	}
 
 	return &Response{

@@ -135,6 +135,25 @@ func (ndb *NameDatabase) GetExpiredNames(height int32) ([]string, error) {
 	return expired, err
 }
 
+// ListNames returns all names in the database
+func (ndb *NameDatabase) ListNames() ([]*NameRecord, error) {
+	ndb.mu.RLock()
+	defer ndb.mu.RUnlock()
+
+	var names []*NameRecord
+	err := ndb.db.View(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket(namesBucket)
+		c := bucket.Cursor()
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			record := decodeNameRecord(v)
+			record.Name = string(k)
+			names = append(names, record)
+		}
+		return nil
+	})
+	return names, err
+}
+
 // AddHistory adds a historical name operation
 func (ndb *NameDatabase) AddHistory(txHash chainhash.Hash, record *NameRecord) error {
 	ndb.mu.Lock()
