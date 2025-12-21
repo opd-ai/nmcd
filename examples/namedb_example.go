@@ -23,7 +23,8 @@ func main() {
 	}
 	defer db.Close()
 
-	fmt.Println("=== Name Database Example ===\n")
+	fmt.Println("=== Name Database Example ===")
+	fmt.Println()
 
 	// Create a name record
 	hash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
