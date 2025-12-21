@@ -101,7 +101,7 @@ func (pm *PeerManager) handleInboundPeer(conn net.Conn) {
 	pm.mu.RLock()
 	peerCount := len(pm.peers)
 	pm.mu.RUnlock()
-	
+
 	if pm.maxPeers > 0 && peerCount >= pm.maxPeers {
 		conn.Close()
 		return
@@ -147,7 +147,7 @@ func (pm *PeerManager) ConnectPeer(addr string) error {
 	pm.mu.RLock()
 	peerCount := len(pm.peers)
 	pm.mu.RUnlock()
-	
+
 	if pm.maxPeers > 0 && peerCount >= pm.maxPeers {
 		return fmt.Errorf("max peers limit (%d) reached", pm.maxPeers)
 	}

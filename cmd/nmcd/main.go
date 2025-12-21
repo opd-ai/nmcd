@@ -82,7 +82,7 @@ func main() {
 	// Wait for shutdown signal or RPC error
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	
+
 	select {
 	case <-sigChan:
 		log.Printf("Shutting down...")
