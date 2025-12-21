@@ -18,6 +18,7 @@ type PeerManager struct {
 	listeners   []net.Listener
 	blockchain  *chain.BlockChain
 	chainParams *chaincfg.Params
+	maxPeers    int
 	mu          sync.RWMutex
 	quit        chan struct{}
 	wg          sync.WaitGroup
@@ -37,6 +38,7 @@ func NewPeerManager(cfg *Config) (*PeerManager, error) {
 		peers:       make(map[string]*peer.Peer),
 		blockchain:  cfg.Blockchain,
 		chainParams: cfg.ChainParams,
+		maxPeers:    cfg.MaxPeers,
 		quit:        make(chan struct{}),
 	}
 
@@ -60,34 +62,50 @@ func NewPeerManager(cfg *Config) (*PeerManager, error) {
 func (pm *PeerManager) listenLoop(listener net.Listener) {
 	defer pm.wg.Done()
 
+	// Use a goroutine to handle Accept() calls that can be interrupted
+	acceptCh := make(chan net.Conn)
+	errCh := make(chan error)
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				errCh <- err
+				return
+			}
+			acceptCh <- conn
+		}
+	}()
+
 	for {
 		select {
 		case <-pm.quit:
 			return
-		default:
-		}
-
-		// Set accept deadline to allow checking quit channel
-		if tcpListener, ok := listener.(*net.TCPListener); ok {
-			tcpListener.SetDeadline(time.Now().Add(time.Second))
-		}
-
-		conn, err := listener.Accept()
-		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				continue
+		case conn := <-acceptCh:
+			pm.wg.Add(1)
+			go pm.handleInboundPeer(conn)
+		case err := <-errCh:
+			// Accept error, likely due to listener closure
+			if netErr, ok := err.(net.Error); ok && !netErr.Temporary() {
+				return
 			}
-			continue
 		}
-
-		pm.wg.Add(1)
-		go pm.handleInboundPeer(conn)
 	}
 }
 
 // handleInboundPeer handles an inbound peer connection
 func (pm *PeerManager) handleInboundPeer(conn net.Conn) {
 	defer pm.wg.Done()
+
+	// Check if max peers reached
+	pm.mu.RLock()
+	peerCount := len(pm.peers)
+	pm.mu.RUnlock()
+	
+	if pm.maxPeers > 0 && peerCount >= pm.maxPeers {
+		conn.Close()
+		return
+	}
 
 	// Create peer configuration
 	peerCfg := &peer.Config{
@@ -125,6 +143,15 @@ func (pm *PeerManager) handleInboundPeer(conn net.Conn) {
 
 // ConnectPeer connects to an outbound peer
 func (pm *PeerManager) ConnectPeer(addr string) error {
+	// Check if max peers reached
+	pm.mu.RLock()
+	peerCount := len(pm.peers)
+	pm.mu.RUnlock()
+	
+	if pm.maxPeers > 0 && peerCount >= pm.maxPeers {
+		return fmt.Errorf("max peers limit (%d) reached", pm.maxPeers)
+	}
+
 	// Dial the peer
 	conn, err := net.DialTimeout("tcp", addr, time.Second*30)
 	if err != nil {

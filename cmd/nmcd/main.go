@@ -76,15 +76,21 @@ func main() {
 	}
 	defer rpcServer.Stop()
 
-	rpcServer.Start()
+	rpcErrCh := rpcServer.Start()
 	log.Printf("RPC server listening on %s", cfg.RPCAddr)
 
-	// Wait for shutdown signal
+	// Wait for shutdown signal or RPC error
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	<-sigChan
-
-	log.Printf("Shutting down...")
+	
+	select {
+	case <-sigChan:
+		log.Printf("Shutting down...")
+	case err := <-rpcErrCh:
+		if err != nil {
+			log.Printf("RPC server error: %v", err)
+		}
+	}
 }
 
 func parseFlags() *config.Config {

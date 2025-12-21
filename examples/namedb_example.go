@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -13,7 +14,7 @@ import (
 // Example demonstrates basic name database operations
 func main() {
 	// Create temporary database
-	dbPath := "/tmp/example-names.db"
+	dbPath := filepath.Join(os.TempDir(), "example-names.db")
 	defer os.Remove(dbPath)
 
 	// Open name database

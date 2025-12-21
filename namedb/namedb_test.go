@@ -2,6 +2,7 @@ package namedb
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -10,7 +11,7 @@ import (
 
 func TestNameDatabase(t *testing.T) {
 	// Create temporary database
-	dbPath := "/tmp/test-namedb.db"
+	dbPath := filepath.Join(os.TempDir(), "test-namedb.db")
 	defer os.Remove(dbPath)
 
 	db, err := NewNameDatabase(dbPath)
@@ -68,7 +69,7 @@ func TestNameDatabase(t *testing.T) {
 }
 
 func TestNameExpiration(t *testing.T) {
-	dbPath := "/tmp/test-expiration.db"
+	dbPath := filepath.Join(os.TempDir(), "test-expiration.db")
 	defer os.Remove(dbPath)
 
 	db, err := NewNameDatabase(dbPath)

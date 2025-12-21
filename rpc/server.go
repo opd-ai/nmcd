@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -75,9 +76,19 @@ func NewServer(cfg *Config) (*Server, error) {
 	return s, nil
 }
 
-// Start starts the RPC server
-func (s *Server) Start() {
-	go s.server.Serve(s.listener)
+// Start starts the RPC server and returns an error channel
+func (s *Server) Start() <-chan error {
+	errCh := make(chan error, 1)
+
+	go func() {
+		err := s.server.Serve(s.listener)
+		if err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+		close(errCh)
+	}()
+
+	return errCh
 }
 
 // Stop stops the RPC server
@@ -101,7 +112,10 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	resp := s.processRequest(&req)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		// Log encoding error but can't send another response at this point
+		fmt.Fprintf(os.Stderr, "failed to encode JSON-RPC response: %v\n", err)
+	}
 }
 
 // processRequest processes a JSON-RPC request
@@ -251,7 +265,8 @@ func (s *Server) nameUpdate(req *Request) *Response {
 		Jsonrpc: "2.0",
 		Error: &Error{
 			Code:    -1,
-			Message: "name_update requires wallet functionality (not yet implemented)",
+			Message: "name_update is currently unavailable because wallet functionality is not implemented in this node. " +
+				"Use a wallet-enabled node or refer to the project documentation for how to update names.",
 		},
 		ID: req.ID,
 	}
@@ -294,21 +309,17 @@ func (s *Server) nameList(req *Request) *Response {
 
 // nameHistory returns the history of a name
 func (s *Server) nameHistory(req *Request) *Response {
-	var params []string
-	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32602,
-				Message: "Invalid params",
-			},
-			ID: req.ID,
-		}
+	// Method stub: name_history is not yet implemented.
+	// Returning an explicit error avoids misleading clients into thinking
+	// they are receiving full historical data.
+	return &Response{
+		Jsonrpc: "2.0",
+		Error: &Error{
+			Code:    -32601,
+			Message: "name_history method is not yet implemented",
+		},
+		ID: req.ID,
 	}
-
-	// For now, just return current record
-	// Full implementation would return all historical updates
-	return s.nameShow(req)
 }
 
 // writeError writes an error response
@@ -323,5 +334,7 @@ func (s *Server) writeError(w http.ResponseWriter, req *Request, code int, messa
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to encode JSON-RPC error response: %v\n", err)
+	}
 }

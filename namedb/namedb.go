@@ -95,7 +95,7 @@ func (ndb *NameDatabase) GetName(name string) (*NameRecord, error) {
 		bucket := tx.Bucket(namesBucket)
 		data := bucket.Get([]byte(name))
 		if data == nil {
-			return fmt.Errorf("name not found: %s", name)
+			return fmt.Errorf("name not found")
 		}
 		record = decodeNameRecord(data)
 		record.Name = name
@@ -168,8 +168,11 @@ func (ndb *NameDatabase) AddHistory(txHash chainhash.Hash, record *NameRecord) e
 
 // encodeNameRecord serializes a name record
 func encodeNameRecord(record *NameRecord) []byte {
-	// Simple encoding: value + txhash + height + expiresAt + address + timestamp
-	data := make([]byte, 0, len(record.Value)+32+4+4+len(record.Address)+8)
+	// Version 1 encoding: version byte + value + txhash + height + expiresAt + address + timestamp
+	data := make([]byte, 0, 1+len(record.Value)+32+4+4+len(record.Address)+8)
+	
+	// Version byte (v1)
+	data = append(data, byte(1))
 
 	// Value length + value
 	valLen := make([]byte, 4)
@@ -206,51 +209,66 @@ func encodeNameRecord(record *NameRecord) []byte {
 
 // decodeNameRecord deserializes a name record
 func decodeNameRecord(data []byte) *NameRecord {
-	if len(data) < 4 {
+	if len(data) < 1 {
 		return &NameRecord{}
 	}
 
-	record := &NameRecord{}
 	offset := 0
+	
+	// Check version byte
+	version := data[offset]
+	offset++
+	
+	// Handle legacy format (no version byte) - check if first byte looks like a length
+	if version > 1 {
+		// Likely legacy format without version byte, rewind
+		offset = 0
+		version = 0
+	}
+
+	record := &NameRecord{}
 
 	// Value
+	if offset+4 > len(data) {
+		return &NameRecord{}
+	}
 	valLen := binary.LittleEndian.Uint32(data[offset : offset+4])
 	offset += 4
 	if offset+int(valLen) > len(data) {
-		return record
+		return &NameRecord{}
 	}
 	record.Value = string(data[offset : offset+int(valLen)])
 	offset += int(valLen)
 
 	// TxHash
 	if offset+32 > len(data) {
-		return record
+		return &NameRecord{}
 	}
 	copy(record.TxHash[:], data[offset:offset+32])
 	offset += 32
 
 	// Height
 	if offset+4 > len(data) {
-		return record
+		return &NameRecord{}
 	}
 	record.Height = int32(binary.LittleEndian.Uint32(data[offset : offset+4]))
 	offset += 4
 
 	// ExpiresAt
 	if offset+4 > len(data) {
-		return record
+		return &NameRecord{}
 	}
 	record.ExpiresAt = int32(binary.LittleEndian.Uint32(data[offset : offset+4]))
 	offset += 4
 
 	// Address
 	if offset+4 > len(data) {
-		return record
+		return &NameRecord{}
 	}
 	addrLen := binary.LittleEndian.Uint32(data[offset : offset+4])
 	offset += 4
 	if offset+int(addrLen) > len(data) {
-		return record
+		return &NameRecord{}
 	}
 	record.Address = string(data[offset : offset+int(addrLen)])
 	offset += int(addrLen)
