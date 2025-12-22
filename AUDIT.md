@@ -71,17 +71,18 @@ func (s *Server) nameHistory(req *Request) *Response {
 **Severity:** Medium  
 **Status:** ✅ RESOLVED
 
-**Resolution:** Implemented proper Namecoin script parsing with Bitcoin-style length-prefixed push data. The `parseNameScript` function now correctly uses the real Namecoin opcodes (OP_NAME_NEW=0x51, OP_NAME_FIRSTUPDATE=0x52, OP_NAME_UPDATE=0x53) and properly extracts name and value data from scripts using the `readPushData` helper function. The implementation supports all Bitcoin push data formats (direct push for 1-75 bytes, OP_PUSHDATA1 for 76-255 bytes, and OP_PUSHDATA2 for 256+ bytes). Comprehensive unit tests were added covering all name operations, push data formats, error cases, and edge cases.
+**Resolution:** Implemented proper Namecoin script parsing with Bitcoin-style length-prefixed push data. The `parseNameScript` function now correctly uses the real Namecoin opcodes (OP_NAME_NEW=0xd0, OP_NAME_FIRSTUPDATE=0xd1, OP_NAME_UPDATE=0xd2) and properly extracts name and value data from scripts using the `readPushData` helper function. The implementation supports all Bitcoin push data formats (direct push for 1-75 bytes, OP_PUSHDATA1 for 76-255 bytes, OP_PUSHDATA2 for 256-65535 bytes, and OP_PUSHDATA4 for larger data). Comprehensive unit tests were added covering all name operations, push data formats, error cases, and edge cases.
 
 **Fixed Code:**
 ```go
 // Namecoin-specific opcodes for name operations.
 const (
-	opNameNew         = 0x51  // NAME_NEW
-	opNameFirstUpdate = 0x52  // NAME_FIRSTUPDATE
-	opNameUpdate      = 0x53  // NAME_UPDATE
+	opNameNew         = 0xd0  // NAME_NEW
+	opNameFirstUpdate = 0xd1  // NAME_FIRSTUPDATE
+	opNameUpdate      = 0xd2  // NAME_UPDATE
 	opPushData1       = 0x4c  // Push 76-255 bytes
 	opPushData2       = 0x4d  // Push 256-65535 bytes
+	opPushData4       = 0x4e  // Push up to 4GB (rarely used)
 )
 
 // parseNameScript extracts name operation from script.
@@ -91,7 +92,7 @@ func parseNameScript(script []byte) (namedb.NameOperation, string, string, error
 
 // readPushData reads a Bitcoin-style push data from the script.
 func readPushData(script []byte, offset int) ([]byte, int, error) {
-	// Handles direct push, OP_PUSHDATA1, and OP_PUSHDATA2
+	// Handles direct push, OP_PUSHDATA1, OP_PUSHDATA2, and OP_PUSHDATA4
 }
 ```
 

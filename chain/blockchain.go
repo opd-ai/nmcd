@@ -209,24 +209,28 @@ func (bc *BlockChain) GetNameHistory(name string) ([]*namedb.NameRecord, error) 
 
 // Namecoin-specific opcodes for name operations.
 // These opcodes extend Bitcoin's script language for name management.
+// See: https://github.com/namecoin/namecoin-core for reference.
 const (
 	// opNameNew is the opcode for NAME_NEW (pre-registration with hash commitment)
 	// Script format: OP_NAME_NEW <hash> OP_2DROP <standard script>
-	opNameNew = 0x51
+	opNameNew = 0xd0
 
 	// opNameFirstUpdate is the opcode for NAME_FIRSTUPDATE (first registration)
 	// Script format: OP_NAME_FIRSTUPDATE <name> <rand> <value> OP_2DROP OP_2DROP <standard script>
-	opNameFirstUpdate = 0x52
+	opNameFirstUpdate = 0xd1
 
 	// opNameUpdate is the opcode for NAME_UPDATE (update existing name)
 	// Script format: OP_NAME_UPDATE <name> <value> OP_2DROP OP_DROP <standard script>
-	opNameUpdate = 0x53
+	opNameUpdate = 0xd2
 
 	// opPushData1 is the opcode for pushing 76-255 bytes
 	opPushData1 = 0x4c
 
 	// opPushData2 is the opcode for pushing 256-65535 bytes
 	opPushData2 = 0x4d
+
+	// opPushData4 is the opcode for pushing up to 4GB of data (rarely used)
+	opPushData4 = 0x4e
 )
 
 // parseNameScript extracts name operation from script.
@@ -301,6 +305,7 @@ func parseNameScript(script []byte) (namedb.NameOperation, string, string, error
 //   - 0x01-0x4b: next N bytes are data (N is the opcode value)
 //   - 0x4c (OP_PUSHDATA1): next byte is length, then data
 //   - 0x4d (OP_PUSHDATA2): next 2 bytes are length (little-endian), then data
+//   - 0x4e (OP_PUSHDATA4): next 4 bytes are length (little-endian), then data
 func readPushData(script []byte, offset int) ([]byte, int, error) {
 	if offset >= len(script) {
 		return nil, offset, fmt.Errorf("offset beyond script length")
@@ -336,6 +341,17 @@ func readPushData(script []byte, offset int) ([]byte, int, error) {
 		}
 		dataLen = int(script[offset]) | (int(script[offset+1]) << 8)
 		offset += 2
+
+	case opcode == opPushData4:
+		// OP_PUSHDATA4: next 4 bytes are length (little-endian)
+		if offset+3 >= len(script) {
+			return nil, offset, fmt.Errorf("missing length bytes for OP_PUSHDATA4")
+		}
+		dataLen = int(script[offset]) |
+			(int(script[offset+1]) << 8) |
+			(int(script[offset+2]) << 16) |
+			(int(script[offset+3]) << 24)
+		offset += 4
 
 	default:
 		return nil, offset, fmt.Errorf("unexpected opcode 0x%02x at offset %d", opcode, startOffset)

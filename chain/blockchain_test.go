@@ -281,8 +281,12 @@ func TestParseNameScript_PushDataFormats(t *testing.T) {
 
 	t.Run("OP_PUSHDATA1 (76-255 bytes)", func(t *testing.T) {
 		name := "d/example"
-		// Create a value that's exactly 100 bytes
-		value := string(make([]byte, 100))
+		// Create a value that's exactly 100 bytes with identifiable content
+		valueBytes := make([]byte, 100)
+		for i := range valueBytes {
+			valueBytes[i] = byte(i)
+		}
+		value := string(valueBytes)
 		script := buildScript(
 			[]byte{opNameUpdate},
 			pushData([]byte(name)),
@@ -300,14 +304,18 @@ func TestParseNameScript_PushDataFormats(t *testing.T) {
 			t.Errorf("expected name %q, got %q", name, parsedName)
 		}
 		if parsedValue != value {
-			t.Errorf("expected value length %d, got %d", len(value), len(parsedValue))
+			t.Errorf("expected value to match, got length %d vs %d", len(parsedValue), len(value))
 		}
 	})
 
 	t.Run("OP_PUSHDATA2 (256+ bytes)", func(t *testing.T) {
 		name := "d/example"
-		// Create a value that's 300 bytes (needs OP_PUSHDATA2)
-		value := string(make([]byte, 300))
+		// Create a value that's 300 bytes with identifiable content
+		valueBytes := make([]byte, 300)
+		for i := range valueBytes {
+			valueBytes[i] = byte(i)
+		}
+		value := string(valueBytes)
 		script := buildScript(
 			[]byte{opNameUpdate},
 			pushData([]byte(name)),
@@ -324,8 +332,8 @@ func TestParseNameScript_PushDataFormats(t *testing.T) {
 		if parsedName != name {
 			t.Errorf("expected name %q, got %q", name, parsedName)
 		}
-		if len(parsedValue) != 300 {
-			t.Errorf("expected value length 300, got %d", len(parsedValue))
+		if parsedValue != value {
+			t.Errorf("expected value to match, got length %d vs %d", len(parsedValue), len(value))
 		}
 	})
 }
@@ -377,6 +385,13 @@ func TestReadPushData(t *testing.T) {
 		if len(result) != len(data) {
 			t.Errorf("expected length %d, got %d", len(data), len(result))
 		}
+		// Verify actual content matches
+		for i := range data {
+			if result[i] != data[i] {
+				t.Errorf("data mismatch at index %d: expected 0x%02x, got 0x%02x", i, data[i], result[i])
+				break
+			}
+		}
 		if offset != len(script) {
 			t.Errorf("expected offset %d, got %d", len(script), offset)
 		}
@@ -395,6 +410,13 @@ func TestReadPushData(t *testing.T) {
 		}
 		if len(result) != len(data) {
 			t.Errorf("expected length %d, got %d", len(data), len(result))
+		}
+		// Verify actual content matches
+		for i := range data {
+			if result[i] != data[i] {
+				t.Errorf("data mismatch at index %d: expected 0x%02x, got 0x%02x", i, data[i], result[i])
+				break
+			}
 		}
 		if offset != len(script) {
 			t.Errorf("expected offset %d, got %d", len(script), offset)
