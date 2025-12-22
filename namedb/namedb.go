@@ -176,8 +176,9 @@ func (ndb *NameDatabase) AddHistory(txHash chainhash.Hash, record *NameRecord) e
 		nameKey := []byte(record.Name)
 		existing := indexBucket.Get(nameKey)
 
-		// Append the new txHash to the existing list
-		newIndex := append(existing, txHash[:]...)
+		// Append the new txHash to the existing list.
+		// Copy existing to a new slice first to avoid mutating bbolt's mmap-backed memory.
+		newIndex := append(append([]byte(nil), existing...), txHash[:]...)
 		return indexBucket.Put(nameKey, newIndex)
 	})
 }

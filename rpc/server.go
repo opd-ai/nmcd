@@ -316,7 +316,7 @@ func (s *Server) nameHistory(req *Request) *Response {
 			Jsonrpc: "2.0",
 			Error: &Error{
 				Code:    -32602,
-				Message: "Invalid params: expected [\"name\"]",
+				Message: "Invalid params: expected ['name']",
 			},
 			ID: req.ID,
 		}
@@ -335,7 +335,9 @@ func (s *Server) nameHistory(req *Request) *Response {
 		}
 	}
 
-	// Format history for response
+	// Format history for response.
+	// Historical records use 'expires_at' (absolute block height) instead of 'expires_in'
+	// because these are past snapshots where calculating blocks remaining would be misleading.
 	result := make([]map[string]interface{}, len(history))
 	for i, record := range history {
 		result[i] = map[string]interface{}{
