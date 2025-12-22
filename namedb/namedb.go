@@ -362,6 +362,7 @@ func decodeNameRecord(data []byte) (*NameRecord, error) {
 	if version > 1 {
 		// Likely legacy format without version byte, rewind
 		offset = 0
+		_ = version // Mark version as intentionally unused after rewind
 	}
 
 	record := &NameRecord{}
