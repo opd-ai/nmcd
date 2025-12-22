@@ -13,6 +13,7 @@ import (
 	"github.com/opd-ai/nmcd/config"
 	"github.com/opd-ai/nmcd/network"
 	"github.com/opd-ai/nmcd/rpc"
+	"github.com/opd-ai/nmcd/wallet"
 )
 
 func main() {
@@ -64,10 +65,20 @@ func main() {
 		}
 	}
 
+	// Create wallet
+	w, err := wallet.NewWallet(cfg.DataDir, cfg.ChainParams())
+	if err != nil {
+		log.Printf("Warning: Failed to initialize wallet: %v", err)
+		log.Printf("Wallet functionality will be disabled")
+	} else {
+		log.Printf("Wallet initialized")
+	}
+
 	// Create RPC server
 	rpcCfg := &rpc.Config{
 		Blockchain: bc,
 		PeerMgr:    peerMgr,
+		Wallet:     w,
 		ListenAddr: cfg.RPCAddr,
 	}
 

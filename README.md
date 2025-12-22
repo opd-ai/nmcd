@@ -102,9 +102,27 @@ go build -v ./cmd/nmcd
     -d '{"jsonrpc":"2.0","method":"name_history","params":["d/example"],"id":1}'
   ```
 
-- `name_update` - Update an existing name's value (requires wallet - not yet implemented)
+- `name_update` - Update an existing name's value
+  ```bash
+  curl -X POST http://127.0.0.1:8336 \
+    -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"name_update","params":["d/example","new_value"],"id":1}'
+  ```
   
-  > **Note:** The `name_update` RPC method is currently unavailable because wallet functionality is not implemented in this node. This feature is planned for a future release. In the meantime, use a wallet-enabled node to perform name updates.
+  Parameters: `["name", "value"]` or `["name", "value", "address"]`
+  
+  The wallet must have the private key for the address that owns the name. If no address is specified, the name stays at its current address.
+
+### Wallet Methods
+
+- `getnewaddress` - Generate a new address in the wallet (planned)
+- `listaddresses` - List all addresses in the wallet (planned)
+
+## Wallet
+
+nmcd includes basic wallet functionality for managing name operations. The wallet stores private keys in `wallet.json` within the data directory.
+
+**Security Note:** The wallet file contains unencrypted private keys. Ensure proper file permissions (0600) and secure the data directory.
 
 ## Dependencies
 
