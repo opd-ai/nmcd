@@ -94,6 +94,10 @@ func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.Behavi
 func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 	height := block.Height()
 
+	// Track NAME_NEW commitment hashes seen in this block to detect duplicates.
+	// Using string conversion of byte slice as map key is idiomatic in Go.
+	seenNameNewCommits := make(map[string]bool)
+
 	for _, tx := range block.Transactions() {
 		msgTx := tx.MsgTx()
 
@@ -106,8 +110,17 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 
 			switch op {
 			case namedb.NameNew:
-				// NAME_NEW is always valid (pre-registration)
-				continue
+				// Check for duplicate commitment hash in this block
+				commitHashStr := string(extra)
+				if seenNameNewCommits[commitHashStr] {
+					return fmt.Errorf("duplicate name_new commitment in block")
+				}
+				seenNameNewCommits[commitHashStr] = true
+
+				// Check if commitment already exists in database
+				if _, err := bc.nameDB.GetNameNew(extra); err == nil {
+					return fmt.Errorf("name_new commitment already exists")
+				}
 
 			case namedb.NameFirstUpdate:
 				// Verify name doesn't exist
@@ -284,7 +297,10 @@ const (
 // The commitment is RIPEMD160(SHA256(rand || name)) as per Namecoin protocol.
 // This hash is stored in NAME_NEW and verified during NAME_FIRSTUPDATE.
 func computeCommitHash(rand []byte, name string) []byte {
-	data := append(rand, []byte(name)...)
+	nameBytes := []byte(name)
+	data := make([]byte, len(rand)+len(nameBytes))
+	copy(data, rand)
+	copy(data[len(rand):], nameBytes)
 	return btcutil.Hash160(data)
 }
 

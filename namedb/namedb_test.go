@@ -323,6 +323,21 @@ func TestNameNew(t *testing.T) {
 	if record.Height != height {
 		t.Errorf("Expected height %d, got %d", height, record.Height)
 	}
+
+	// Test that duplicate commitment is rejected
+	err = db.PutNameNew(commitHash, height+10)
+	if err == nil {
+		t.Error("Expected error for duplicate name_new commitment, got nil")
+	}
+
+	// Verify original height is preserved
+	record, err = db.GetNameNew(commitHash)
+	if err != nil {
+		t.Fatalf("Failed to get name_new after duplicate attempt: %v", err)
+	}
+	if record.Height != height {
+		t.Errorf("Original height should be preserved: expected %d, got %d", height, record.Height)
+	}
 }
 
 func TestNameNewNotFound(t *testing.T) {

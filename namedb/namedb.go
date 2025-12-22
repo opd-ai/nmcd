@@ -232,12 +232,17 @@ type NameNewRecord struct {
 // PutNameNew stores a NAME_NEW commitment with its block height.
 // The commitment hash is used as the key, and the height is stored as the value.
 // This allows validation that MinBlocksBeforeFirstUpdate has passed.
+// Returns an error if the commitment already exists to prevent commitment replacement attacks.
 func (ndb *NameDatabase) PutNameNew(commitHash []byte, height int32) error {
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
 
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket(nameNewBucket)
+		// Check if commitment already exists to prevent replacement attacks
+		if bucket.Get(commitHash) != nil {
+			return fmt.Errorf("name_new commitment already exists")
+		}
 		// Store height as 4-byte little-endian
 		data := make([]byte, 4)
 		binary.LittleEndian.PutUint32(data, uint32(height))
