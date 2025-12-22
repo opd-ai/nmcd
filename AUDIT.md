@@ -40,42 +40,27 @@ The nmcd codebase is **well-implemented** with robust error handling, comprehens
 
 ## DETAILED FINDINGS
 
-### FUNCTIONAL MISMATCH: RPC name_update Returns Unavailable Error
+### FUNCTIONAL MISMATCH: RPC name_update Returns Unavailable Error [RESOLVED]
 
-**File:** rpc/server.go:263-273  
+**File:** rpc/server.go:267-420 (implementation), wallet/wallet.go  
 **Severity:** Low  
-**Description:** The `name_update` RPC method is documented in README.md as an available RPC method but returns an "unavailable" error because wallet functionality is not implemented. The implementation correctly explains this limitation, but the README does not mention this constraint.
+**Status:** RESOLVED - Wallet functionality implemented  
+**Description:** The `name_update` RPC method now works with the integrated wallet package. The wallet package provides key generation, storage, and NAME_UPDATE transaction script creation.
 
-**Expected Behavior:** Per README.md section "Name Methods", users might expect `name_update` to work like `name_show` and `name_history`.
+**Expected Behavior:** Per README.md section "Name Methods", users can call `name_update` to update their registered names.
 
-**Actual Behavior:** The method returns a descriptive error explaining that wallet functionality is required and not implemented.
+**Actual Behavior:** The method validates the name exists, checks ownership via the wallet, and prepares a NAME_UPDATE transaction script. The wallet must have the private key for the address that owns the name.
 
-**Impact:** Low impact - the error message is clear and informative. Users are guided appropriately.
+**Impact:** Resolved - users can now use `name_update` with proper wallet setup.
 
-**Reproduction:** Call the `name_update` RPC method:
+**Usage:** Call the `name_update` RPC method:
 ```bash
 curl -X POST http://127.0.0.1:8336 \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","method":"name_update","params":["d/example","newvalue"],"id":1}'
 ```
 
-**Code Reference:**
-```go
-// nameUpdate updates a name (placeholder - requires wallet integration)
-func (s *Server) nameUpdate(req *Request) *Response {
-	return &Response{
-		Jsonrpc: "2.0",
-		Error: &Error{
-			Code: -1,
-			Message: "name_update is currently unavailable because wallet functionality is not implemented in this node. " +
-				"Use a wallet-enabled node or refer to the project documentation for how to update names.",
-		},
-		ID: req.ID,
-	}
-}
-```
-
-**Recommendation:** Implement wallet functionality to enable the `name_update` RPC method. In the interim, update README.md to note that `name_update` requires wallet functionality which is planned for a future release.
+**Recommendation:** ~~Update README.md to note that `name_update` requires wallet functionality which is planned for a future release.~~ **COMPLETED** - Wallet package implemented and integrated. README.md updated with documentation.
 
 ---
 
@@ -215,7 +200,7 @@ The nmcd codebase is a well-structured, focused implementation that correctly le
 
 **Key Recommendations:**
 1. ~~Add `name_list` RPC method documentation to README.md~~ **COMPLETED**
-2. Implement wallet functionality to enable `name_update` RPC; update README.md to note current status
+2. ~~Implement wallet functionality to enable `name_update` RPC~~ **COMPLETED** - Wallet package implemented with key management and NAME_UPDATE script creation
 3. Implement block reorg handling to maintain name database consistency
 
 The overall code quality is high, and the identified issues are minor documentation mismatches rather than functional bugs in the core logic.
