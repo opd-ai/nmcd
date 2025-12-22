@@ -99,7 +99,11 @@ func (ndb *NameDatabase) GetName(name string) (*NameRecord, error) {
 		if data == nil {
 			return fmt.Errorf("name not found")
 		}
-		record = decodeNameRecord(data)
+		var decodeErr error
+		record, decodeErr = decodeNameRecord(data)
+		if decodeErr != nil {
+			return fmt.Errorf("failed to decode name %s: %w", name, decodeErr)
+		}
 		record.Name = name
 		return nil
 	})
@@ -127,7 +131,10 @@ func (ndb *NameDatabase) GetExpiredNames(height int32) ([]string, error) {
 		bucket := tx.Bucket(namesBucket)
 		c := bucket.Cursor()
 		for k, v := c.First(); k != nil; k, v = c.Next() {
-			record := decodeNameRecord(v)
+			record, decodeErr := decodeNameRecord(v)
+			if decodeErr != nil {
+				return fmt.Errorf("failed to decode name %s: %w", string(k), decodeErr)
+			}
 			if record.ExpiresAt <= height {
 				expired = append(expired, string(k))
 			}
@@ -147,7 +154,10 @@ func (ndb *NameDatabase) ListNames() ([]*NameRecord, error) {
 		bucket := tx.Bucket(namesBucket)
 		c := bucket.Cursor()
 		for k, v := c.First(); k != nil; k, v = c.Next() {
-			record := decodeNameRecord(v)
+			record, decodeErr := decodeNameRecord(v)
+			if decodeErr != nil {
+				return fmt.Errorf("failed to decode name %s: %w", string(k), decodeErr)
+			}
 			record.Name = string(k)
 			names = append(names, record)
 		}
@@ -212,7 +222,10 @@ func (ndb *NameDatabase) GetHistory(name string) ([]*NameRecord, error) {
 			if data == nil {
 				continue // Skip missing records
 			}
-			record := decodeNameRecord(data)
+			record, decodeErr := decodeNameRecord(data)
+			if decodeErr != nil {
+				return fmt.Errorf("failed to decode history for name %s: %w", name, decodeErr)
+			}
 			record.Name = name
 			records = append(records, record)
 		}
@@ -332,10 +345,11 @@ func encodeNameRecord(record *NameRecord) []byte {
 	return data
 }
 
-// decodeNameRecord deserializes a name record
-func decodeNameRecord(data []byte) *NameRecord {
+// decodeNameRecord deserializes a name record.
+// Returns an error if the data is corrupt or truncated.
+func decodeNameRecord(data []byte) (*NameRecord, error) {
 	if len(data) < 1 {
-		return &NameRecord{}
+		return nil, fmt.Errorf("corrupt record: empty data")
 	}
 
 	offset := 0
@@ -344,56 +358,56 @@ func decodeNameRecord(data []byte) *NameRecord {
 	version := data[offset]
 	offset++
 
-	// Handle legacy format (no version byte) - check if first byte looks like a length
+	// Handle legacy format (no version byte) - values > 1 indicate legacy format
+	// where the first byte is actually part of the value length, not a version byte
 	if version > 1 {
 		// Likely legacy format without version byte, rewind
 		offset = 0
-		version = 0
 	}
 
 	record := &NameRecord{}
 
 	// Value
 	if offset+4 > len(data) {
-		return &NameRecord{}
+		return nil, fmt.Errorf("corrupt record: truncated at value length")
 	}
 	valLen := binary.LittleEndian.Uint32(data[offset : offset+4])
 	offset += 4
 	if offset+int(valLen) > len(data) {
-		return &NameRecord{}
+		return nil, fmt.Errorf("corrupt record: truncated at value data")
 	}
 	record.Value = string(data[offset : offset+int(valLen)])
 	offset += int(valLen)
 
 	// TxHash
 	if offset+32 > len(data) {
-		return &NameRecord{}
+		return nil, fmt.Errorf("corrupt record: truncated at txhash")
 	}
 	copy(record.TxHash[:], data[offset:offset+32])
 	offset += 32
 
 	// Height
 	if offset+4 > len(data) {
-		return &NameRecord{}
+		return nil, fmt.Errorf("corrupt record: truncated at height")
 	}
 	record.Height = int32(binary.LittleEndian.Uint32(data[offset : offset+4]))
 	offset += 4
 
 	// ExpiresAt
 	if offset+4 > len(data) {
-		return &NameRecord{}
+		return nil, fmt.Errorf("corrupt record: truncated at expires_at")
 	}
 	record.ExpiresAt = int32(binary.LittleEndian.Uint32(data[offset : offset+4]))
 	offset += 4
 
 	// Address
 	if offset+4 > len(data) {
-		return &NameRecord{}
+		return nil, fmt.Errorf("corrupt record: truncated at address length")
 	}
 	addrLen := binary.LittleEndian.Uint32(data[offset : offset+4])
 	offset += 4
 	if offset+int(addrLen) > len(data) {
-		return &NameRecord{}
+		return nil, fmt.Errorf("corrupt record: truncated at address data")
 	}
 	record.Address = string(data[offset : offset+int(addrLen)])
 	offset += int(addrLen)
@@ -404,5 +418,5 @@ func decodeNameRecord(data []byte) *NameRecord {
 		record.UpdatedAt = time.Unix(int64(ts), 0)
 	}
 
-	return record
+	return record, nil
 }

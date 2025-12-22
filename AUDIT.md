@@ -26,7 +26,7 @@ This audit analyzes the nmcd codebase for discrepancies between documented funct
 | CRITICAL BUG | 0 | - |
 | FUNCTIONAL MISMATCH | ~~2~~ 0 (2 resolved) | Medium |
 | MISSING FEATURE | ~~3~~ 0 (3 resolved) | Medium-Low |
-| EDGE CASE BUG | 2 | Low |
+| EDGE CASE BUG | ~~2~~ 1 (1 resolved) | Low |
 | PERFORMANCE ISSUE | 0 | - |
 
 ---
@@ -282,31 +282,28 @@ func (ndb *NameDatabase) GetExpiredNames(height int32) ([]string, error) {
 
 ---
 
-### EDGE CASE BUG: decodeNameRecord Returns Empty Record Instead of Error on Corrupt Data
+### ~~EDGE CASE BUG: decodeNameRecord Returns Empty Record Instead of Error on Corrupt Data~~ ✅ RESOLVED
 
-**File:** namedb/namedb.go:210-283  
+**File:** namedb/namedb.go:348-421  
 **Severity:** Low  
-**Description:** The `decodeNameRecord` function returns an empty `NameRecord{}` when it encounters corrupt or truncated data, rather than returning an error. This can lead to silent data corruption where callers receive seemingly valid but empty records.
+**Status:** ✅ RESOLVED
 
-**Expected Behavior:** The function should return an error when data cannot be properly decoded.
+**Resolution:** Changed `decodeNameRecord` to return `(*NameRecord, error)` instead of just `*NameRecord`. The function now returns `nil` and a descriptive error when it encounters corrupt or truncated data, instead of silently returning an empty record. All callers (`GetName`, `GetExpiredNames`, `ListNames`, `GetHistory`) have been updated to propagate decode errors properly. Comprehensive unit tests were added covering empty data, truncated value length, truncated value data, truncated txhash, truncated height, and truncated expires_at scenarios.
 
-**Actual Behavior:** Multiple early returns with `return &NameRecord{}` when data validation fails, with no way for the caller to distinguish between an empty record and a decode failure.
-
-**Impact:** Data corruption in the database could go unnoticed, with empty records being processed as valid.
-
-**Reproduction:** Manually corrupt a record in the bbolt database, then call `GetName` - an empty record is returned without error.
-
-**Code Reference:**
+**Fixed Code:**
 ```go
-func decodeNameRecord(data []byte) *NameRecord {
+// decodeNameRecord deserializes a name record.
+// Returns an error if the data is corrupt or truncated.
+func decodeNameRecord(data []byte) (*NameRecord, error) {
 	if len(data) < 1 {
-		return &NameRecord{}  // No error returned
+		return nil, fmt.Errorf("corrupt record: empty data")
 	}
-	// ...
+	// ... validation with proper error returns ...
 	if offset+4 > len(data) {
-		return &NameRecord{}  // No error returned
+		return nil, fmt.Errorf("corrupt record: truncated at value length")
 	}
-	// ...multiple similar cases
+	// ... more validation ...
+	return record, nil
 }
 ```
 
@@ -327,7 +324,7 @@ The codebase demonstrates consistent thread safety practices:
 
 ### Error Handling
 Error handling is generally good with some exceptions:
-- `decodeNameRecord` silently returns empty records instead of errors
+- ~~`decodeNameRecord` silently returns empty records instead of errors~~ ✅ RESOLVED - Now returns proper errors
 - Registration errors in `init()` are intentionally ignored (documented reason is acceptable)
 
 ### Code Quality
@@ -345,7 +342,7 @@ Error handling is generally good with some exceptions:
 3. ~~**Medium Priority:** Add `GetHistory` function and fix `name_history` RPC endpoint~~ ✅ RESOLVED
 4. ~~**Medium Priority:** Implement MinBlocksBeforeFirstUpdate validation~~ ✅ RESOLVED
 5. ~~**Low Priority:** Fix comma-separated flag parsing for multiple peers/addresses~~ ✅ RESOLVED
-6. **Low Priority:** Change `decodeNameRecord` to return errors on corrupt data
+6. ~~**Low Priority:** Change `decodeNameRecord` to return errors on corrupt data~~ ✅ RESOLVED
 7. **Low Priority:** Review off-by-one in expiration comparison
 
 ---
