@@ -29,7 +29,7 @@ The codebase is well-structured with good test coverage. The primary concerns ar
 
 **File:** chain/blockchain.go:207-241  
 **Severity:** High  
-**Description:** When creating NameRecord entries during NAME_FIRSTUPDATE and NAME_UPDATE operations in `updateNameDatabase()`, the `Address` field is never populated. The NameRecord struct has an Address field (namedb/namedb.go:43), and the RPC responses include this field, but it will always be empty.
+**Description:** When creating NameRecord entries during NAME_FIRSTUPDATE and NAME_UPDATE operations in `updateNameDatabase()`, the `Address` field is never populated. The NameRecord struct has an Address field (namedb/namedb.go:42), and the RPC responses include this field, but it will always be empty.
 
 **Expected Behavior:** Per README.md, name records should track the owner's address. The RPC `name_show` response includes an `address` field suggesting ownership tracking.
 
@@ -61,7 +61,7 @@ case namedb.NameFirstUpdate:
 
 **File:** chain/blockchain.go:207-241  
 **Severity:** Low  
-**Description:** The `UpdatedAt` field in NameRecord is never set when processing blocks. This field is defined in namedb/namedb.go:44 and is properly encoded/decoded, but the chain package doesn't populate it.
+**Description:** The `UpdatedAt` field in NameRecord is never set when processing blocks. This field is defined in namedb/namedb.go:43 and is properly encoded/decoded, but the chain package doesn't populate it.
 
 **Expected Behavior:** The UpdatedAt field should contain the timestamp when the record was created or updated.
 
