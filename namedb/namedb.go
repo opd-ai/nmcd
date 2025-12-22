@@ -358,11 +358,11 @@ func decodeNameRecord(data []byte) (*NameRecord, error) {
 	version := data[offset]
 	offset++
 
-	// Handle legacy format (no version byte) - check if first byte looks like a length
+	// Handle legacy format (no version byte) - values > 1 indicate legacy format
+	// where the first byte is actually part of the value length, not a version byte
 	if version > 1 {
 		// Likely legacy format without version byte, rewind
 		offset = 0
-		_ = version // Mark version as intentionally unused after rewind
 	}
 
 	record := &NameRecord{}

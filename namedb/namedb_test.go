@@ -479,6 +479,18 @@ func TestDecodeNameRecordCorruptData(t *testing.T) {
 			data: append([]byte{1, 5, 0, 0, 0}, append([]byte("hello"), append(make([]byte, 32), []byte{100, 0, 0, 0, 0, 0}...)...)...), // version + value + full txhash + height + partial expires
 			wantErr: "corrupt record: truncated at expires_at",
 		},
+		{
+			name: "truncated at address length",
+			// version(1) + value_len(4) + value(5) + txhash(32) + height(4) + expires(4) + partial addr_len(2)
+			data: append([]byte{1, 5, 0, 0, 0}, append([]byte("hello"), append(make([]byte, 32), []byte{100, 0, 0, 0, 200, 0, 0, 0, 0, 0}...)...)...),
+			wantErr: "corrupt record: truncated at address length",
+		},
+		{
+			name: "truncated at address data",
+			// version(1) + value_len(4) + value(5) + txhash(32) + height(4) + expires(4) + addr_len(4, value=10) + partial addr(2)
+			data: append([]byte{1, 5, 0, 0, 0}, append([]byte("hello"), append(make([]byte, 32), []byte{100, 0, 0, 0, 200, 0, 0, 0, 10, 0, 0, 0, 'a', 'b'}...)...)...),
+			wantErr: "corrupt record: truncated at address data",
+		},
 	}
 
 	for _, tc := range testCases {
