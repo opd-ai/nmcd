@@ -293,3 +293,137 @@ func TestGetHistoryMultipleNames(t *testing.T) {
 		t.Errorf("Expected value 'value2', got '%s'", history2[0].Value)
 	}
 }
+
+func TestNameNew(t *testing.T) {
+	dbPath := filepath.Join(os.TempDir(), "test-namenew.db")
+	defer os.Remove(dbPath)
+
+	db, err := NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Test PutNameNew and GetNameNew
+	commitHash := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+		0x11, 0x12, 0x13, 0x14}
+	height := int32(100)
+
+	err = db.PutNameNew(commitHash, height)
+	if err != nil {
+		t.Fatalf("Failed to put name_new: %v", err)
+	}
+
+	record, err := db.GetNameNew(commitHash)
+	if err != nil {
+		t.Fatalf("Failed to get name_new: %v", err)
+	}
+
+	if record.Height != height {
+		t.Errorf("Expected height %d, got %d", height, record.Height)
+	}
+}
+
+func TestNameNewNotFound(t *testing.T) {
+	dbPath := filepath.Join(os.TempDir(), "test-namenew-notfound.db")
+	defer os.Remove(dbPath)
+
+	db, err := NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Try to get a non-existent commitment
+	commitHash := []byte{0xff, 0xff, 0xff, 0xff}
+	_, err = db.GetNameNew(commitHash)
+	if err == nil {
+		t.Error("Expected error for non-existent name_new, got nil")
+	}
+}
+
+func TestDeleteNameNew(t *testing.T) {
+	dbPath := filepath.Join(os.TempDir(), "test-namenew-delete.db")
+	defer os.Remove(dbPath)
+
+	db, err := NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	commitHash := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+		0x11, 0x12, 0x13, 0x14}
+	height := int32(100)
+
+	// Add a NAME_NEW
+	err = db.PutNameNew(commitHash, height)
+	if err != nil {
+		t.Fatalf("Failed to put name_new: %v", err)
+	}
+
+	// Verify it exists
+	_, err = db.GetNameNew(commitHash)
+	if err != nil {
+		t.Fatalf("Expected name_new to exist: %v", err)
+	}
+
+	// Delete it
+	err = db.DeleteNameNew(commitHash)
+	if err != nil {
+		t.Fatalf("Failed to delete name_new: %v", err)
+	}
+
+	// Verify it's gone
+	_, err = db.GetNameNew(commitHash)
+	if err == nil {
+		t.Error("Expected error after deleting name_new, got nil")
+	}
+}
+
+func TestMultipleNameNews(t *testing.T) {
+	dbPath := filepath.Join(os.TempDir(), "test-namenew-multi.db")
+	defer os.Remove(dbPath)
+
+	db, err := NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Add two different NAME_NEW commitments at different heights
+	hash1 := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+		0x11, 0x12, 0x13, 0x14}
+	hash2 := []byte{0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8,
+		0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf, 0xb0,
+		0xb1, 0xb2, 0xb3, 0xb4}
+
+	err = db.PutNameNew(hash1, 100)
+	if err != nil {
+		t.Fatalf("Failed to put name_new 1: %v", err)
+	}
+	err = db.PutNameNew(hash2, 150)
+	if err != nil {
+		t.Fatalf("Failed to put name_new 2: %v", err)
+	}
+
+	// Retrieve and verify each
+	record1, err := db.GetNameNew(hash1)
+	if err != nil {
+		t.Fatalf("Failed to get name_new 1: %v", err)
+	}
+	if record1.Height != 100 {
+		t.Errorf("Expected height 100, got %d", record1.Height)
+	}
+
+	record2, err := db.GetNameNew(hash2)
+	if err != nil {
+		t.Fatalf("Failed to get name_new 2: %v", err)
+	}
+	if record2.Height != 150 {
+		t.Errorf("Expected height 150, got %d", record2.Height)
+	}
+}

@@ -15,6 +15,7 @@ var (
 	historyBucket      = []byte("history")
 	historyIndexBucket = []byte("history_index")
 	expirationBucket   = []byte("expiration")
+	nameNewBucket      = []byte("name_new") // Tracks NAME_NEW commitments
 )
 
 // NameOperation represents a name operation type
@@ -52,7 +53,7 @@ func NewNameDatabase(dbPath string) (*NameDatabase, error) {
 
 	// Initialize buckets
 	err = db.Update(func(tx *bbolt.Tx) error {
-		for _, bucket := range [][]byte{namesBucket, historyBucket, historyIndexBucket, expirationBucket} {
+		for _, bucket := range [][]byte{namesBucket, historyBucket, historyIndexBucket, expirationBucket, nameNewBucket} {
 			if _, err := tx.CreateBucketIfNotExists(bucket); err != nil {
 				return err
 			}
@@ -218,6 +219,68 @@ func (ndb *NameDatabase) GetHistory(name string) ([]*NameRecord, error) {
 		return nil
 	})
 	return records, err
+}
+
+// NameNewRecord represents a NAME_NEW commitment stored in the database.
+// It tracks the block height where the NAME_NEW was issued to enforce
+// the minimum block distance before NAME_FIRSTUPDATE.
+type NameNewRecord struct {
+	Hash   []byte // The commitment hash from NAME_NEW
+	Height int32  // Block height where NAME_NEW was included
+}
+
+// PutNameNew stores a NAME_NEW commitment with its block height.
+// The commitment hash is used as the key, and the height is stored as the value.
+// This allows validation that MinBlocksBeforeFirstUpdate has passed.
+func (ndb *NameDatabase) PutNameNew(commitHash []byte, height int32) error {
+	ndb.mu.Lock()
+	defer ndb.mu.Unlock()
+
+	return ndb.db.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket(nameNewBucket)
+		// Store height as 4-byte little-endian
+		data := make([]byte, 4)
+		binary.LittleEndian.PutUint32(data, uint32(height))
+		return bucket.Put(commitHash, data)
+	})
+}
+
+// GetNameNew retrieves a NAME_NEW commitment record by its hash.
+// Returns the record if found, or an error if not found.
+func (ndb *NameDatabase) GetNameNew(commitHash []byte) (*NameNewRecord, error) {
+	ndb.mu.RLock()
+	defer ndb.mu.RUnlock()
+
+	var record *NameNewRecord
+	err := ndb.db.View(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket(nameNewBucket)
+		data := bucket.Get(commitHash)
+		if data == nil {
+			return fmt.Errorf("name_new commitment not found")
+		}
+		if len(data) < 4 {
+			return fmt.Errorf("corrupt name_new record")
+		}
+		height := int32(binary.LittleEndian.Uint32(data))
+		record = &NameNewRecord{
+			Hash:   commitHash,
+			Height: height,
+		}
+		return nil
+	})
+	return record, err
+}
+
+// DeleteNameNew removes a NAME_NEW commitment after it has been used.
+// Called after a successful NAME_FIRSTUPDATE to clean up.
+func (ndb *NameDatabase) DeleteNameNew(commitHash []byte) error {
+	ndb.mu.Lock()
+	defer ndb.mu.Unlock()
+
+	return ndb.db.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket(nameNewBucket)
+		return bucket.Delete(commitHash)
+	})
 }
 
 // encodeNameRecord serializes a name record
