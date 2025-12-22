@@ -125,7 +125,7 @@ func parseNameScript(script []byte) (namedb.NameOperation, string, string, error
 
 ---
 
-### ~~FUNCTIONAL MISMATCH: Command-Line Flag Parsing Does Not Handle Comma-Separated Values as Documented~~ (RESOLVED)
+### ~~FUNCTIONAL MISMATCH: Command-Line Flag Parsing Does Not Handle Comma-Separated Values as Documented~~ ✅ RESOLVED
 
 **File:** cmd/nmcd/main.go:103-121  
 **Severity:** Low  
@@ -348,7 +348,7 @@ Error handling is generally good with some exceptions:
 2. **High Priority:** Implement NAME_NEW commitment tracking and validation for front-running protection
 3. **Medium Priority:** Add `GetHistory` function and fix `name_history` RPC endpoint
 4. **Medium Priority:** Implement MinBlocksBeforeFirstUpdate validation
-5. ~~**Low Priority:** Fix comma-separated flag parsing for multiple peers/addresses~~ ✅ DONE
+5. ~~**Low Priority:** Fix comma-separated flag parsing for multiple peers/addresses~~ ✅ RESOLVED
 6. **Low Priority:** Change `decodeNameRecord` to return errors on corrupt data
 7. **Low Priority:** Review off-by-one in expiration comparison
 
