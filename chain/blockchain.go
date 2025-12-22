@@ -397,6 +397,11 @@ func parseNameScriptFull(script []byte) (namedb.NameOperation, string, string, [
 // This function parses past the name operation data and drop opcodes to extract
 // the address from the embedded P2PKH script.
 // Returns an empty string if the address cannot be extracted.
+//
+// Note: This function is intentionally lenient with drop opcodes. If drop opcodes
+// are missing or different than expected, it still attempts to extract an address
+// from whatever remains. This is appropriate for parsing blockchain data where
+// scripts may have minor variations.
 func extractAddressFromNameScript(script []byte, chainParams *chaincfg.Params) string {
 	if len(script) < 2 || chainParams == nil {
 		return ""
