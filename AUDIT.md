@@ -76,7 +76,7 @@ func (s *Server) nameHistory(req *Request) *Response {
 
 ---
 
-### FUNCTIONAL MISMATCH: parseNameScript Uses Placeholder Opcodes Instead of Real Namecoin Script Parsing
+### FUNCTIONAL MISMATCH: parseNameScript uses Placeholder Opcodes Instead of Real Namecoin Script Parsing
 
 **File:** chain/blockchain.go:203-235  
 **Severity:** Medium  
