@@ -9,12 +9,8 @@ import (
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/opd-ai/nmcd/config"
 	"github.com/opd-ai/nmcd/namedb"
-)
-
-const (
-	// NameExpirationBlocks is the number of blocks until a name expires
-	NameExpirationBlocks = 36000 // ~250 days at 10 min blocks
 )
 
 // BlockChain wraps btcd blockchain with name operation validation
@@ -171,7 +167,7 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 				Value:     value,
 				TxHash:    *txHash,
 				Height:    height,
-				ExpiresAt: height + NameExpirationBlocks,
+				ExpiresAt: height + config.NameExpirationBlocks,
 			}
 
 			switch op {
@@ -240,11 +236,11 @@ func parseNameScript(script []byte) (namedb.NameOperation, string, string, error
 
 // validateNameFormat validates name and value format
 func validateNameFormat(name, value string) error {
-	if len(name) == 0 || len(name) > 255 {
-		return fmt.Errorf("invalid name length: %d", len(name))
+	if len(name) == 0 || len(name) > config.MaxNameLength {
+		return fmt.Errorf("invalid name length: %d (max: %d)", len(name), config.MaxNameLength)
 	}
-	if len(value) > 1023 {
-		return fmt.Errorf("value too large: %d bytes", len(value))
+	if len(value) > config.MaxValueLength {
+		return fmt.Errorf("value too large: %d bytes (max: %d)", len(value), config.MaxValueLength)
 	}
 	return nil
 }

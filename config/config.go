@@ -7,6 +7,21 @@ import (
 	"github.com/btcsuite/btcd/chaincfg"
 )
 
+// Namecoin protocol constants
+const (
+	// NameExpirationBlocks is the number of blocks until a name expires (~250 days)
+	NameExpirationBlocks = 36000
+
+	// MinBlocksBeforeFirstUpdate is the minimum blocks between name_new and name_firstupdate
+	MinBlocksBeforeFirstUpdate = 12
+
+	// MaxNameLength is the maximum length of a name in bytes
+	MaxNameLength = 255
+
+	// MaxValueLength is the maximum length of a value in bytes
+	MaxValueLength = 1023
+)
+
 // Config holds all configuration for nmcd
 type Config struct {
 	DataDir     string
@@ -32,15 +47,15 @@ func DefaultConfig() *Config {
 	}
 }
 
-// ChainParams returns the chain parameters for the network
+// ChainParams returns the Namecoin chain parameters for the network
 func (c *Config) ChainParams() *chaincfg.Params {
 	switch c.Network {
 	case "testnet":
-		return &chaincfg.TestNet3Params
+		return &NamecoinTestNetParams
 	case "regtest":
-		return &chaincfg.RegressionNetParams
+		return &NamecoinRegTestParams
 	default:
-		return &chaincfg.MainNetParams
+		return &NamecoinMainNetParams
 	}
 }
 
