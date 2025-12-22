@@ -3,7 +3,6 @@ package chain
 import (
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/btcutil"
@@ -177,6 +176,8 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 // updateNameDatabase updates the name database with operations from a block
 func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 	height := block.Height()
+	// Use block timestamp for deterministic replay and historical accuracy
+	blockTime := block.MsgBlock().Header.Timestamp
 
 	// Handle expired names
 	expired, err := bc.nameDB.GetExpiredNames(height)
@@ -218,7 +219,7 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 					Height:    height,
 					ExpiresAt: height + config.NameExpirationBlocks,
 					Address:   address,
-					UpdatedAt: time.Now(),
+					UpdatedAt: blockTime,
 				}
 				if err := bc.nameDB.PutName(name, record); err != nil {
 					return err
@@ -242,7 +243,7 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 					Height:    height,
 					ExpiresAt: height + config.NameExpirationBlocks,
 					Address:   address,
-					UpdatedAt: time.Now(),
+					UpdatedAt: blockTime,
 				}
 				if err := bc.nameDB.PutName(name, record); err != nil {
 					return err

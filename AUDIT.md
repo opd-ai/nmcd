@@ -52,7 +52,8 @@ The codebase is well-structured with good test coverage. The primary concerns ar
 **Description:** The `UpdatedAt` field in NameRecord is never set when processing blocks. This field is defined in namedb/namedb.go:43 and is properly encoded/decoded, but the chain package doesn't populate it.
 
 **Fix Applied:**
-- Updated `updateNameDatabase()` to set `UpdatedAt: time.Now()` when creating records for NAME_FIRSTUPDATE and NAME_UPDATE operations
+- Updated `updateNameDatabase()` to set `UpdatedAt` using the block's timestamp (`block.MsgBlock().Header.Timestamp`) when creating records for NAME_FIRSTUPDATE and NAME_UPDATE operations
+- This ensures deterministic replay and historical accuracy when reprocessing the blockchain
 
 ---
 
