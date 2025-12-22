@@ -297,6 +297,7 @@ func parseNameScript(script []byte) (namedb.NameOperation, string, string, error
 // readPushData reads a Bitcoin-style push data from the script at the given offset.
 // Returns the data, the new offset after reading, and any error.
 // Bitcoin script push data format:
+//   - 0x00: push empty byte array (OP_0)
 //   - 0x01-0x4b: next N bytes are data (N is the opcode value)
 //   - 0x4c (OP_PUSHDATA1): next byte is length, then data
 //   - 0x4d (OP_PUSHDATA2): next 2 bytes are length (little-endian), then data
@@ -305,13 +306,18 @@ func readPushData(script []byte, offset int) ([]byte, int, error) {
 		return nil, offset, fmt.Errorf("offset beyond script length")
 	}
 
+	startOffset := offset
 	opcode := script[offset]
 	offset++
 
 	var dataLen int
 
 	switch {
-	case opcode <= 0x4b:
+	case opcode == 0x00:
+		// OP_0: push empty byte array
+		dataLen = 0
+
+	case opcode >= 0x01 && opcode <= 0x4b:
 		// Direct push: opcode is the length (1-75 bytes)
 		dataLen = int(opcode)
 
@@ -332,7 +338,7 @@ func readPushData(script []byte, offset int) ([]byte, int, error) {
 		offset += 2
 
 	default:
-		return nil, offset, fmt.Errorf("unexpected opcode 0x%02x at offset %d", opcode, offset-1)
+		return nil, offset, fmt.Errorf("unexpected opcode 0x%02x at offset %d", opcode, startOffset)
 	}
 
 	// Check if we have enough data

@@ -331,6 +331,22 @@ func TestParseNameScript_PushDataFormats(t *testing.T) {
 }
 
 func TestReadPushData(t *testing.T) {
+	t.Run("OP_0 (empty push)", func(t *testing.T) {
+		// OP_0 is opcode 0x00, which pushes an empty byte array
+		script := []byte{0x00}
+
+		result, offset, err := readPushData(script, 0)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(result) != 0 {
+			t.Errorf("expected empty result, got length %d", len(result))
+		}
+		if offset != 1 {
+			t.Errorf("expected offset 1, got %d", offset)
+		}
+	})
+
 	t.Run("direct push", func(t *testing.T) {
 		data := []byte("hello")
 		script := pushData(data)
