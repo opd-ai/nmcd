@@ -40,11 +40,12 @@ The nmcd codebase is **well-implemented** with robust error handling, comprehens
 
 ## DETAILED FINDINGS
 
-### FUNCTIONAL MISMATCH: RPC name_update Returns Unavailable Error
+### FUNCTIONAL MISMATCH: RPC name_update Returns Unavailable Error [RESOLVED]
 
 **File:** rpc/server.go:263-273  
 **Severity:** Low  
-**Description:** The `name_update` RPC method is documented in README.md as an available RPC method but returns an "unavailable" error because wallet functionality is not implemented. The implementation correctly explains this limitation, but the README does not mention this constraint.
+**Status:** RESOLVED - Documentation added to README.md  
+**Description:** The `name_update` RPC method is documented in README.md as an available RPC method but returns an "unavailable" error because wallet functionality is not implemented. The implementation correctly explains this limitation, and the README now documents this constraint.
 
 **Expected Behavior:** Per README.md section "Name Methods", users might expect `name_update` to work like `name_show` and `name_history`.
 
@@ -75,7 +76,7 @@ func (s *Server) nameUpdate(req *Request) *Response {
 }
 ```
 
-**Recommendation:** Implement wallet functionality to enable the `name_update` RPC method. In the interim, update README.md to note that `name_update` requires wallet functionality which is planned for a future release.
+**Recommendation:** ~~Update README.md to note that `name_update` requires wallet functionality which is planned for a future release.~~ **COMPLETED** - README.md now documents that `name_update` requires wallet functionality. Wallet implementation may be addressed in a future release.
 
 ---
 
@@ -215,7 +216,7 @@ The nmcd codebase is a well-structured, focused implementation that correctly le
 
 **Key Recommendations:**
 1. ~~Add `name_list` RPC method documentation to README.md~~ **COMPLETED**
-2. Implement wallet functionality to enable `name_update` RPC; update README.md to note current status
+2. ~~Update README.md to document `name_update` wallet requirement~~ **COMPLETED** - Wallet implementation may be addressed in a future release
 3. Implement block reorg handling to maintain name database consistency
 
 The overall code quality is high, and the identified issues are minor documentation mismatches rather than functional bugs in the core logic.

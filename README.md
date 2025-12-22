@@ -102,6 +102,10 @@ go build -v ./cmd/nmcd
     -d '{"jsonrpc":"2.0","method":"name_history","params":["d/example"],"id":1}'
   ```
 
+- `name_update` - Update an existing name's value (requires wallet - not yet implemented)
+  
+  > **Note:** The `name_update` RPC method is currently unavailable because wallet functionality is not implemented in this node. This feature is planned for a future release. In the meantime, use a wallet-enabled node to perform name updates.
+
 ## Dependencies
 
 - **github.com/btcsuite/btcd/blockchain** - Blockchain management
