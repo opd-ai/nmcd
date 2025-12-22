@@ -125,6 +125,11 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 				}
 
 				// Check that enough blocks have passed since NAME_NEW
+				// Handle edge case where height < nameNewRecord.Height (e.g., during reorg)
+				if height < nameNewRecord.Height {
+					return fmt.Errorf("name_firstupdate before name_new: block %d < name_new block %d",
+						height, nameNewRecord.Height)
+				}
 				blocksSinceNew := height - nameNewRecord.Height
 				if blocksSinceNew < config.MinBlocksBeforeFirstUpdate {
 					return fmt.Errorf("name_firstupdate too early: %d blocks since name_new, minimum %d required",

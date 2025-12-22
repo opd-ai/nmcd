@@ -261,6 +261,9 @@ func (ndb *NameDatabase) GetNameNew(commitHash []byte) (*NameNewRecord, error) {
 		if len(data) < 4 {
 			return fmt.Errorf("corrupt name_new record")
 		}
+		// Block heights are always non-negative and stored as int32 throughout
+		// the codebase. The cast is safe as blockchain heights won't exceed
+		// MaxInt32 (would take ~4000 years at current block rates).
 		height := int32(binary.LittleEndian.Uint32(data))
 		record = &NameNewRecord{
 			Hash:   commitHash,
