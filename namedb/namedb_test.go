@@ -117,6 +117,62 @@ func TestNameExpiration(t *testing.T) {
 	}
 }
 
+// TestNameExpirationEdgeCase verifies that a name is valid at its ExpiresAt height
+// and only considered expired one block after. This tests the boundary condition.
+func TestNameExpirationEdgeCase(t *testing.T) {
+	dbPath := filepath.Join(os.TempDir(), "test-expiration-edge.db")
+	defer os.Remove(dbPath)
+
+	db, err := NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	hash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000003")
+
+	// Add name that expires at height 100
+	record := &NameRecord{
+		Name:      "d/edge",
+		Value:     "test",
+		TxHash:    *hash,
+		Height:    50,
+		ExpiresAt: 100,
+		UpdatedAt: time.Now(),
+	}
+	db.PutName("d/edge", record)
+
+	// At height 99, name should NOT be expired (ExpiresAt=100 > 99)
+	expired, err := db.GetExpiredNames(99)
+	if err != nil {
+		t.Fatalf("Failed to get expired names at height 99: %v", err)
+	}
+	if len(expired) != 0 {
+		t.Errorf("Expected 0 expired names at height 99 (before ExpiresAt), got %d: %v", len(expired), expired)
+	}
+
+	// At height 100 (ExpiresAt), name should still be valid (not expired yet)
+	expired, err = db.GetExpiredNames(100)
+	if err != nil {
+		t.Fatalf("Failed to get expired names at height 100: %v", err)
+	}
+	if len(expired) != 0 {
+		t.Errorf("Expected 0 expired names at height 100 (at ExpiresAt), got %d: %v", len(expired), expired)
+	}
+
+	// At height 101, name should be expired (ExpiresAt=100 < 101)
+	expired, err = db.GetExpiredNames(101)
+	if err != nil {
+		t.Fatalf("Failed to get expired names at height 101: %v", err)
+	}
+	if len(expired) != 1 {
+		t.Errorf("Expected 1 expired name at height 101 (after ExpiresAt), got %d", len(expired))
+	}
+	if len(expired) > 0 && expired[0] != "d/edge" {
+		t.Errorf("Expected 'd/edge', got '%s'", expired[0])
+	}
+}
+
 func TestGetHistory(t *testing.T) {
 	dbPath := filepath.Join(os.TempDir(), "test-history.db")
 	defer os.Remove(dbPath)
