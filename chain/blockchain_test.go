@@ -9,6 +9,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/opd-ai/nmcd/config"
 	"github.com/opd-ai/nmcd/namedb"
 )
 
@@ -1049,4 +1050,133 @@ func TestRollbackSameBlockNameNewAndFirstUpdate(t *testing.T) {
 	if restoredNameNew.Height != expectedHeight {
 		t.Errorf("Expected restored NAME_NEW height %d, got %d", expectedHeight, restoredNameNew.Height)
 	}
+}
+
+// TestExtractAddressFromNameScript tests address extraction from name scripts.
+func TestExtractAddressFromNameScript(t *testing.T) {
+	// Use Namecoin mainnet params for testing
+	chainParams := &config.NamecoinMainNetParams
+
+	// Create a test pubkey hash (20 bytes)
+	pubKeyHash := []byte{
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
+		0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14,
+	}
+
+	// Build a P2PKH script: OP_DUP OP_HASH160 <pubkeyhash> OP_EQUALVERIFY OP_CHECKSIG
+	p2pkhScript := buildScript(
+		[]byte{0x76},       // OP_DUP
+		[]byte{0xa9},       // OP_HASH160
+		[]byte{0x14},       // Push 20 bytes
+		pubKeyHash,         // pubkeyhash
+		[]byte{0x88},       // OP_EQUALVERIFY
+		[]byte{0xac},       // OP_CHECKSIG
+	)
+
+	t.Run("NAME_FIRSTUPDATE with P2PKH", func(t *testing.T) {
+		nameBytes := []byte("d/example")
+		rand := make([]byte, 20)
+		valueBytes := []byte(`{"ip":"1.2.3.4"}`)
+
+		// Build NAME_FIRSTUPDATE script:
+		// OP_NAME_FIRSTUPDATE <name> <rand> <value> OP_2DROP OP_2DROP <P2PKH>
+		script := buildScript(
+			[]byte{opNameFirstUpdate},
+			pushData(nameBytes),
+			pushData(rand),
+			pushData(valueBytes),
+			[]byte{0x6d},     // OP_2DROP
+			[]byte{0x6d},     // OP_2DROP
+			p2pkhScript,
+		)
+
+		address := extractAddressFromNameScript(script, chainParams)
+		if address == "" {
+			t.Error("Expected non-empty address from NAME_FIRSTUPDATE script")
+		}
+	})
+
+	t.Run("NAME_UPDATE with P2PKH", func(t *testing.T) {
+		nameBytes := []byte("d/example")
+		valueBytes := []byte(`{"ip":"5.6.7.8"}`)
+
+		// Build NAME_UPDATE script:
+		// OP_NAME_UPDATE <name> <value> OP_2DROP OP_DROP <P2PKH>
+		script := buildScript(
+			[]byte{opNameUpdate},
+			pushData(nameBytes),
+			pushData(valueBytes),
+			[]byte{0x6d},     // OP_2DROP
+			[]byte{0x75},     // OP_DROP
+			p2pkhScript,
+		)
+
+		address := extractAddressFromNameScript(script, chainParams)
+		if address == "" {
+			t.Error("Expected non-empty address from NAME_UPDATE script")
+		}
+	})
+
+	t.Run("NAME_NEW with P2PKH", func(t *testing.T) {
+		commitHash := make([]byte, 20)
+
+		// Build NAME_NEW script:
+		// OP_NAME_NEW <hash> OP_2DROP <P2PKH>
+		script := buildScript(
+			[]byte{opNameNew},
+			pushData(commitHash),
+			[]byte{0x6d},     // OP_2DROP
+			p2pkhScript,
+		)
+
+		address := extractAddressFromNameScript(script, chainParams)
+		if address == "" {
+			t.Error("Expected non-empty address from NAME_NEW script")
+		}
+	})
+
+	t.Run("empty script returns empty address", func(t *testing.T) {
+		address := extractAddressFromNameScript([]byte{}, chainParams)
+		if address != "" {
+			t.Errorf("Expected empty address for empty script, got %q", address)
+		}
+	})
+
+	t.Run("nil chainParams returns empty address", func(t *testing.T) {
+		script := buildScript(
+			[]byte{opNameUpdate},
+			pushData([]byte("d/test")),
+			pushData([]byte("value")),
+			[]byte{0x6d, 0x75},
+			p2pkhScript,
+		)
+		address := extractAddressFromNameScript(script, nil)
+		if address != "" {
+			t.Errorf("Expected empty address for nil chainParams, got %q", address)
+		}
+	})
+
+	t.Run("script without P2PKH returns empty address", func(t *testing.T) {
+		// Script with name operation but no valid P2PKH portion
+		script := buildScript(
+			[]byte{opNameUpdate},
+			pushData([]byte("d/test")),
+			pushData([]byte("value")),
+			[]byte{0x6d, 0x75},
+			// Invalid/incomplete P2PKH
+			[]byte{0x76, 0xa9},
+		)
+		address := extractAddressFromNameScript(script, chainParams)
+		if address != "" {
+			t.Errorf("Expected empty address for invalid P2PKH, got %q", address)
+		}
+	})
+
+	t.Run("non-name operation returns empty address", func(t *testing.T) {
+		// Just a standard P2PKH script (not a name operation)
+		address := extractAddressFromNameScript(p2pkhScript, chainParams)
+		if address != "" {
+			t.Errorf("Expected empty address for non-name script, got %q", address)
+		}
+	})
 }
