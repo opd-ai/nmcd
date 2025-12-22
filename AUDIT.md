@@ -25,7 +25,7 @@ This audit analyzes the nmcd codebase for discrepancies between documented funct
 |----------|-------|----------|
 | CRITICAL BUG | 0 | - |
 | FUNCTIONAL MISMATCH | ~~2~~ 0 (2 resolved) | Medium |
-| MISSING FEATURE | ~~3~~ 2 (1 resolved) | Medium-Low |
+| MISSING FEATURE | ~~3~~ 0 (3 resolved) | Medium-Low |
 | EDGE CASE BUG | 2 | Low |
 | PERFORMANCE ISSUE | 0 | - |
 
@@ -170,72 +170,84 @@ func (ndb *NameDatabase) GetHistory(name string) ([]*NameRecord, error) {
 
 ---
 
-### MISSING FEATURE: MinBlocksBeforeFirstUpdate Constraint Not Enforced
+### ~~MISSING FEATURE: MinBlocksBeforeFirstUpdate Constraint Not Enforced~~ ✅ RESOLVED
 
 **File:** config/config.go:16, chain/blockchain.go:110-115  
 **Severity:** Medium  
-**Description:** The configuration defines `MinBlocksBeforeFirstUpdate = 12` as a protocol constant, but this constraint is never validated in the blockchain code. The NAME_NEW to NAME_FIRSTUPDATE timing requirement is not enforced.
+**Status:** ✅ RESOLVED
 
-**Expected Behavior:** According to Namecoin protocol and the defined constant:
-- There should be at least 12 blocks between NAME_NEW and NAME_FIRSTUPDATE operations
-- This prevents front-running attacks on name registrations
+**Resolution:** Implemented the MinBlocksBeforeFirstUpdate constraint enforcement. The solution includes:
+1. Added `nameNewBucket` in namedb to track NAME_NEW commitments with their block heights
+2. Added `NameNewRecord` struct and `PutNameNew`, `GetNameNew`, `DeleteNameNew` functions to manage NAME_NEW tracking
+3. Modified `parseNameScriptFull` to extract commitment hash from NAME_NEW and rand from NAME_FIRSTUPDATE
+4. Added `computeCommitHash` function using RIPEMD160(SHA256(rand || name)) per Namecoin protocol
+5. Updated `validateNameOperations` to verify NAME_NEW exists and 12+ blocks have passed before NAME_FIRSTUPDATE
+6. Updated `updateNameDatabase` to store NAME_NEW commitments and clean them up after NAME_FIRSTUPDATE
 
-**Actual Behavior:** The `validateNameOperations` function only checks:
-1. Whether a name exists (for FIRSTUPDATE)
-2. Whether a name is expired (for UPDATE)
-
-It does not verify that the required block distance from NAME_NEW has elapsed.
-
-**Impact:** The front-running protection mechanism documented in the protocol is not enforced, potentially allowing name sniping attacks.
-
-**Reproduction:** Issue NAME_NEW and NAME_FIRSTUPDATE in consecutive blocks - no validation error occurs.
-
-**Code Reference:**
+**Fixed Code:**
 ```go
-// config/config.go
-const (
-	// MinBlocksBeforeFirstUpdate is the minimum blocks between name_new and name_firstupdate
-	MinBlocksBeforeFirstUpdate = 12  // Defined but never used
-)
-
-// chain/blockchain.go
+// In validateNameOperations:
 case namedb.NameFirstUpdate:
 	// Verify name doesn't exist
 	if _, err := bc.nameDB.GetName(name); err == nil {
 		return fmt.Errorf("name already exists: %s", name)
 	}
-	// Missing: Check that 12 blocks have passed since NAME_NEW
+
+	// Compute the commitment hash from rand (extra) and name
+	commitHash := computeCommitHash(extra, name)
+
+	// Verify NAME_NEW exists and MinBlocksBeforeFirstUpdate has passed
+	nameNewRecord, err := bc.nameDB.GetNameNew(commitHash)
+	if err != nil {
+		return fmt.Errorf("no matching name_new found for name: %s", name)
+	}
+
+	// Check that enough blocks have passed since NAME_NEW
+	blocksSinceNew := height - nameNewRecord.Height
+	if blocksSinceNew < config.MinBlocksBeforeFirstUpdate {
+		return fmt.Errorf("name_firstupdate too early: %d blocks since name_new, minimum %d required",
+			blocksSinceNew, config.MinBlocksBeforeFirstUpdate)
+	}
 ```
 
 ---
 
-### MISSING FEATURE: NAME_NEW Hash Commitment Not Tracked or Validated
+### ~~MISSING FEATURE: NAME_NEW Hash Commitment Not Tracked or Validated~~ ✅ RESOLVED
 
 **File:** chain/blockchain.go:108-110  
 **Severity:** Medium  
-**Description:** The NAME_NEW operation in Namecoin protocol requires a hash commitment (hash of salt + name) to be recorded and later verified during NAME_FIRSTUPDATE. The current implementation simply ignores NAME_NEW operations without tracking them.
+**Status:** ✅ RESOLVED
 
-**Expected Behavior:** According to Namecoin protocol:
-1. NAME_NEW should store a commitment hash
-2. NAME_FIRSTUPDATE must reveal the salt and name that match the commitment
-3. This prevents name front-running
+**Resolution:** Implemented NAME_NEW commitment tracking as part of the MinBlocksBeforeFirstUpdate constraint enforcement. The implementation includes:
+1. Added `nameNewBucket` in namedb to store NAME_NEW commitments keyed by commitment hash
+2. `parseNameScriptFull` now extracts the commitment hash from NAME_NEW scripts
+3. `updateNameDatabase` stores NAME_NEW commitments when processing blocks
+4. `validateNameOperations` verifies NAME_FIRSTUPDATE has a matching NAME_NEW commitment
+5. `computeCommitHash` computes RIPEMD160(SHA256(rand || name)) to match commitments
+6. NAME_NEW commitments are cleaned up after successful NAME_FIRSTUPDATE
 
-**Actual Behavior:** NAME_NEW is allowed to pass through without any storage or validation:
+**Fixed Code:**
 ```go
+// In updateNameDatabase:
 case namedb.NameNew:
-	// NAME_NEW is always valid (pre-registration)
-	continue
-```
+	// Store the commitment hash with block height
+	// extra contains the commitment hash from the script
+	if err := bc.nameDB.PutNameNew(extra, height); err != nil {
+		return err
+	}
 
-**Impact:** The name pre-registration system that prevents front-running is completely non-functional.
+// In validateNameOperations:
+case namedb.NameFirstUpdate:
+	// ... verify name doesn't exist ...
+	
+	// Compute the commitment hash from rand (extra) and name
+	commitHash := computeCommitHash(extra, name)
 
-**Reproduction:** Issue NAME_FIRSTUPDATE without a prior NAME_NEW - no error occurs.
-
-**Code Reference:**
-```go
-case namedb.NameNew:
-	// NAME_NEW is always valid (pre-registration)
-	continue  // No commitment is stored
+	// Verify NAME_NEW exists and MinBlocksBeforeFirstUpdate has passed
+	nameNewRecord, err := bc.nameDB.GetNameNew(commitHash)
+	if err != nil {
+		return fmt.Errorf("no matching name_new found for name: %s", name)
+	}
 ```
 
 ---
@@ -329,9 +341,9 @@ Error handling is generally good with some exceptions:
 ## RECOMMENDATIONS
 
 1. ~~**High Priority:** Implement real Namecoin script parsing in `parseNameScript` to support actual network transactions~~ ✅ RESOLVED
-2. **High Priority:** Implement NAME_NEW commitment tracking and validation for front-running protection
+2. ~~**High Priority:** Implement NAME_NEW commitment tracking and validation for front-running protection~~ ✅ RESOLVED
 3. ~~**Medium Priority:** Add `GetHistory` function and fix `name_history` RPC endpoint~~ ✅ RESOLVED
-4. **Medium Priority:** Implement MinBlocksBeforeFirstUpdate validation
+4. ~~**Medium Priority:** Implement MinBlocksBeforeFirstUpdate validation~~ ✅ RESOLVED
 5. ~~**Low Priority:** Fix comma-separated flag parsing for multiple peers/addresses~~ ✅ RESOLVED
 6. **Low Priority:** Change `decodeNameRecord` to return errors on corrupt data
 7. **Low Priority:** Review off-by-one in expiration comparison

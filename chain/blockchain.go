@@ -94,25 +94,59 @@ func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.Behavi
 func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 	height := block.Height()
 
+	// Track NAME_NEW commitment hashes seen in this block to detect duplicates.
+	// Using string conversion of byte slice as map key is idiomatic in Go.
+	seenNameNewCommits := make(map[string]bool)
+
 	for _, tx := range block.Transactions() {
 		msgTx := tx.MsgTx()
 
 		// Check for name operations in transaction outputs
 		for _, txOut := range msgTx.TxOut {
-			op, name, value, err := parseNameScript(txOut.PkScript)
+			op, name, value, extra, err := parseNameScriptFull(txOut.PkScript)
 			if err != nil {
 				continue // Not a name operation
 			}
 
 			switch op {
 			case namedb.NameNew:
-				// NAME_NEW is always valid (pre-registration)
-				continue
+				// Check for duplicate commitment hash in this block
+				commitHashStr := string(extra)
+				if seenNameNewCommits[commitHashStr] {
+					return fmt.Errorf("duplicate name_new commitment in block")
+				}
+				seenNameNewCommits[commitHashStr] = true
+
+				// Check if commitment already exists in database
+				if _, err := bc.nameDB.GetNameNew(extra); err == nil {
+					return fmt.Errorf("name_new commitment already exists")
+				}
 
 			case namedb.NameFirstUpdate:
 				// Verify name doesn't exist
 				if _, err := bc.nameDB.GetName(name); err == nil {
 					return fmt.Errorf("name already exists: %s", name)
+				}
+
+				// Compute the commitment hash from rand (extra) and name
+				commitHash := computeCommitHash(extra, name)
+
+				// Verify NAME_NEW exists and MinBlocksBeforeFirstUpdate has passed
+				nameNewRecord, err := bc.nameDB.GetNameNew(commitHash)
+				if err != nil {
+					return fmt.Errorf("no matching name_new found for name: %s", name)
+				}
+
+				// Check that enough blocks have passed since NAME_NEW
+				// Handle edge case where height < nameNewRecord.Height (e.g., during reorg)
+				if height < nameNewRecord.Height {
+					return fmt.Errorf("name_firstupdate before name_new: block %d < name_new block %d",
+						height, nameNewRecord.Height)
+				}
+				blocksSinceNew := height - nameNewRecord.Height
+				if blocksSinceNew < config.MinBlocksBeforeFirstUpdate {
+					return fmt.Errorf("name_firstupdate too early: %d blocks since name_new, minimum %d required",
+						blocksSinceNew, config.MinBlocksBeforeFirstUpdate)
 				}
 
 			case namedb.NameUpdate:
@@ -157,21 +191,47 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 		txHash := tx.Hash()
 
 		for _, txOut := range msgTx.TxOut {
-			op, name, value, err := parseNameScript(txOut.PkScript)
+			op, name, value, extra, err := parseNameScriptFull(txOut.PkScript)
 			if err != nil {
 				continue
 			}
 
-			record := &namedb.NameRecord{
-				Name:      name,
-				Value:     value,
-				TxHash:    *txHash,
-				Height:    height,
-				ExpiresAt: height + config.NameExpirationBlocks,
-			}
-
 			switch op {
-			case namedb.NameFirstUpdate, namedb.NameUpdate:
+			case namedb.NameNew:
+				// Store the commitment hash with block height
+				// extra contains the commitment hash from the script
+				if err := bc.nameDB.PutNameNew(extra, height); err != nil {
+					return err
+				}
+
+			case namedb.NameFirstUpdate:
+				record := &namedb.NameRecord{
+					Name:      name,
+					Value:     value,
+					TxHash:    *txHash,
+					Height:    height,
+					ExpiresAt: height + config.NameExpirationBlocks,
+				}
+				if err := bc.nameDB.PutName(name, record); err != nil {
+					return err
+				}
+				if err := bc.nameDB.AddHistory(*txHash, record); err != nil {
+					return err
+				}
+				// Clean up the NAME_NEW commitment after successful registration
+				commitHash := computeCommitHash(extra, name)
+				if err := bc.nameDB.DeleteNameNew(commitHash); err != nil {
+					return err
+				}
+
+			case namedb.NameUpdate:
+				record := &namedb.NameRecord{
+					Name:      name,
+					Value:     value,
+					TxHash:    *txHash,
+					Height:    height,
+					ExpiresAt: height + config.NameExpirationBlocks,
+				}
 				if err := bc.nameDB.PutName(name, record); err != nil {
 					return err
 				}
@@ -233,47 +293,69 @@ const (
 	opPushData4 = 0x4e
 )
 
+// computeCommitHash computes the NAME_NEW commitment hash.
+// The commitment is RIPEMD160(SHA256(rand || name)) as per Namecoin protocol.
+// This hash is stored in NAME_NEW and verified during NAME_FIRSTUPDATE.
+func computeCommitHash(rand []byte, name string) []byte {
+	nameBytes := []byte(name)
+	data := make([]byte, len(rand)+len(nameBytes))
+	copy(data, rand)
+	copy(data[len(rand):], nameBytes)
+	return btcutil.Hash160(data)
+}
+
 // parseNameScript extracts name operation from script.
 // Namecoin scripts use Bitcoin's push data format with length-prefixed data.
 // Returns the operation type, name, value, and any parsing error.
 func parseNameScript(script []byte) (namedb.NameOperation, string, string, error) {
+	op, name, value, _, err := parseNameScriptFull(script)
+	return op, name, value, err
+}
+
+// parseNameScriptFull extracts name operation from script with additional data.
+// Returns the operation type, name, value, extra data (hash for NAME_NEW, rand for
+// NAME_FIRSTUPDATE), and any parsing error.
+func parseNameScriptFull(script []byte) (namedb.NameOperation, string, string, []byte, error) {
 	if len(script) < 2 {
-		return 0, "", "", fmt.Errorf("script too short")
+		return 0, "", "", nil, fmt.Errorf("script too short")
 	}
 
 	switch script[0] {
 	case opNameNew:
 		// NAME_NEW: OP_NAME_NEW <hash> ...
-		// The hash is a 20-byte commitment, but we don't need to extract it
-		// for validation purposes in this implementation.
-		return namedb.NameNew, "", "", nil
+		// Extract the commitment hash (typically 20 bytes)
+		hash, _, err := readPushData(script, 1)
+		if err != nil {
+			return 0, "", "", nil, fmt.Errorf("failed to read hash: %w", err)
+		}
+		return namedb.NameNew, "", "", hash, nil
 
 	case opNameFirstUpdate:
 		// NAME_FIRSTUPDATE: OP_NAME_FIRSTUPDATE <name> <rand> <value> ...
-		// Parse: name, skip rand, then value
+		// Parse: name, rand, value
 		offset := 1
 
 		// Extract name
 		name, newOffset, err := readPushData(script, offset)
 		if err != nil {
-			return 0, "", "", fmt.Errorf("failed to read name: %w", err)
+			return 0, "", "", nil, fmt.Errorf("failed to read name: %w", err)
 		}
 		offset = newOffset
 
-		// Skip rand (20 bytes typically, but use push data format)
-		_, newOffset, err = readPushData(script, offset)
+		// Extract rand (needed to compute commitment hash)
+		rand, newOffset, err := readPushData(script, offset)
 		if err != nil {
-			return 0, "", "", fmt.Errorf("failed to read rand: %w", err)
+			return 0, "", "", nil, fmt.Errorf("failed to read rand: %w", err)
 		}
 		offset = newOffset
 
 		// Extract value
 		value, _, err := readPushData(script, offset)
 		if err != nil {
-			return 0, "", "", fmt.Errorf("failed to read value: %w", err)
+			return 0, "", "", nil, fmt.Errorf("failed to read value: %w", err)
 		}
 
-		return namedb.NameFirstUpdate, string(name), string(value), nil
+		return namedb.NameFirstUpdate, string(name), string(value), rand, nil
 
 	case opNameUpdate:
 		// NAME_UPDATE: OP_NAME_UPDATE <name> <value> ...
@@ -282,20 +364,20 @@ func parseNameScript(script []byte) (namedb.NameOperation, string, string, error
 		// Extract name
 		name, newOffset, err := readPushData(script, offset)
 		if err != nil {
-			return 0, "", "", fmt.Errorf("failed to read name: %w", err)
+			return 0, "", "", nil, fmt.Errorf("failed to read name: %w", err)
 		}
 		offset = newOffset
 
 		// Extract value
 		value, _, err := readPushData(script, offset)
 		if err != nil {
-			return 0, "", "", fmt.Errorf("failed to read value: %w", err)
+			return 0, "", "", nil, fmt.Errorf("failed to read value: %w", err)
 		}
 
-		return namedb.NameUpdate, string(name), string(value), nil
+		return namedb.NameUpdate, string(name), string(value), nil, nil
 	}
 
-	return 0, "", "", fmt.Errorf("not a name operation")
+	return 0, "", "", nil, fmt.Errorf("not a name operation")
 }
 
 // readPushData reads a Bitcoin-style push data from the script at the given offset.

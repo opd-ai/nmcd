@@ -215,14 +215,14 @@ func TestParseNameScript_TruncatedScripts(t *testing.T) {
 			script: []byte{opNameFirstUpdate, 0x05, 0x01, 0x02}, // says 5 bytes but only 2
 		},
 		{
-			name:   "NameFirstUpdate missing rand",
+			name: "NameFirstUpdate missing rand",
 			script: buildScript(
 				[]byte{opNameFirstUpdate},
 				pushData([]byte("d/test")),
 			),
 		},
 		{
-			name:   "NameFirstUpdate missing value",
+			name: "NameFirstUpdate missing value",
 			script: buildScript(
 				[]byte{opNameFirstUpdate},
 				pushData([]byte("d/test")),
@@ -234,7 +234,7 @@ func TestParseNameScript_TruncatedScripts(t *testing.T) {
 			script: []byte{opNameUpdate},
 		},
 		{
-			name:   "NameUpdate missing value",
+			name: "NameUpdate missing value",
 			script: buildScript(
 				[]byte{opNameUpdate},
 				pushData([]byte("d/test")),
@@ -496,5 +496,173 @@ func TestValidateNameFormat(t *testing.T) {
 				t.Errorf("unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+func TestComputeCommitHash(t *testing.T) {
+	// Test that commitment hash is computed consistently
+	rand := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+		0x11, 0x12, 0x13, 0x14}
+	name := "d/example"
+
+	hash1 := computeCommitHash(rand, name)
+	hash2 := computeCommitHash(rand, name)
+
+	// Same inputs should produce same output
+	if len(hash1) != len(hash2) {
+		t.Errorf("Hash lengths differ: %d vs %d", len(hash1), len(hash2))
+	}
+	for i := range hash1 {
+		if hash1[i] != hash2[i] {
+			t.Errorf("Hash mismatch at byte %d", i)
+			break
+		}
+	}
+
+	// Hash should be 20 bytes (RIPEMD160 output)
+	if len(hash1) != 20 {
+		t.Errorf("Expected 20-byte hash, got %d bytes", len(hash1))
+	}
+}
+
+func TestComputeCommitHashDifferentInputs(t *testing.T) {
+	rand := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+		0x11, 0x12, 0x13, 0x14}
+
+	// Different names should produce different hashes
+	hash1 := computeCommitHash(rand, "d/name1")
+	hash2 := computeCommitHash(rand, "d/name2")
+
+	same := true
+	for i := range hash1 {
+		if hash1[i] != hash2[i] {
+			same = false
+			break
+		}
+	}
+	if same {
+		t.Error("Different names should produce different hashes")
+	}
+
+	// Different rands should produce different hashes
+	rand2 := []byte{0xff, 0xfe, 0xfd, 0xfc, 0xfb, 0xfa, 0xf9, 0xf8,
+		0xf7, 0xf6, 0xf5, 0xf4, 0xf3, 0xf2, 0xf1, 0xf0,
+		0xef, 0xee, 0xed, 0xec}
+	hash3 := computeCommitHash(rand2, "d/name1")
+
+	same = true
+	for i := range hash1 {
+		if hash1[i] != hash3[i] {
+			same = false
+			break
+		}
+	}
+	if same {
+		t.Error("Different rands should produce different hashes")
+	}
+}
+
+func TestParseNameScriptFull_NameNew(t *testing.T) {
+	// NAME_NEW should return the commitment hash as extra data
+	hash := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+		0x11, 0x12, 0x13, 0x14}
+
+	script := buildScript(
+		[]byte{opNameNew},
+		pushData(hash),
+	)
+
+	op, name, value, extra, err := parseNameScriptFull(script)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if op != namedb.NameNew {
+		t.Errorf("expected NameNew, got %v", op)
+	}
+	if name != "" {
+		t.Errorf("expected empty name, got %q", name)
+	}
+	if value != "" {
+		t.Errorf("expected empty value, got %q", value)
+	}
+	if len(extra) != len(hash) {
+		t.Errorf("expected %d bytes in extra, got %d", len(hash), len(extra))
+	}
+	for i := range hash {
+		if extra[i] != hash[i] {
+			t.Errorf("extra data mismatch at byte %d", i)
+			break
+		}
+	}
+}
+
+func TestParseNameScriptFull_NameFirstUpdate(t *testing.T) {
+	// NAME_FIRSTUPDATE should return the rand as extra data
+	name := "d/example"
+	rand := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+		0x11, 0x12, 0x13, 0x14}
+	value := `{"ip":"1.2.3.4"}`
+
+	script := buildScript(
+		[]byte{opNameFirstUpdate},
+		pushData([]byte(name)),
+		pushData(rand),
+		pushData([]byte(value)),
+	)
+
+	op, parsedName, parsedValue, extra, err := parseNameScriptFull(script)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if op != namedb.NameFirstUpdate {
+		t.Errorf("expected NameFirstUpdate, got %v", op)
+	}
+	if parsedName != name {
+		t.Errorf("expected name %q, got %q", name, parsedName)
+	}
+	if parsedValue != value {
+		t.Errorf("expected value %q, got %q", value, parsedValue)
+	}
+	if len(extra) != len(rand) {
+		t.Errorf("expected %d bytes in extra, got %d", len(rand), len(extra))
+	}
+	for i := range rand {
+		if extra[i] != rand[i] {
+			t.Errorf("extra data mismatch at byte %d", i)
+			break
+		}
+	}
+}
+
+func TestParseNameScriptFull_NameUpdate(t *testing.T) {
+	// NAME_UPDATE should have nil extra data
+	name := "d/example"
+	value := `{"ip":"5.6.7.8"}`
+
+	script := buildScript(
+		[]byte{opNameUpdate},
+		pushData([]byte(name)),
+		pushData([]byte(value)),
+	)
+
+	op, parsedName, parsedValue, extra, err := parseNameScriptFull(script)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if op != namedb.NameUpdate {
+		t.Errorf("expected NameUpdate, got %v", op)
+	}
+	if parsedName != name {
+		t.Errorf("expected name %q, got %q", name, parsedName)
+	}
+	if parsedValue != value {
+		t.Errorf("expected value %q, got %q", value, parsedValue)
+	}
+	if extra != nil {
+		t.Errorf("expected nil extra data for NameUpdate, got %v", extra)
 	}
 }
