@@ -307,18 +307,53 @@ func (s *Server) nameList(req *Request) *Response {
 	}
 }
 
-// nameHistory returns the history of a name
+// nameHistory returns the history of a name, including all past operations.
+// Each entry in the history represents a NAME_FIRSTUPDATE or NAME_UPDATE operation.
 func (s *Server) nameHistory(req *Request) *Response {
-	// Method stub: name_history is not yet implemented.
-	// Returning an explicit error avoids misleading clients into thinking
-	// they are receiving full historical data.
+	var params []string
+	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32602,
+				Message: "Invalid params: expected ['name']",
+			},
+			ID: req.ID,
+		}
+	}
+
+	name := params[0]
+	history, err := s.blockchain.GetNameHistory(name)
+	if err != nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: fmt.Sprintf("Failed to get name history: %v", err),
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Format history for response.
+	// Historical records use 'expires_at' (absolute block height) instead of 'expires_in'
+	// because these are past snapshots where calculating blocks remaining would be misleading.
+	result := make([]map[string]interface{}, len(history))
+	for i, record := range history {
+		result[i] = map[string]interface{}{
+			"name":       record.Name,
+			"value":      record.Value,
+			"txid":       record.TxHash.String(),
+			"height":     record.Height,
+			"expires_at": record.ExpiresAt,
+			"address":    record.Address,
+		}
+	}
+
 	return &Response{
 		Jsonrpc: "2.0",
-		Error: &Error{
-			Code:    -32601,
-			Message: "name_history method is not yet implemented",
-		},
-		ID: req.ID,
+		Result:  result,
+		ID:      req.ID,
 	}
 }
 

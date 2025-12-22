@@ -199,6 +199,14 @@ func (bc *BlockChain) ListNames() ([]*namedb.NameRecord, error) {
 	return bc.nameDB.ListNames()
 }
 
+// GetNameHistory retrieves the historical records for a specific name.
+// Returns all past operations on the name in chronological order.
+func (bc *BlockChain) GetNameHistory(name string) ([]*namedb.NameRecord, error) {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	return bc.nameDB.GetHistory(name)
+}
+
 // parseNameScript extracts name operation from script
 func parseNameScript(script []byte) (namedb.NameOperation, string, string, error) {
 	// Simple parsing - in real implementation would use proper script parsing
