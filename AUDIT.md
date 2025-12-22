@@ -24,7 +24,7 @@ This audit analyzes the nmcd codebase for discrepancies between documented funct
 | Category | Count | Severity |
 |----------|-------|----------|
 | CRITICAL BUG | 0 | - |
-| FUNCTIONAL MISMATCH | ~~2~~ 1 (1 resolved) | Medium |
+| FUNCTIONAL MISMATCH | ~~2~~ 0 (2 resolved) | Medium |
 | MISSING FEATURE | ~~3~~ 2 (1 resolved) | Medium-Low |
 | EDGE CASE BUG | 2 | Low |
 | PERFORMANCE ISSUE | 0 | - |
@@ -65,50 +65,33 @@ func (s *Server) nameHistory(req *Request) *Response {
 
 ---
 
-### FUNCTIONAL MISMATCH: parseNameScript uses Placeholder Opcodes Instead of Real Namecoin Script Parsing
+### ~~FUNCTIONAL MISMATCH: parseNameScript uses Placeholder Opcodes Instead of Real Namecoin Script Parsing~~ ✅ RESOLVED
 
-**File:** chain/blockchain.go:203-235  
+**File:** chain/blockchain.go  
 **Severity:** Medium  
-**Description:** The `parseNameScript` function uses placeholder opcode values (0x51, 0x52, 0x53) instead of the actual Namecoin name operation opcodes. The real Namecoin protocol uses OP_NAME_NEW, OP_NAME_FIRSTUPDATE, and OP_NAME_UPDATE with specific script structures.
+**Status:** ✅ RESOLVED
 
-**Expected Behavior:** According to README.md, the implementation should support:
-1. NAME_NEW: Pre-register a name
-2. NAME_FIRSTUPDATE: First registration of a name
-3. NAME_UPDATE: Update existing name value
+**Resolution:** Implemented proper Namecoin script parsing with Bitcoin-style length-prefixed push data. The `parseNameScript` function now correctly uses the real Namecoin opcodes (OP_NAME_NEW=0x51, OP_NAME_FIRSTUPDATE=0x52, OP_NAME_UPDATE=0x53) and properly extracts name and value data from scripts using the `readPushData` helper function. The implementation supports all Bitcoin push data formats (direct push for 1-75 bytes, OP_PUSHDATA1 for 76-255 bytes, and OP_PUSHDATA2 for 256+ bytes). Comprehensive unit tests were added covering all name operations, push data formats, error cases, and edge cases.
 
-These should be parsed from actual Namecoin transaction scripts.
-
-**Actual Behavior:** The function uses arbitrary placeholder opcodes that do not correspond to real Namecoin protocol scripts. Additionally, it uses fixed-size extraction (bytes 1-11 for name, 11+ for value) which does not match real Namecoin script encoding that uses length-prefixed push data.
-
-**Impact:** The implementation cannot process real Namecoin transactions from the network. It will fail to recognize valid name operations and may incorrectly identify non-name transactions.
-
-**Reproduction:** Attempt to process a real Namecoin block containing name transactions.
-
-**Code Reference:**
+**Fixed Code:**
 ```go
-// parseNameScript extracts name operation from script
-func parseNameScript(script []byte) (namedb.NameOperation, string, string, error) {
-	// Simple parsing - in real implementation would use proper script parsing
-	// This is a placeholder that looks for OP_NAME patterns
-	if len(script) < 10 {
-		return 0, "", "", fmt.Errorf("script too short")
-	}
+// Namecoin-specific opcodes for name operations.
+const (
+	opNameNew         = 0x51  // NAME_NEW
+	opNameFirstUpdate = 0x52  // NAME_FIRSTUPDATE
+	opNameUpdate      = 0x53  // NAME_UPDATE
+	opPushData1       = 0x4c  // Push 76-255 bytes
+	opPushData2       = 0x4d  // Push 256-65535 bytes
+)
 
-	// Check for name operation opcodes (simplified)
-	// Real implementation would properly parse script opcodes
-	if script[0] == 0x51 { // OP_NAME_NEW placeholder
-		return namedb.NameNew, "", "", nil
-	}
-	if script[0] == 0x52 { // OP_NAME_FIRSTUPDATE placeholder
-		// Extract name and value from script
-		if len(script) < 20 {
-			return 0, "", "", fmt.Errorf("invalid firstupdate script")
-		}
-		name := string(script[1:11])
-		value := string(script[11:])
-		return namedb.NameFirstUpdate, name, value, nil
-	}
-	// ...
+// parseNameScript extracts name operation from script.
+func parseNameScript(script []byte) (namedb.NameOperation, string, string, error) {
+	// ... proper switch-based parsing with readPushData helper
+}
+
+// readPushData reads a Bitcoin-style push data from the script.
+func readPushData(script []byte, offset int) ([]byte, int, error) {
+	// Handles direct push, OP_PUSHDATA1, and OP_PUSHDATA2
 }
 ```
 
@@ -344,7 +327,7 @@ Error handling is generally good with some exceptions:
 
 ## RECOMMENDATIONS
 
-1. **High Priority:** Implement real Namecoin script parsing in `parseNameScript` to support actual network transactions
+1. ~~**High Priority:** Implement real Namecoin script parsing in `parseNameScript` to support actual network transactions~~ ✅ RESOLVED
 2. **High Priority:** Implement NAME_NEW commitment tracking and validation for front-running protection
 3. ~~**Medium Priority:** Add `GetHistory` function and fix `name_history` RPC endpoint~~ ✅ RESOLVED
 4. **Medium Priority:** Implement MinBlocksBeforeFirstUpdate validation
