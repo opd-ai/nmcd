@@ -8,6 +8,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/opd-ai/nmcd/config"
 	"github.com/opd-ai/nmcd/namedb"
@@ -16,8 +17,9 @@ import (
 // BlockChain wraps btcd blockchain with name operation validation
 type BlockChain struct {
 	*blockchain.BlockChain
-	nameDB *namedb.NameDatabase
-	mu     sync.RWMutex
+	nameDB      *namedb.NameDatabase
+	chainParams *chaincfg.Params
+	mu          sync.RWMutex
 }
 
 // Config holds blockchain configuration
@@ -36,7 +38,8 @@ func NewBlockChain(cfg *Config, indexManager blockchain.IndexManager) (*BlockCha
 	}
 
 	bc := &BlockChain{
-		nameDB: nameDB,
+		nameDB:      nameDB,
+		chainParams: cfg.ChainParams,
 	}
 
 	// Create blockchain config
@@ -173,6 +176,8 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 // updateNameDatabase updates the name database with operations from a block
 func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 	height := block.Height()
+	// Use block timestamp for deterministic replay and historical accuracy
+	blockTime := block.MsgBlock().Header.Timestamp
 
 	// Handle expired names
 	expired, err := bc.nameDB.GetExpiredNames(height)
@@ -205,12 +210,16 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 				}
 
 			case namedb.NameFirstUpdate:
+				// Extract the owner address from the script
+				address := extractAddressFromNameScript(txOut.PkScript, bc.chainParams)
 				record := &namedb.NameRecord{
 					Name:      name,
 					Value:     value,
 					TxHash:    *txHash,
 					Height:    height,
 					ExpiresAt: height + config.NameExpirationBlocks,
+					Address:   address,
+					UpdatedAt: blockTime,
 				}
 				if err := bc.nameDB.PutName(name, record); err != nil {
 					return err
@@ -225,12 +234,16 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 				}
 
 			case namedb.NameUpdate:
+				// Extract the owner address from the script
+				address := extractAddressFromNameScript(txOut.PkScript, bc.chainParams)
 				record := &namedb.NameRecord{
 					Name:      name,
 					Value:     value,
 					TxHash:    *txHash,
 					Height:    height,
 					ExpiresAt: height + config.NameExpirationBlocks,
+					Address:   address,
+					UpdatedAt: blockTime,
 				}
 				if err := bc.nameDB.PutName(name, record); err != nil {
 					return err
@@ -378,6 +391,104 @@ func parseNameScriptFull(script []byte) (namedb.NameOperation, string, string, [
 	}
 
 	return 0, "", "", nil, fmt.Errorf("not a name operation")
+}
+
+// extractAddressFromNameScript extracts the owner address from a name operation script.
+// Namecoin name scripts have the format: <name_op> <data...> <drop_ops> <P2PKH script>
+// This function parses past the name operation data and drop opcodes to extract
+// the address from the embedded P2PKH script.
+// Returns an empty string if the address cannot be extracted.
+//
+// Note: This function is intentionally lenient with drop opcodes. If drop opcodes
+// are missing or different than expected, it still attempts to extract an address
+// from whatever remains. This is appropriate for parsing blockchain data where
+// scripts may have minor variations.
+func extractAddressFromNameScript(script []byte, chainParams *chaincfg.Params) string {
+	if len(script) < 2 || chainParams == nil {
+		return ""
+	}
+
+	var offset int
+	switch script[0] {
+	case opNameNew:
+		// NAME_NEW: OP_NAME_NEW <hash> OP_2DROP <P2PKH>
+		_, newOffset, err := readPushData(script, 1)
+		if err != nil {
+			return ""
+		}
+		offset = newOffset
+		// Skip OP_2DROP (0x6d)
+		if offset < len(script) && script[offset] == 0x6d {
+			offset++
+		}
+
+	case opNameFirstUpdate:
+		// NAME_FIRSTUPDATE: OP_NAME_FIRSTUPDATE <name> <rand> <value> OP_2DROP OP_2DROP <P2PKH>
+		offset = 1
+		// Skip name
+		_, newOffset, err := readPushData(script, offset)
+		if err != nil {
+			return ""
+		}
+		offset = newOffset
+		// Skip rand
+		_, newOffset, err = readPushData(script, offset)
+		if err != nil {
+			return ""
+		}
+		offset = newOffset
+		// Skip value
+		_, newOffset, err = readPushData(script, offset)
+		if err != nil {
+			return ""
+		}
+		offset = newOffset
+		// Skip OP_2DROP OP_2DROP (0x6d 0x6d)
+		for i := 0; i < 2 && offset < len(script) && script[offset] == 0x6d; i++ {
+			offset++
+		}
+
+	case opNameUpdate:
+		// NAME_UPDATE: OP_NAME_UPDATE <name> <value> OP_2DROP OP_DROP <P2PKH>
+		offset = 1
+		// Skip name
+		_, newOffset, err := readPushData(script, offset)
+		if err != nil {
+			return ""
+		}
+		offset = newOffset
+		// Skip value
+		_, newOffset, err = readPushData(script, offset)
+		if err != nil {
+			return ""
+		}
+		offset = newOffset
+		// Skip OP_2DROP (0x6d)
+		if offset < len(script) && script[offset] == 0x6d {
+			offset++
+		}
+		// Skip OP_DROP (0x75)
+		if offset < len(script) && script[offset] == 0x75 {
+			offset++
+		}
+
+	default:
+		return ""
+	}
+
+	// Extract the P2PKH script portion
+	if offset >= len(script) {
+		return ""
+	}
+	p2pkhScript := script[offset:]
+
+	// Use txscript to extract the address from the P2PKH portion
+	_, addrs, _, err := txscript.ExtractPkScriptAddrs(p2pkhScript, chainParams)
+	if err != nil || len(addrs) == 0 {
+		return ""
+	}
+
+	return addrs[0].EncodeAddress()
 }
 
 // readPushData reads a Bitcoin-style push data from the script at the given offset.

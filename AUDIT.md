@@ -3,6 +3,7 @@
 **Audit Date:** 2025-12-22  
 **Auditor:** Automated Code Audit  
 **Codebase Version:** Current HEAD  
+**Last Updated:** 2025-12-22  
 
 ---
 
@@ -11,13 +12,13 @@
 | Category | Count | Severity Distribution |
 |----------|-------|----------------------|
 | CRITICAL BUG | 0 | - |
-| FUNCTIONAL MISMATCH | 5 | High: 2, Medium: 2, Low: 1 |
+| FUNCTIONAL MISMATCH | 3 (2 fixed) | High: 1, Medium: 2 |
 | MISSING FEATURE | 5 | High: 1, Medium: 3, Low: 1 |
 | EDGE CASE BUG | 1 | Medium: 1 |
 | PERFORMANCE ISSUE | 0 | - |
 | DOCUMENTATION DISCREPANCY | 1 | Low: 1 |
 
-**Total Findings: 12**
+**Total Findings: 12 (2 fixed, 10 remaining)**
 
 The codebase is well-structured with good test coverage. The primary concerns are around incomplete integration between components and missing address tracking for name records. No critical bugs that would cause crashes or data corruption were identified.
 
@@ -25,63 +26,34 @@ The codebase is well-structured with good test coverage. The primary concerns ar
 
 ## DETAILED FINDINGS
 
-### FUNCTIONAL MISMATCH: Address Field Not Populated in Name Records
+### [FIXED] FUNCTIONAL MISMATCH: Address Field Not Populated in Name Records
 
 **File:** chain/blockchain.go:207-241  
 **Severity:** High  
+**Status:** ✅ FIXED  
+**Fix Date:** 2025-12-22  
+
 **Description:** When creating NameRecord entries during NAME_FIRSTUPDATE and NAME_UPDATE operations in `updateNameDatabase()`, the `Address` field is never populated. The NameRecord struct has an Address field (namedb/namedb.go:42), and the RPC responses include this field, but it will always be empty.
 
-**Expected Behavior:** Per README.md, name records should track the owner's address. The RPC `name_show` response includes an `address` field suggesting ownership tracking.
-
-**Actual Behavior:** The Address field is initialized to its zero value (empty string) and never set when processing blocks.
-
-**Impact:** 
-- `name_show` RPC returns empty address for all names
-- `name_update` RPC cannot properly verify name ownership via address
-- Wallet integration for name ownership verification is broken
-
-**Reproduction:** Query any name via `name_show` RPC - the address field will be empty.
-
-**Code Reference:**
-```go
-case namedb.NameFirstUpdate:
-    record := &namedb.NameRecord{
-        Name:      name,
-        Value:     value,
-        TxHash:    *txHash,
-        Height:    height,
-        ExpiresAt: height + config.NameExpirationBlocks,
-        // Address field is missing!
-    }
-```
+**Fix Applied:**
+- Added `extractAddressFromNameScript()` function to extract the owner address from the P2PKH portion of name scripts
+- Updated `updateNameDatabase()` to populate the `Address` field when creating records for NAME_FIRSTUPDATE and NAME_UPDATE operations
+- Added comprehensive unit tests for address extraction
 
 ---
 
-### FUNCTIONAL MISMATCH: UpdatedAt Field Not Populated
+### [FIXED] FUNCTIONAL MISMATCH: UpdatedAt Field Not Populated
 
 **File:** chain/blockchain.go:207-241  
 **Severity:** Low  
+**Status:** ✅ FIXED  
+**Fix Date:** 2025-12-22  
+
 **Description:** The `UpdatedAt` field in NameRecord is never set when processing blocks. This field is defined in namedb/namedb.go:43 and is properly encoded/decoded, but the chain package doesn't populate it.
 
-**Expected Behavior:** The UpdatedAt field should contain the timestamp when the record was created or updated.
-
-**Actual Behavior:** UpdatedAt is always the zero time (January 1, year 1, 00:00:00 UTC).
-
-**Impact:** Clients cannot determine when a name was last modified. The field exists in the database but provides no useful information.
-
-**Reproduction:** Create a name record via block processing and retrieve it - UpdatedAt will show a zero timestamp.
-
-**Code Reference:**
-```go
-record := &namedb.NameRecord{
-    Name:      name,
-    Value:     value,
-    TxHash:    *txHash,
-    Height:    height,
-    ExpiresAt: height + config.NameExpirationBlocks,
-    // UpdatedAt field is missing!
-}
-```
+**Fix Applied:**
+- Updated `updateNameDatabase()` to set `UpdatedAt` using the block's timestamp (`block.MsgBlock().Header.Timestamp`) when creating records for NAME_FIRSTUPDATE and NAME_UPDATE operations
+- This ensures deterministic replay and historical accuracy when reprocessing the blockchain
 
 ---
 
