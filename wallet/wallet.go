@@ -197,14 +197,31 @@ func (w *Wallet) GetKey(address string) (*KeyPair, error) {
 }
 
 // Namecoin-specific opcodes for name operations.
+// These opcodes extend Bitcoin's script language for Namecoin's naming system.
 const (
-	opNameUpdate  = 0xd2
-	opDrop        = 0x75
-	op2Drop       = 0x6d
-	opDup         = 0x76
-	opHash160     = 0xa9
+	// opNameUpdate (0xd2) begins a NAME_UPDATE operation to update an existing name's value
+	opNameUpdate = 0xd2
+
+	// opDrop (0x75) removes the top stack item
+	opDrop = 0x75
+
+	// op2Drop (0x6d) removes the top two stack items
+	op2Drop = 0x6d
+
+	// opDup (0x76) duplicates the top stack item (part of P2PKH script)
+	opDup = 0x76
+
+	// opHash160 (0xa9) computes RIPEMD160(SHA256(x)) of the top stack item
+	opHash160 = 0xa9
+
+	// opEqualVerify (0x88) verifies equality and fails if not equal
 	opEqualVerify = 0x88
-	opCheckSig    = 0xac
+
+	// opCheckSig (0xac) verifies a signature against the transaction
+	opCheckSig = 0xac
+
+	// dustLimit is the minimum output value in satoshis to avoid dust outputs
+	dustLimit = 546
 )
 
 // BuildNameUpdateScript creates a NAME_UPDATE output script.
@@ -317,9 +334,6 @@ func (w *Wallet) CreateNameUpdateTx(
 	// Outputs: name output + change output
 	estimatedSize := int64(10 + len(utxos)*148 + len(nameScript) + 34 + 34)
 	fee := feeRate * estimatedSize
-
-	// Minimum output value (dust limit)
-	const dustLimit = 546
 
 	// Name output value (just above dust)
 	nameOutValue := int64(1000)
@@ -444,7 +458,6 @@ func CreateNameUpdateTxRaw(
 	tx.AddTxOut(wire.NewTxOut(nameOutValue, nameScript))
 
 	// Add change output if above dust
-	const dustLimit = 546
 	if changeValue >= dustLimit {
 		changeScript, err := txscript.PayToAddrScript(destAddress)
 		if err != nil {
