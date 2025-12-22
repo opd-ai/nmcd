@@ -2,9 +2,11 @@ package network
 
 import (
 	"testing"
+	"time"
 
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/peer"
+	"github.com/btcsuite/btcd/wire"
 )
 
 // TestPeerManagerCreation tests that PeerManager can be created with proper configuration.
@@ -156,5 +158,111 @@ func TestConfigStruct(t *testing.T) {
 
 	if cfg.MaxPeers != 25 {
 		t.Errorf("Expected MaxPeers to be 25, got %d", cfg.MaxPeers)
+	}
+}
+
+// TestOnBlockWithNilBlockchain tests that onBlock handles nil blockchain gracefully.
+// When blockchain is nil, the handler should log a message and return without panicking.
+func TestOnBlockWithNilBlockchain(t *testing.T) {
+	pm := &PeerManager{
+		peers:       make(map[string]*peer.Peer),
+		blockchain:  nil, // nil blockchain
+		chainParams: &chaincfg.MainNetParams,
+		maxPeers:    10,
+		quit:        make(chan struct{}),
+	}
+
+	// Create a test block message
+	msgBlock := wire.NewMsgBlock(&wire.BlockHeader{
+		Version:   1,
+		Timestamp: time.Now(),
+	})
+
+	// Should not panic when blockchain is nil
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("onBlock panicked with nil blockchain: %v", r)
+		}
+	}()
+
+	// Call onBlock with nil peer and nil blockchain
+	// The function should handle this gracefully by logging and returning
+	pm.onBlock(nil, msgBlock, nil)
+}
+
+// TestOnBlockDoesNotPanicWithValidBlock tests that onBlock doesn't panic
+// when given a valid block structure, even if the block would be rejected.
+func TestOnBlockDoesNotPanicWithValidBlock(t *testing.T) {
+	pm := &PeerManager{
+		peers:       make(map[string]*peer.Peer),
+		blockchain:  nil, // We use nil to test the nil check path
+		chainParams: &chaincfg.MainNetParams,
+		maxPeers:    10,
+		quit:        make(chan struct{}),
+	}
+
+	// Create a more complete block message
+	msgBlock := wire.NewMsgBlock(&wire.BlockHeader{
+		Version:   1,
+		Timestamp: time.Now(),
+	})
+
+	// Add a coinbase transaction
+	coinbaseTx := wire.NewMsgTx(1)
+	coinbaseTx.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: wire.OutPoint{
+			Index: 0xffffffff,
+		},
+	})
+	coinbaseTx.AddTxOut(&wire.TxOut{
+		Value:    50 * 1e8,
+		PkScript: []byte{0x76, 0xa9, 0x14},
+	})
+	msgBlock.AddTransaction(coinbaseTx)
+
+	// Should not panic
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("onBlock panicked: %v", r)
+		}
+	}()
+
+	pm.onBlock(nil, msgBlock, nil)
+}
+
+// TestOnBlockBufferParameter tests that the buf parameter is properly handled.
+func TestOnBlockBufferParameter(t *testing.T) {
+	pm := &PeerManager{
+		peers:       make(map[string]*peer.Peer),
+		blockchain:  nil,
+		chainParams: &chaincfg.MainNetParams,
+		maxPeers:    10,
+		quit:        make(chan struct{}),
+	}
+
+	msgBlock := wire.NewMsgBlock(&wire.BlockHeader{
+		Version:   1,
+		Timestamp: time.Now(),
+	})
+
+	// Test with various buf values - none should cause issues
+	testCases := []struct {
+		name string
+		buf  []byte
+	}{
+		{"nil buffer", nil},
+		{"empty buffer", []byte{}},
+		{"non-empty buffer", []byte{0x01, 0x02, 0x03}},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("onBlock panicked with %s: %v", tc.name, r)
+				}
+			}()
+			pm.onBlock(nil, msgBlock, tc.buf)
+		})
 	}
 }

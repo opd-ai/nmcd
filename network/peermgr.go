@@ -226,6 +226,9 @@ func (pm *PeerManager) onInv(p *peer.Peer, msg *wire.MsgInv) {
 }
 
 func (pm *PeerManager) onBlock(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
+	// buf is part of the peer.MessageListeners interface but not used here.
+	_ = buf
+
 	// Check if blockchain is available for processing
 	if pm.blockchain == nil {
 		log.Printf("Cannot process block %s: blockchain not initialized",
