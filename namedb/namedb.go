@@ -18,6 +18,11 @@ var (
 	nameNewBucket      = []byte("name_new") // Tracks NAME_NEW commitments
 )
 
+// txHashSize is the size of a transaction hash in bytes.
+// Bitcoin/Namecoin use double SHA256 (SHA256(SHA256(data))) which produces
+// a 32-byte result, same as a single SHA256.
+const txHashSize = 32
+
 // NameOperation represents a name operation type
 type NameOperation uint8
 
@@ -211,15 +216,13 @@ func (ndb *NameDatabase) GetHistory(name string) ([]*NameRecord, error) {
 			return nil // No history for this name
 		}
 
-		// Each txHash is 32 bytes
-		const hashSize = 32
-		if len(indexData)%hashSize != 0 {
+		if len(indexData)%txHashSize != 0 {
 			return fmt.Errorf("corrupt history index for name: %s", name)
 		}
 
 		histBucket := tx.Bucket(historyBucket)
-		for i := 0; i < len(indexData); i += hashSize {
-			txHashBytes := indexData[i : i+hashSize]
+		for i := 0; i < len(indexData); i += txHashSize {
+			txHashBytes := indexData[i : i+txHashSize]
 			data := histBucket.Get(txHashBytes)
 			if data == nil {
 				continue // Skip missing records
@@ -265,10 +268,12 @@ func (ndb *NameDatabase) PutNameNew(commitHash []byte, height int32) error {
 	})
 }
 
-// RestoreNameNew restores a NAME_NEW commitment during block reorg.
-// Unlike PutNameNew, this allows overwriting an existing commitment
-// because during rollback we may need to restore a commitment that was
-// previously consumed by a NAME_FIRSTUPDATE that is being rolled back.
+// RestoreNameNew restores a NAME_NEW commitment during block reorg rollback.
+// Unlike PutNameNew (which rejects duplicates to prevent commitment replacement
+// attacks during normal operation), RestoreNameNew allows overwriting because:
+// 1. During rollback, we need to restore commitments consumed by NAME_FIRSTUPDATEs
+// 2. The restored height may be an estimate since we don't store the original
+// 3. This is safe because it only happens during reorg, not normal block processing
 func (ndb *NameDatabase) RestoreNameNew(commitHash []byte, height int32) error {
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
@@ -341,24 +346,23 @@ func (ndb *NameDatabase) RemoveLastHistoryEntry(name string) (*NameRecord, error
 			return nil // No history to remove
 		}
 
-		const hashSize = 32
-		if len(indexData)%hashSize != 0 {
+		if len(indexData)%txHashSize != 0 {
 			return fmt.Errorf("corrupt history index for name: %s", name)
 		}
 
-		numEntries := len(indexData) / hashSize
+		numEntries := len(indexData) / txHashSize
 		if numEntries == 0 {
 			return nil
 		}
 
 		// Get the last txHash to remove from history bucket
-		lastTxHash := indexData[len(indexData)-hashSize:]
+		lastTxHash := indexData[len(indexData)-txHashSize:]
 		if err := histBucket.Delete(lastTxHash); err != nil {
 			return err
 		}
 
 		// Remove the last txHash from the index
-		newIndexData := indexData[:len(indexData)-hashSize]
+		newIndexData := indexData[:len(indexData)-txHashSize]
 		if len(newIndexData) == 0 {
 			// No more entries, delete the index
 			if err := indexBucket.Delete([]byte(name)); err != nil {
@@ -370,7 +374,7 @@ func (ndb *NameDatabase) RemoveLastHistoryEntry(name string) (*NameRecord, error
 			}
 
 			// Get the previous record (now the last one)
-			prevTxHash := newIndexData[len(newIndexData)-hashSize:]
+			prevTxHash := newIndexData[len(newIndexData)-txHashSize:]
 			data := histBucket.Get(prevTxHash)
 			if data != nil {
 				var decodeErr error

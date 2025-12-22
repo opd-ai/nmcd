@@ -814,6 +814,19 @@ func TestRollbackNameFirstUpdate(t *testing.T) {
 	if len(history) != 0 {
 		t.Errorf("Expected 0 history entries after rollback, got %d", len(history))
 	}
+
+	// Verify that the NAME_NEW commitment was restored
+	// The commit hash is computed from rand and name
+	commitHash := computeCommitHash(rand, nameStr)
+	restoredNameNew, err := ndb.GetNameNew(commitHash)
+	if err != nil {
+		t.Fatalf("Expected NAME_NEW to be restored after rollback: %v", err)
+	}
+	// The restored height should be estimated as block height - MinBlocksBeforeFirstUpdate
+	expectedHeight := height - 12 // MinBlocksBeforeFirstUpdate = 12
+	if restoredNameNew.Height != expectedHeight {
+		t.Errorf("Expected restored NAME_NEW height %d, got %d", expectedHeight, restoredNameNew.Height)
+	}
 }
 
 // TestRollbackNameUpdate tests that NAME_UPDATE operations are properly rolled back

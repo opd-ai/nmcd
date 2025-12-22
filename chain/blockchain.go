@@ -527,25 +527,38 @@ func (bc *BlockChain) rollbackNameOperations(block *btcutil.Block) {
 
 			switch op {
 			case namedb.NameNew:
-				// Rollback NAME_NEW: remove the commitment from the database
-				// extra contains the commitment hash
-				if err := bc.nameDB.DeleteNameNew(extra); err != nil {
-					// Log error but continue - commitment may not exist if
-					// it was already consumed by a NAME_FIRSTUPDATE
-				}
+				// Rollback NAME_NEW: remove the commitment from the database.
+				// extra contains the commitment hash.
+				// Note: Deletion may fail if commitment was already consumed by
+				// a NAME_FIRSTUPDATE - this is expected and safe to ignore.
+				_ = bc.nameDB.DeleteNameNew(extra)
 
 			case namedb.NameFirstUpdate:
 				// Rollback NAME_FIRSTUPDATE:
 				// 1. Remove the history entry for this operation
 				// 2. Delete the name from the database
-				// Note: We don't restore the NAME_NEW commitment because the
-				// new chain will process its own NAME_NEW if needed
-				if _, err := bc.nameDB.RemoveLastHistoryEntry(name); err != nil {
-					// Log error but continue
+				// 3. Restore the NAME_NEW commitment that was consumed
+				_, _ = bc.nameDB.RemoveLastHistoryEntry(name)
+				_ = bc.nameDB.DeleteName(name)
+
+				// Restore the NAME_NEW commitment. The commitment hash is
+				// computed from rand (extra) and name.
+				//
+				// Height estimation: We use block.Height() - MinBlocksBeforeFirstUpdate
+				// as a conservative estimate. The actual NAME_NEW could have been
+				// created earlier, but this is the earliest possible height. This
+				// is safe because:
+				// - If a new NAME_FIRSTUPDATE is attempted, it will pass the
+				//   MinBlocksBeforeFirstUpdate check since actual elapsed blocks >= min
+				// - The exact original height isn't stored, so estimation is necessary
+				commitHash := computeCommitHash(extra, name)
+				estimatedNameNewHeight := block.Height() - config.MinBlocksBeforeFirstUpdate
+				// Ensure height is non-negative (shouldn't happen in practice
+				// since NAME_FIRSTUPDATE requires MinBlocksBeforeFirstUpdate to pass)
+				if estimatedNameNewHeight < 0 {
+					estimatedNameNewHeight = 0
 				}
-				if err := bc.nameDB.DeleteName(name); err != nil {
-					// Log error but continue
-				}
+				_ = bc.nameDB.RestoreNameNew(commitHash, estimatedNameNewHeight)
 
 			case namedb.NameUpdate:
 				// Rollback NAME_UPDATE:
@@ -553,14 +566,11 @@ func (bc *BlockChain) rollbackNameOperations(block *btcutil.Block) {
 				// 2. Restore the previous value from history
 				prevRecord, err := bc.nameDB.RemoveLastHistoryEntry(name)
 				if err != nil {
-					// Log error but continue
 					continue
 				}
 				if prevRecord != nil {
 					// Restore the previous record
-					if err := bc.nameDB.PutName(name, prevRecord); err != nil {
-						// Log error but continue
-					}
+					_ = bc.nameDB.PutName(name, prevRecord)
 				}
 				// If prevRecord is nil, it means there was no previous state,
 				// which shouldn't happen for NAME_UPDATE (name should have been
