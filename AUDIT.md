@@ -75,7 +75,7 @@ func (s *Server) nameUpdate(req *Request) *Response {
 }
 ```
 
-**Recommendation:** Update README.md to note that `name_update` requires wallet functionality which is not yet implemented, or remove it from the RPC documentation until implemented.
+**Recommendation:** Implement wallet functionality to enable the `name_update` RPC method. In the interim, update README.md to note that `name_update` requires wallet functionality which is planned for a future release.
 
 ---
 
@@ -213,8 +213,8 @@ All three networks are properly supported:
 The nmcd codebase is a well-structured, focused implementation that correctly leverages btcd libraries for blockchain functionality. The code follows Go idioms and best practices, with comprehensive test coverage for the core functionality.
 
 **Key Recommendations:**
-1. Update README.md to document `name_list` RPC method
-2. Update README.md to clarify `name_update` requires wallet (not yet implemented)
+1. Add `name_list` RPC method documentation to README.md
+2. Implement wallet functionality to enable `name_update` RPC; update README.md to note current status
 3. Implement block reorg handling to maintain name database consistency
 
 The overall code quality is high, and the identified issues are minor documentation mismatches rather than functional bugs in the core logic.
