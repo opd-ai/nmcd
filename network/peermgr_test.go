@@ -1,0 +1,160 @@
+package network
+
+import (
+	"testing"
+
+	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/peer"
+)
+
+// TestPeerManagerCreation tests that PeerManager can be created with proper configuration.
+func TestPeerManagerCreation(t *testing.T) {
+	// Create a PeerManager with no listeners and nil blockchain
+	// This tests the basic structure without needing a full blockchain instance
+	netCfg := &Config{
+		ChainParams: &chaincfg.MainNetParams,
+		Blockchain:  nil, // nil is acceptable when no block processing is needed
+		ListenAddrs: []string{}, // No listeners for this test
+		MaxPeers:    10,
+	}
+
+	pm, err := NewPeerManager(netCfg)
+	if err != nil {
+		t.Fatalf("Failed to create PeerManager: %v", err)
+	}
+	defer pm.Stop()
+
+	// Verify the configuration was stored correctly
+	if pm.maxPeers != 10 {
+		t.Errorf("Expected maxPeers to be 10, got %d", pm.maxPeers)
+	}
+
+	if pm.chainParams != &chaincfg.MainNetParams {
+		t.Error("Expected chainParams to be MainNetParams")
+	}
+
+	// Verify the peers map was initialized
+	if pm.peers == nil {
+		t.Error("Expected peers map to be initialized")
+	}
+
+	// Verify the quit channel was created
+	if pm.quit == nil {
+		t.Error("Expected quit channel to be initialized")
+	}
+}
+
+// TestPeerManagerGetConnectedPeers tests the GetConnectedPeers method.
+func TestPeerManagerGetConnectedPeers(t *testing.T) {
+	pm := &PeerManager{
+		peers:       make(map[string]*peer.Peer),
+		chainParams: &chaincfg.MainNetParams,
+		maxPeers:    10,
+		quit:        make(chan struct{}),
+	}
+
+	// Initially should have 0 peers
+	if count := pm.GetConnectedPeers(); count != 0 {
+		t.Errorf("Expected 0 connected peers, got %d", count)
+	}
+}
+
+// TestPeerManagerGetPeerInfo tests the GetPeerInfo method.
+func TestPeerManagerGetPeerInfo(t *testing.T) {
+	pm := &PeerManager{
+		peers:       make(map[string]*peer.Peer),
+		chainParams: &chaincfg.MainNetParams,
+		maxPeers:    10,
+		quit:        make(chan struct{}),
+	}
+
+	// Initially should have empty peer info
+	info := pm.GetPeerInfo()
+	if len(info) != 0 {
+		t.Errorf("Expected 0 peer info entries, got %d", len(info))
+	}
+}
+
+// TestPeerManagerStop tests that Stop can be called safely.
+func TestPeerManagerStop(t *testing.T) {
+	pm := &PeerManager{
+		peers:       make(map[string]*peer.Peer),
+		chainParams: &chaincfg.MainNetParams,
+		maxPeers:    10,
+		quit:        make(chan struct{}),
+	}
+
+	// Should not panic
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("Stop panicked: %v", r)
+		}
+	}()
+
+	pm.Stop()
+}
+
+// TestPeerManagerBlockchainReference tests that blockchain reference is stored correctly.
+func TestPeerManagerBlockchainReference(t *testing.T) {
+	// When a nil blockchain is provided, it should be stored as nil
+	netCfg := &Config{
+		ChainParams: &chaincfg.MainNetParams,
+		Blockchain:  nil,
+		ListenAddrs: []string{},
+		MaxPeers:    10,
+	}
+
+	pm, err := NewPeerManager(netCfg)
+	if err != nil {
+		t.Fatalf("Failed to create PeerManager: %v", err)
+	}
+	defer pm.Stop()
+
+	// With nil blockchain, the field should be nil
+	if pm.blockchain != nil {
+		t.Error("Expected blockchain to be nil when configured with nil")
+	}
+}
+
+// TestPeerInfo tests the PeerInfo struct.
+func TestPeerInfo(t *testing.T) {
+	info := PeerInfo{
+		Addr:      "192.168.1.1:8334",
+		Connected: true,
+		Inbound:   false,
+	}
+
+	if info.Addr != "192.168.1.1:8334" {
+		t.Errorf("Expected Addr to be '192.168.1.1:8334', got %s", info.Addr)
+	}
+
+	if !info.Connected {
+		t.Error("Expected Connected to be true")
+	}
+
+	if info.Inbound {
+		t.Error("Expected Inbound to be false")
+	}
+}
+
+// TestConfigStruct tests the Config struct.
+func TestConfigStruct(t *testing.T) {
+	cfg := &Config{
+		ChainParams: &chaincfg.TestNet3Params,
+		Blockchain:  nil,
+		ListenAddrs: []string{"0.0.0.0:8334", "127.0.0.1:8335"},
+		MaxPeers:    25,
+	}
+
+	if cfg.ChainParams != &chaincfg.TestNet3Params {
+		t.Error("Expected ChainParams to be TestNet3Params")
+	}
+
+	if len(cfg.ListenAddrs) != 2 {
+		t.Errorf("Expected 2 listen addresses, got %d", len(cfg.ListenAddrs))
+	}
+
+	if cfg.MaxPeers != 25 {
+		t.Errorf("Expected MaxPeers to be 25, got %d", cfg.MaxPeers)
+	}
+}
