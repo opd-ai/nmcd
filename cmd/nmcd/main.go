@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/opd-ai/nmcd/chain"
@@ -110,17 +111,31 @@ func parseFlags() *config.Config {
 
 	flag.Parse()
 
-	// Parse listen addresses
+	// Parse listen addresses (comma-separated)
 	if listenAddrs != "" {
-		cfg.ListenAddrs = []string{listenAddrs}
+		cfg.ListenAddrs = splitAndTrim(listenAddrs)
 	}
 
-	// Parse add peers
+	// Parse add peers (comma-separated)
 	if addPeers != "" {
-		cfg.AddPeers = []string{addPeers}
+		cfg.AddPeers = splitAndTrim(addPeers)
 	}
 
 	return cfg
+}
+
+// splitAndTrim splits a comma-separated string and trims whitespace from each element.
+// Empty elements are filtered out.
+func splitAndTrim(s string) []string {
+	parts := strings.Split(s, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }
 
 func init() {

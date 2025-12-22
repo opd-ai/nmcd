@@ -24,7 +24,7 @@ This audit analyzes the nmcd codebase for discrepancies between documented funct
 | Category | Count | Severity |
 |----------|-------|----------|
 | CRITICAL BUG | 0 | - |
-| FUNCTIONAL MISMATCH | 3 | Medium |
+| FUNCTIONAL MISMATCH | 2 | Medium |
 | MISSING FEATURE | 3 | Medium-Low |
 | EDGE CASE BUG | 2 | Low |
 | PERFORMANCE ISSUE | 0 | - |
@@ -125,39 +125,28 @@ func parseNameScript(script []byte) (namedb.NameOperation, string, string, error
 
 ---
 
-### FUNCTIONAL MISMATCH: Command-Line Flag Parsing Does Not Handle Comma-Separated Values as Documented
+### ~~FUNCTIONAL MISMATCH: Command-Line Flag Parsing Does Not Handle Comma-Separated Values as Documented~~ (RESOLVED)
 
 **File:** cmd/nmcd/main.go:103-121  
 **Severity:** Low  
-**Description:** The README.md suggests that multiple peers can be specified, but the command-line flag parsing does not properly handle comma-separated values. The `listenAddrs` and `addPeers` flags expect comma-separated values according to comments, but the actual implementation just wraps the entire string in a single-element slice.
+**Status:** ✅ RESOLVED
 
-**Expected Behavior:** According to flag comments and typical CLI conventions:
-```bash
-./nmcd -addpeer=peer1.example.com:8334,peer2.example.com:8334
-```
-Should connect to multiple peers.
+**Resolution:** Implemented `splitAndTrim` helper function that properly splits comma-separated values and trims whitespace. Added comprehensive unit tests for the functionality.
 
-**Actual Behavior:** The entire comma-separated string is treated as a single peer address, causing connection failures.
-
-**Impact:** Users cannot specify multiple initial peers or listen addresses via command line as the documentation comments suggest.
-
-**Reproduction:** Run with `-addpeer=peer1:8334,peer2:8334` and observe connection attempt to the literal string including the comma.
-
-**Code Reference:**
+**Fixed Code:**
 ```go
-var addPeers string
-flag.StringVar(&addPeers, "addpeer", "", "Peers to connect to (comma-separated)")
-
-flag.Parse()
-
-// Parse listen addresses
-if listenAddrs != "" {
-	cfg.ListenAddrs = []string{listenAddrs}  // Does not split on comma
-}
-
-// Parse add peers
-if addPeers != "" {
-	cfg.AddPeers = []string{addPeers}  // Does not split on comma
+// splitAndTrim splits a comma-separated string and trims whitespace from each element.
+// Empty elements are filtered out.
+func splitAndTrim(s string) []string {
+	parts := strings.Split(s, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }
 ```
 
@@ -359,7 +348,7 @@ Error handling is generally good with some exceptions:
 2. **High Priority:** Implement NAME_NEW commitment tracking and validation for front-running protection
 3. **Medium Priority:** Add `GetHistory` function and fix `name_history` RPC endpoint
 4. **Medium Priority:** Implement MinBlocksBeforeFirstUpdate validation
-5. **Low Priority:** Fix comma-separated flag parsing for multiple peers/addresses
+5. ~~**Low Priority:** Fix comma-separated flag parsing for multiple peers/addresses~~ ✅ DONE
 6. **Low Priority:** Change `decodeNameRecord` to return errors on corrupt data
 7. **Low Priority:** Review off-by-one in expiration comparison
 
