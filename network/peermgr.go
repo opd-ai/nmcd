@@ -226,6 +226,13 @@ func (pm *PeerManager) onInv(p *peer.Peer, msg *wire.MsgInv) {
 }
 
 func (pm *PeerManager) onBlock(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
+	// Check if blockchain is available for processing
+	if pm.blockchain == nil {
+		log.Printf("Cannot process block %s: blockchain not initialized",
+			msg.BlockHash().String())
+		return
+	}
+
 	// Convert wire.MsgBlock to btcutil.Block for processing
 	block := btcutil.NewBlock(msg)
 
