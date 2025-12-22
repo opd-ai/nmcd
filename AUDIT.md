@@ -79,10 +79,11 @@ func (s *Server) nameUpdate(req *Request) *Response {
 
 ---
 
-### FUNCTIONAL MISMATCH: Undocumented name_list RPC Method
+### FUNCTIONAL MISMATCH: Undocumented name_list RPC Method [RESOLVED]
 
 **File:** rpc/server.go:276-308 (implementation), rpc/server.go:142 (dispatch)  
 **Severity:** Low  
+**Status:** RESOLVED - Documentation added to README.md  
 **Description:** The `name_list` RPC method is implemented and functional but not documented in README.md. This method returns all names in the database.
 
 **Expected Behavior:** README.md should document all available RPC methods.
@@ -213,7 +214,7 @@ All three networks are properly supported:
 The nmcd codebase is a well-structured, focused implementation that correctly leverages btcd libraries for blockchain functionality. The code follows Go idioms and best practices, with comprehensive test coverage for the core functionality.
 
 **Key Recommendations:**
-1. Add `name_list` RPC method documentation to README.md
+1. ~~Add `name_list` RPC method documentation to README.md~~ **COMPLETED**
 2. Implement wallet functionality to enable `name_update` RPC; update README.md to note current status
 3. Implement block reorg handling to maintain name database consistency
 
