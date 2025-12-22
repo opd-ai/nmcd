@@ -1,8 +1,14 @@
 package chain
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/opd-ai/nmcd/namedb"
 )
 
@@ -664,5 +670,383 @@ func TestParseNameScriptFull_NameUpdate(t *testing.T) {
 	}
 	if extra != nil {
 		t.Errorf("expected nil extra data for NameUpdate, got %v", extra)
+	}
+}
+
+// TestRollbackNameNew tests that NAME_NEW operations are properly rolled back
+// when a block is disconnected during a blockchain reorg.
+func TestRollbackNameNew(t *testing.T) {
+	// Create temporary database
+	dbPath := filepath.Join(os.TempDir(), "test-rollback-namenew.db")
+	defer os.Remove(dbPath)
+
+	ndb, err := namedb.NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer ndb.Close()
+
+	// Create a BlockChain wrapper with just the nameDB (no btcd blockchain)
+	bc := &BlockChain{
+		nameDB: ndb,
+	}
+
+	// Create a NAME_NEW commitment
+	commitHash := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+		0x11, 0x12, 0x13, 0x14}
+	height := int32(100)
+
+	// Add the NAME_NEW to the database
+	if err := ndb.PutNameNew(commitHash, height); err != nil {
+		t.Fatalf("Failed to put name_new: %v", err)
+	}
+
+	// Verify it exists
+	if _, err := ndb.GetNameNew(commitHash); err != nil {
+		t.Fatalf("Expected name_new to exist: %v", err)
+	}
+
+	// Create a block with the NAME_NEW
+	msgBlock := wire.NewMsgBlock(&wire.BlockHeader{})
+	tx := wire.NewMsgTx(1)
+	script := buildScript(
+		[]byte{opNameNew},
+		pushData(commitHash),
+	)
+	tx.AddTxOut(wire.NewTxOut(0, script))
+	msgBlock.AddTransaction(tx)
+
+	// Create btcutil.Block wrapper
+	block := btcutil.NewBlock(msgBlock)
+	block.SetHeight(height)
+
+	// Rollback the block
+	bc.rollbackNameOperations(block)
+
+	// Verify the NAME_NEW was removed
+	if _, err := ndb.GetNameNew(commitHash); err == nil {
+		t.Error("Expected name_new to be deleted after rollback, but it still exists")
+	}
+}
+
+// TestRollbackNameFirstUpdate tests that NAME_FIRSTUPDATE operations are properly
+// rolled back when a block is disconnected during a blockchain reorg.
+func TestRollbackNameFirstUpdate(t *testing.T) {
+	// Create temporary database
+	dbPath := filepath.Join(os.TempDir(), "test-rollback-namefirstupdate.db")
+	defer os.Remove(dbPath)
+
+	ndb, err := namedb.NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer ndb.Close()
+
+	// Create a BlockChain wrapper with just the nameDB
+	bc := &BlockChain{
+		nameDB: ndb,
+	}
+
+	// Create a name record (as if NAME_FIRSTUPDATE was processed)
+	nameStr := "d/example"
+	value := `{"ip":"1.2.3.4"}`
+	txHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+	rand := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+		0x11, 0x12, 0x13, 0x14}
+	height := int32(112) // After MinBlocksBeforeFirstUpdate
+
+	record := &namedb.NameRecord{
+		Name:      nameStr,
+		Value:     value,
+		TxHash:    *txHash,
+		Height:    height,
+		ExpiresAt: height + 36000,
+		Address:   "N1234567890",
+		UpdatedAt: time.Now(),
+	}
+
+	// Put the name record
+	if err := ndb.PutName(nameStr, record); err != nil {
+		t.Fatalf("Failed to put name: %v", err)
+	}
+
+	// Add history entry
+	if err := ndb.AddHistory(*txHash, record); err != nil {
+		t.Fatalf("Failed to add history: %v", err)
+	}
+
+	// Verify the name exists
+	if _, err := ndb.GetName(nameStr); err != nil {
+		t.Fatalf("Expected name to exist: %v", err)
+	}
+
+	// Create a block with the NAME_FIRSTUPDATE
+	msgBlock := wire.NewMsgBlock(&wire.BlockHeader{})
+	tx := wire.NewMsgTx(1)
+	script := buildScript(
+		[]byte{opNameFirstUpdate},
+		pushData([]byte(nameStr)),
+		pushData(rand),
+		pushData([]byte(value)),
+	)
+	tx.AddTxOut(wire.NewTxOut(0, script))
+	msgBlock.AddTransaction(tx)
+
+	// Create btcutil.Block wrapper
+	block := btcutil.NewBlock(msgBlock)
+	block.SetHeight(height)
+
+	// Rollback the block
+	bc.rollbackNameOperations(block)
+
+	// Verify the name was removed
+	if _, err := ndb.GetName(nameStr); err == nil {
+		t.Error("Expected name to be deleted after rollback, but it still exists")
+	}
+
+	// Verify history was removed
+	history, err := ndb.GetHistory(nameStr)
+	if err != nil {
+		t.Fatalf("Failed to get history: %v", err)
+	}
+	if len(history) != 0 {
+		t.Errorf("Expected 0 history entries after rollback, got %d", len(history))
+	}
+
+	// Verify that the NAME_NEW commitment was restored
+	// The commit hash is computed from rand and name
+	commitHash := computeCommitHash(rand, nameStr)
+	restoredNameNew, err := ndb.GetNameNew(commitHash)
+	if err != nil {
+		t.Fatalf("Expected NAME_NEW to be restored after rollback: %v", err)
+	}
+	// The restored height should be estimated as block height - MinBlocksBeforeFirstUpdate
+	expectedHeight := height - 12 // MinBlocksBeforeFirstUpdate = 12
+	if restoredNameNew.Height != expectedHeight {
+		t.Errorf("Expected restored NAME_NEW height %d, got %d", expectedHeight, restoredNameNew.Height)
+	}
+}
+
+// TestRollbackNameUpdate tests that NAME_UPDATE operations are properly rolled back
+// when a block is disconnected, restoring the previous value from history.
+func TestRollbackNameUpdate(t *testing.T) {
+	// Create temporary database
+	dbPath := filepath.Join(os.TempDir(), "test-rollback-nameupdate.db")
+	defer os.Remove(dbPath)
+
+	ndb, err := namedb.NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer ndb.Close()
+
+	// Create a BlockChain wrapper with just the nameDB
+	bc := &BlockChain{
+		nameDB: ndb,
+	}
+
+	nameStr := "d/example"
+	originalValue := `{"ip":"1.2.3.4"}`
+	updatedValue := `{"ip":"5.6.7.8"}`
+	txHash1, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+	txHash2, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000002")
+	originalHeight := int32(100)
+	updateHeight := int32(200)
+
+	// Create the original record (from NAME_FIRSTUPDATE)
+	originalRecord := &namedb.NameRecord{
+		Name:      nameStr,
+		Value:     originalValue,
+		TxHash:    *txHash1,
+		Height:    originalHeight,
+		ExpiresAt: originalHeight + 36000,
+		Address:   "N1234567890",
+		UpdatedAt: time.Now(),
+	}
+
+	// Add original history entry
+	if err := ndb.AddHistory(*txHash1, originalRecord); err != nil {
+		t.Fatalf("Failed to add original history: %v", err)
+	}
+
+	// Create the updated record (from NAME_UPDATE)
+	updatedRecord := &namedb.NameRecord{
+		Name:      nameStr,
+		Value:     updatedValue,
+		TxHash:    *txHash2,
+		Height:    updateHeight,
+		ExpiresAt: updateHeight + 36000,
+		Address:   "N1234567890",
+		UpdatedAt: time.Now(),
+	}
+
+	// Put the updated name record (this is the current state)
+	if err := ndb.PutName(nameStr, updatedRecord); err != nil {
+		t.Fatalf("Failed to put updated name: %v", err)
+	}
+
+	// Add updated history entry
+	if err := ndb.AddHistory(*txHash2, updatedRecord); err != nil {
+		t.Fatalf("Failed to add updated history: %v", err)
+	}
+
+	// Verify the current value is the updated one
+	current, err := ndb.GetName(nameStr)
+	if err != nil {
+		t.Fatalf("Expected name to exist: %v", err)
+	}
+	if current.Value != updatedValue {
+		t.Errorf("Expected current value %q, got %q", updatedValue, current.Value)
+	}
+
+	// Create a block with the NAME_UPDATE
+	msgBlock := wire.NewMsgBlock(&wire.BlockHeader{})
+	tx := wire.NewMsgTx(1)
+	script := buildScript(
+		[]byte{opNameUpdate},
+		pushData([]byte(nameStr)),
+		pushData([]byte(updatedValue)),
+	)
+	tx.AddTxOut(wire.NewTxOut(0, script))
+	msgBlock.AddTransaction(tx)
+
+	// Create btcutil.Block wrapper
+	block := btcutil.NewBlock(msgBlock)
+	block.SetHeight(updateHeight)
+
+	// Rollback the block
+	bc.rollbackNameOperations(block)
+
+	// Verify the value was restored to the original
+	restored, err := ndb.GetName(nameStr)
+	if err != nil {
+		t.Fatalf("Expected name to still exist after rollback: %v", err)
+	}
+	if restored.Value != originalValue {
+		t.Errorf("Expected restored value %q, got %q", originalValue, restored.Value)
+	}
+	if restored.Height != originalHeight {
+		t.Errorf("Expected restored height %d, got %d", originalHeight, restored.Height)
+	}
+	// Verify history has only the original entry
+	history, err := ndb.GetHistory(nameStr)
+	if err != nil {
+		t.Fatalf("Failed to get history: %v", err)
+	}
+	if len(history) != 1 {
+		t.Errorf("Expected 1 history entry after rollback, got %d", len(history))
+	}
+}
+
+// TestRollbackSameBlockNameNewAndFirstUpdate tests the edge case where both
+// NAME_NEW and NAME_FIRSTUPDATE are in the same block. When rolling back,
+// the NAME_FIRSTUPDATE restores the NAME_NEW commitment, and then the NAME_NEW
+// rollback should NOT delete it (since it was just restored).
+func TestRollbackSameBlockNameNewAndFirstUpdate(t *testing.T) {
+	// Create temporary database
+	dbPath := filepath.Join(os.TempDir(), "test-rollback-sameblock.db")
+	defer os.Remove(dbPath)
+
+	ndb, err := namedb.NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer ndb.Close()
+
+	// Create a BlockChain wrapper with just the nameDB
+	bc := &BlockChain{
+		nameDB: ndb,
+	}
+
+	// Set up scenario: Both NAME_NEW and NAME_FIRSTUPDATE in same block
+	nameStr := "d/example"
+	value := `{"ip":"1.2.3.4"}`
+	txHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+	rand := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+		0x11, 0x12, 0x13, 0x14}
+	height := int32(100)
+
+	// Compute the commitment hash that links NAME_NEW to NAME_FIRSTUPDATE
+	commitHash := computeCommitHash(rand, nameStr)
+
+	// Simulate the state after the block was processed:
+	// - NAME_NEW commitment was consumed (deleted)
+	// - Name was registered via NAME_FIRSTUPDATE
+	record := &namedb.NameRecord{
+		Name:      nameStr,
+		Value:     value,
+		TxHash:    *txHash,
+		Height:    height,
+		ExpiresAt: height + 36000,
+		Address:   "N1234567890",
+		UpdatedAt: time.Now(),
+	}
+	if err := ndb.PutName(nameStr, record); err != nil {
+		t.Fatalf("Failed to put name: %v", err)
+	}
+	if err := ndb.AddHistory(*txHash, record); err != nil {
+		t.Fatalf("Failed to add history: %v", err)
+	}
+
+	// Create a block with both NAME_NEW and NAME_FIRSTUPDATE
+	// NAME_NEW comes first (earlier in block), NAME_FIRSTUPDATE comes later
+	msgBlock := wire.NewMsgBlock(&wire.BlockHeader{})
+
+	// First transaction: NAME_NEW
+	tx1 := wire.NewMsgTx(1)
+	nameNewScript := buildScript(
+		[]byte{opNameNew},
+		pushData(commitHash), // The commitment hash
+	)
+	tx1.AddTxOut(wire.NewTxOut(0, nameNewScript))
+	msgBlock.AddTransaction(tx1)
+
+	// Second transaction: NAME_FIRSTUPDATE that consumes the NAME_NEW
+	tx2 := wire.NewMsgTx(1)
+	firstUpdateScript := buildScript(
+		[]byte{opNameFirstUpdate},
+		pushData([]byte(nameStr)),
+		pushData(rand),
+		pushData([]byte(value)),
+	)
+	tx2.AddTxOut(wire.NewTxOut(0, firstUpdateScript))
+	msgBlock.AddTransaction(tx2)
+
+	// Create btcutil.Block wrapper
+	block := btcutil.NewBlock(msgBlock)
+	block.SetHeight(height)
+
+	// Rollback the block
+	bc.rollbackNameOperations(block)
+
+	// Verify the name was removed
+	if _, err := ndb.GetName(nameStr); err == nil {
+		t.Error("Expected name to be deleted after rollback, but it still exists")
+	}
+
+	// Verify history was removed
+	history, err := ndb.GetHistory(nameStr)
+	if err != nil {
+		t.Fatalf("Failed to get history: %v", err)
+	}
+	if len(history) != 0 {
+		t.Errorf("Expected 0 history entries after rollback, got %d", len(history))
+	}
+
+	// KEY TEST: The NAME_NEW commitment should still exist!
+	// Even though we rolled back the NAME_NEW (which would normally delete it),
+	// it should be preserved because the NAME_FIRSTUPDATE rollback restored it.
+	restoredNameNew, err := ndb.GetNameNew(commitHash)
+	if err != nil {
+		t.Fatalf("Expected NAME_NEW commitment to exist after rollback of same-block NAME_NEW + NAME_FIRSTUPDATE: %v", err)
+	}
+
+	// The height should be the estimated value
+	expectedHeight := height - 12 // MinBlocksBeforeFirstUpdate = 12
+	if restoredNameNew.Height != expectedHeight {
+		t.Errorf("Expected restored NAME_NEW height %d, got %d", expectedHeight, restoredNameNew.Height)
 	}
 }

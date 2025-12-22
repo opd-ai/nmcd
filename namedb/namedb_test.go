@@ -596,3 +596,239 @@ func TestDecodeNameRecordValid(t *testing.T) {
 		t.Errorf("expected address %q, got %q", record.Address, decoded.Address)
 	}
 }
+
+func TestRestoreNameNew(t *testing.T) {
+	dbPath := filepath.Join(os.TempDir(), "test-restorenamenew.db")
+	defer os.Remove(dbPath)
+
+	db, err := NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	commitHash := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+		0x11, 0x12, 0x13, 0x14}
+	height := int32(100)
+
+	// First, add a NAME_NEW
+	err = db.PutNameNew(commitHash, height)
+	if err != nil {
+		t.Fatalf("Failed to put name_new: %v", err)
+	}
+
+	// Delete it (simulating NAME_FIRSTUPDATE consumption)
+	err = db.DeleteNameNew(commitHash)
+	if err != nil {
+		t.Fatalf("Failed to delete name_new: %v", err)
+	}
+
+	// Verify it's gone
+	_, err = db.GetNameNew(commitHash)
+	if err == nil {
+		t.Error("Expected error for deleted name_new, got nil")
+	}
+
+	// Restore it (simulating rollback)
+	err = db.RestoreNameNew(commitHash, height)
+	if err != nil {
+		t.Fatalf("Failed to restore name_new: %v", err)
+	}
+
+	// Verify it's back
+	record, err := db.GetNameNew(commitHash)
+	if err != nil {
+		t.Fatalf("Failed to get restored name_new: %v", err)
+	}
+	if record.Height != height {
+		t.Errorf("Expected height %d, got %d", height, record.Height)
+	}
+}
+
+func TestRestoreNameNewOverwrite(t *testing.T) {
+	dbPath := filepath.Join(os.TempDir(), "test-restorenamenew-overwrite.db")
+	defer os.Remove(dbPath)
+
+	db, err := NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	commitHash := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+		0x11, 0x12, 0x13, 0x14}
+
+	// Add a NAME_NEW at height 100
+	err = db.PutNameNew(commitHash, 100)
+	if err != nil {
+		t.Fatalf("Failed to put name_new: %v", err)
+	}
+
+	// RestoreNameNew should overwrite (unlike PutNameNew which rejects duplicates)
+	err = db.RestoreNameNew(commitHash, 200)
+	if err != nil {
+		t.Fatalf("Failed to restore name_new: %v", err)
+	}
+
+	// Verify the height was updated
+	record, err := db.GetNameNew(commitHash)
+	if err != nil {
+		t.Fatalf("Failed to get name_new: %v", err)
+	}
+	if record.Height != 200 {
+		t.Errorf("Expected height 200, got %d", record.Height)
+	}
+}
+
+func TestRemoveLastHistoryEntry(t *testing.T) {
+	dbPath := filepath.Join(os.TempDir(), "test-removelasthistory.db")
+	defer os.Remove(dbPath)
+
+	db, err := NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Create multiple history entries for the same name
+	hash1, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+	hash2, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000002")
+	hash3, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000003")
+
+	record1 := &NameRecord{
+		Name:      "d/example",
+		Value:     `{"ip":"1.2.3.4"}`,
+		TxHash:    *hash1,
+		Height:    100,
+		ExpiresAt: 36100,
+		Address:   "N1111111111",
+		UpdatedAt: time.Now(),
+	}
+
+	record2 := &NameRecord{
+		Name:      "d/example",
+		Value:     `{"ip":"5.6.7.8"}`,
+		TxHash:    *hash2,
+		Height:    200,
+		ExpiresAt: 36200,
+		Address:   "N2222222222",
+		UpdatedAt: time.Now(),
+	}
+
+	record3 := &NameRecord{
+		Name:      "d/example",
+		Value:     `{"ip":"9.10.11.12"}`,
+		TxHash:    *hash3,
+		Height:    300,
+		ExpiresAt: 36300,
+		Address:   "N3333333333",
+		UpdatedAt: time.Now(),
+	}
+
+	// Add history entries
+	if err := db.AddHistory(*hash1, record1); err != nil {
+		t.Fatalf("Failed to add history 1: %v", err)
+	}
+	if err := db.AddHistory(*hash2, record2); err != nil {
+		t.Fatalf("Failed to add history 2: %v", err)
+	}
+	if err := db.AddHistory(*hash3, record3); err != nil {
+		t.Fatalf("Failed to add history 3: %v", err)
+	}
+
+	// Remove the last entry and verify we get record2 back
+	prevRecord, err := db.RemoveLastHistoryEntry("d/example")
+	if err != nil {
+		t.Fatalf("Failed to remove last history entry: %v", err)
+	}
+
+	if prevRecord == nil {
+		t.Fatal("Expected previous record, got nil")
+	}
+	if prevRecord.Height != 200 {
+		t.Errorf("Expected previous record height 200, got %d", prevRecord.Height)
+	}
+	if prevRecord.Value != `{"ip":"5.6.7.8"}` {
+		t.Errorf("Expected previous value '{\"ip\":\"5.6.7.8\"}', got '%s'", prevRecord.Value)
+	}
+
+	// Verify history now has only 2 entries
+	history, err := db.GetHistory("d/example")
+	if err != nil {
+		t.Fatalf("Failed to get history: %v", err)
+	}
+	if len(history) != 2 {
+		t.Errorf("Expected 2 history entries after removal, got %d", len(history))
+	}
+}
+
+func TestRemoveLastHistoryEntrySingleEntry(t *testing.T) {
+	dbPath := filepath.Join(os.TempDir(), "test-removelasthistory-single.db")
+	defer os.Remove(dbPath)
+
+	db, err := NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	hash1, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+
+	record1 := &NameRecord{
+		Name:      "d/example",
+		Value:     `{"ip":"1.2.3.4"}`,
+		TxHash:    *hash1,
+		Height:    100,
+		ExpiresAt: 36100,
+		Address:   "N1111111111",
+		UpdatedAt: time.Now(),
+	}
+
+	// Add a single history entry
+	if err := db.AddHistory(*hash1, record1); err != nil {
+		t.Fatalf("Failed to add history: %v", err)
+	}
+
+	// Remove the only entry - should return nil for previous record
+	prevRecord, err := db.RemoveLastHistoryEntry("d/example")
+	if err != nil {
+		t.Fatalf("Failed to remove last history entry: %v", err)
+	}
+
+	// No previous record when removing the only entry
+	if prevRecord != nil {
+		t.Errorf("Expected nil previous record when removing only entry, got %+v", prevRecord)
+	}
+
+	// Verify history is now empty
+	history, err := db.GetHistory("d/example")
+	if err != nil {
+		t.Fatalf("Failed to get history: %v", err)
+	}
+	if len(history) != 0 {
+		t.Errorf("Expected 0 history entries after removal, got %d", len(history))
+	}
+}
+
+func TestRemoveLastHistoryEntryNoHistory(t *testing.T) {
+	dbPath := filepath.Join(os.TempDir(), "test-removelasthistory-none.db")
+	defer os.Remove(dbPath)
+
+	db, err := NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Try to remove history for a name that has no history
+	prevRecord, err := db.RemoveLastHistoryEntry("d/nonexistent")
+	if err != nil {
+		t.Fatalf("RemoveLastHistoryEntry should not error on empty history: %v", err)
+	}
+
+	if prevRecord != nil {
+		t.Errorf("Expected nil for non-existent name history, got %+v", prevRecord)
+	}
+}

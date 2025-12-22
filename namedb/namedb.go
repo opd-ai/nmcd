@@ -18,6 +18,11 @@ var (
 	nameNewBucket      = []byte("name_new") // Tracks NAME_NEW commitments
 )
 
+// txHashSize is the size of a transaction hash in bytes.
+// Bitcoin/Namecoin use double SHA256 (SHA256(SHA256(data))) which produces
+// a 32-byte result, same as a single SHA256.
+const txHashSize = 32
+
 // NameOperation represents a name operation type
 type NameOperation uint8
 
@@ -211,15 +216,13 @@ func (ndb *NameDatabase) GetHistory(name string) ([]*NameRecord, error) {
 			return nil // No history for this name
 		}
 
-		// Each txHash is 32 bytes
-		const hashSize = 32
-		if len(indexData)%hashSize != 0 {
+		if len(indexData)%txHashSize != 0 {
 			return fmt.Errorf("corrupt history index for name: %s", name)
 		}
 
 		histBucket := tx.Bucket(historyBucket)
-		for i := 0; i < len(indexData); i += hashSize {
-			txHashBytes := indexData[i : i+hashSize]
+		for i := 0; i < len(indexData); i += txHashSize {
+			txHashBytes := indexData[i : i+txHashSize]
 			data := histBucket.Get(txHashBytes)
 			if data == nil {
 				continue // Skip missing records
@@ -265,6 +268,25 @@ func (ndb *NameDatabase) PutNameNew(commitHash []byte, height int32) error {
 	})
 }
 
+// RestoreNameNew restores a NAME_NEW commitment during block reorg rollback.
+// Unlike PutNameNew (which rejects duplicates to prevent commitment replacement
+// attacks during normal operation), RestoreNameNew allows overwriting because:
+// 1. During rollback, we need to restore commitments consumed by NAME_FIRSTUPDATEs
+// 2. The restored height may be an estimate since we don't store the original
+// 3. This is safe because it only happens during reorg, not normal block processing
+func (ndb *NameDatabase) RestoreNameNew(commitHash []byte, height int32) error {
+	ndb.mu.Lock()
+	defer ndb.mu.Unlock()
+
+	return ndb.db.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket(nameNewBucket)
+		// Store height as 4-byte little-endian (overwriting if exists)
+		data := make([]byte, 4)
+		binary.LittleEndian.PutUint32(data, uint32(height))
+		return bucket.Put(commitHash, data)
+	})
+}
+
 // GetNameNew retrieves a NAME_NEW commitment record by its hash.
 // Returns the record if found, or an error if not found.
 func (ndb *NameDatabase) GetNameNew(commitHash []byte) (*NameNewRecord, error) {
@@ -304,6 +326,68 @@ func (ndb *NameDatabase) DeleteNameNew(commitHash []byte) error {
 		bucket := tx.Bucket(nameNewBucket)
 		return bucket.Delete(commitHash)
 	})
+}
+
+// RemoveLastHistoryEntry removes the most recent history entry for a name
+// and returns the previous record if one exists. Used during block reorg
+// to restore the previous state of a name.
+// Returns nil, nil if there was only one entry (no previous state to restore).
+func (ndb *NameDatabase) RemoveLastHistoryEntry(name string) (*NameRecord, error) {
+	ndb.mu.Lock()
+	defer ndb.mu.Unlock()
+
+	var prevRecord *NameRecord
+	err := ndb.db.Update(func(tx *bbolt.Tx) error {
+		indexBucket := tx.Bucket(historyIndexBucket)
+		histBucket := tx.Bucket(historyBucket)
+
+		indexData := indexBucket.Get([]byte(name))
+		if indexData == nil || len(indexData) == 0 {
+			return nil // No history to remove
+		}
+
+		if len(indexData)%txHashSize != 0 {
+			return fmt.Errorf("corrupt history index for name: %s", name)
+		}
+
+		numEntries := len(indexData) / txHashSize
+		if numEntries == 0 {
+			return nil
+		}
+
+		// Get the last txHash to remove from history bucket
+		lastTxHash := indexData[len(indexData)-txHashSize:]
+		if err := histBucket.Delete(lastTxHash); err != nil {
+			return err
+		}
+
+		// Remove the last txHash from the index
+		newIndexData := indexData[:len(indexData)-txHashSize]
+		if len(newIndexData) == 0 {
+			// No more entries, delete the index
+			if err := indexBucket.Delete([]byte(name)); err != nil {
+				return err
+			}
+		} else {
+			if err := indexBucket.Put([]byte(name), newIndexData); err != nil {
+				return err
+			}
+
+			// Get the previous record (now the last one)
+			prevTxHash := newIndexData[len(newIndexData)-txHashSize:]
+			data := histBucket.Get(prevTxHash)
+			if data != nil {
+				var decodeErr error
+				prevRecord, decodeErr = decodeNameRecord(data)
+				if decodeErr != nil {
+					return fmt.Errorf("failed to decode previous record: %w", decodeErr)
+				}
+				prevRecord.Name = name
+			}
+		}
+		return nil
+	})
+	return prevRecord, err
 }
 
 // encodeNameRecord serializes a name record

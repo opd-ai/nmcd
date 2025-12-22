@@ -494,9 +494,106 @@ func (bc *BlockChain) HandleBlockchainNotification(notification *blockchain.Noti
 
 	switch notification.Type {
 	case blockchain.NTBlockConnected:
-		// Block connected to main chain
+		// Block connected to main chain - name operations are already
+		// processed in ProcessBlock when isMainChain is true
 	case blockchain.NTBlockDisconnected:
 		// Block disconnected from main chain (reorg)
+		// We need to undo any name operations from this block
+		block, ok := notification.Data.(*btcutil.Block)
+		if !ok {
+			return
+		}
+		bc.rollbackNameOperations(block)
+	}
+}
+
+// rollbackNameOperations reverses all name operations from a disconnected block.
+// This is called during a blockchain reorganization to maintain consistency
+// between the name database and the main chain.
+func (bc *BlockChain) rollbackNameOperations(block *btcutil.Block) {
+	// Track NAME_NEW commitments that are restored during this rollback.
+	// When a NAME_FIRSTUPDATE is rolled back, it restores the NAME_NEW commitment.
+	// If the same block also contains that NAME_NEW, we must NOT delete it
+	// during the NAME_NEW rollback, as it was restored for a reason (the
+	// NAME_FIRSTUPDATE that consumed it is also being rolled back).
+	restoredCommitments := make(map[string]bool)
+
+	// Process transactions in reverse order to properly undo operations
+	txs := block.Transactions()
+	for i := len(txs) - 1; i >= 0; i-- {
+		tx := txs[i]
+		msgTx := tx.MsgTx()
+
+		// Process outputs in reverse order within the transaction
+		for j := len(msgTx.TxOut) - 1; j >= 0; j-- {
+			txOut := msgTx.TxOut[j]
+			op, name, _, extra, err := parseNameScriptFull(txOut.PkScript)
+			if err != nil {
+				continue // Not a name operation
+			}
+
+			switch op {
+			case namedb.NameNew:
+				// Rollback NAME_NEW: remove the commitment from the database.
+				// extra contains the commitment hash.
+				//
+				// Skip deletion if this commitment was restored during rollback
+				// of a NAME_FIRSTUPDATE in the same block. This handles the case
+				// where both NAME_NEW and NAME_FIRSTUPDATE are in the same block.
+				commitHashKey := string(extra)
+				if restoredCommitments[commitHashKey] {
+					continue
+				}
+				_ = bc.nameDB.DeleteNameNew(extra)
+
+			case namedb.NameFirstUpdate:
+				// Rollback NAME_FIRSTUPDATE:
+				// 1. Remove the history entry for this operation
+				// 2. Delete the name from the database
+				// 3. Restore the NAME_NEW commitment that was consumed
+				_, _ = bc.nameDB.RemoveLastHistoryEntry(name)
+				_ = bc.nameDB.DeleteName(name)
+
+				// Restore the NAME_NEW commitment. The commitment hash is
+				// computed from rand (extra) and name.
+				//
+				// Height estimation: We use block.Height() - MinBlocksBeforeFirstUpdate
+				// as a conservative estimate. The actual NAME_NEW could have been
+				// created earlier, but this is the earliest possible height. This
+				// is safe because:
+				// - If a new NAME_FIRSTUPDATE is attempted, it will pass the
+				//   MinBlocksBeforeFirstUpdate check since actual elapsed blocks >= min
+				// - The exact original height isn't stored, so estimation is necessary
+				commitHash := computeCommitHash(extra, name)
+				estimatedNameNewHeight := block.Height() - config.MinBlocksBeforeFirstUpdate
+				// Ensure height is non-negative (shouldn't happen in practice
+				// since NAME_FIRSTUPDATE requires MinBlocksBeforeFirstUpdate to pass)
+				if estimatedNameNewHeight < 0 {
+					estimatedNameNewHeight = 0
+				}
+				_ = bc.nameDB.RestoreNameNew(commitHash, estimatedNameNewHeight)
+
+				// Track this commitment as restored so we don't delete it if
+				// the NAME_NEW for this commitment is also in this block
+				restoredCommitments[string(commitHash)] = true
+
+			case namedb.NameUpdate:
+				// Rollback NAME_UPDATE:
+				// 1. Remove the history entry for this operation
+				// 2. Restore the previous value from history
+				prevRecord, err := bc.nameDB.RemoveLastHistoryEntry(name)
+				if err != nil {
+					continue
+				}
+				if prevRecord != nil {
+					// Restore the previous record
+					_ = bc.nameDB.PutName(name, prevRecord)
+				}
+				// If prevRecord is nil, it means there was no previous state,
+				// which shouldn't happen for NAME_UPDATE (name should have been
+				// registered first), but we handle it gracefully
+			}
+		}
 	}
 }
 
