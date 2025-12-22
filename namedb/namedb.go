@@ -121,7 +121,9 @@ func (ndb *NameDatabase) DeleteName(name string) error {
 	})
 }
 
-// GetExpiredNames returns names that have expired at the given height
+// GetExpiredNames returns names that have expired before the given height.
+// A name is considered valid through its ExpiresAt block and only expired after.
+// For example, a name with ExpiresAt=100 is valid at height 100 but expired at height 101.
 func (ndb *NameDatabase) GetExpiredNames(height int32) ([]string, error) {
 	ndb.mu.RLock()
 	defer ndb.mu.RUnlock()
@@ -135,7 +137,7 @@ func (ndb *NameDatabase) GetExpiredNames(height int32) ([]string, error) {
 			if decodeErr != nil {
 				return fmt.Errorf("failed to decode name %s: %w", string(k), decodeErr)
 			}
-			if record.ExpiresAt <= height {
+			if record.ExpiresAt < height {
 				expired = append(expired, string(k))
 			}
 		}
