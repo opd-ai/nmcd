@@ -24,8 +24,8 @@ This audit analyzes the nmcd codebase for discrepancies between documented funct
 | Category | Count | Severity |
 |----------|-------|----------|
 | CRITICAL BUG | 0 | - |
-| FUNCTIONAL MISMATCH | 2 | Medium |
-| MISSING FEATURE | 3 | Medium-Low |
+| FUNCTIONAL MISMATCH | ~~2~~ 1 (1 resolved) | Medium |
+| MISSING FEATURE | ~~3~~ 2 (1 resolved) | Medium-Low |
 | EDGE CASE BUG | 2 | Low |
 | PERFORMANCE ISSUE | 0 | - |
 
@@ -33,44 +33,33 @@ This audit analyzes the nmcd codebase for discrepancies between documented funct
 
 ## DETAILED FINDINGS
 
-### FUNCTIONAL MISMATCH: name_history RPC Method Returns Error Instead of History Data
+### ~~FUNCTIONAL MISMATCH: name_history RPC Method Returns Error Instead of History Data~~ ✅ RESOLVED
 
 **File:** rpc/server.go:310-323  
 **Severity:** Medium  
-**Description:** The README.md documents `name_history` as a functional RPC method that returns name history. However, the implementation is a stub that always returns an error stating the method is not yet implemented.
+**Status:** ✅ RESOLVED
 
-**Expected Behavior:** According to README.md:
-```bash
-curl -X POST http://127.0.0.1:8336 \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"name_history","params":["d/example"],"id":1}'
-```
-Should return historical name operations.
+**Resolution:** Implemented the `name_history` RPC method that retrieves historical records for a specific name. The method calls `GetNameHistory` on the blockchain which in turn uses the new `GetHistory` function in namedb. Returns an array of historical name operations with name, value, txid, height, expires_at, and address fields.
 
-**Actual Behavior:** The method returns:
-```json
-{"jsonrpc":"2.0","error":{"code":-32601,"message":"name_history method is not yet implemented"},"id":1}
-```
-
-**Impact:** Users following the README documentation will be unable to retrieve name history as documented.
-
-**Reproduction:** Call the `name_history` RPC method with any valid name parameter.
-
-**Code Reference:**
+**Fixed Code:**
 ```go
-// nameHistory returns the history of a name
+// nameHistory returns the history of a name, including all past operations.
 func (s *Server) nameHistory(req *Request) *Response {
-	// Method stub: name_history is not yet implemented.
-	// Returning an explicit error avoids misleading clients into thinking
-	// they are receiving full historical data.
-	return &Response{
-		Jsonrpc: "2.0",
-		Error: &Error{
-			Code:    -32601,
-			Message: "name_history method is not yet implemented",
-		},
-		ID: req.ID,
+	var params []string
+	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32602,
+				Message: "Invalid params: expected [\"name\"]",
+			},
+			ID: req.ID,
+		}
 	}
+
+	name := params[0]
+	history, err := s.blockchain.GetNameHistory(name)
+	// ... returns formatted history array
 }
 ```
 
@@ -152,36 +141,47 @@ func splitAndTrim(s string) []string {
 
 ---
 
-### MISSING FEATURE: GetHistory Function Not Exposed in NameDatabase
+### ~~MISSING FEATURE: GetHistory Function Not Exposed in NameDatabase~~ ✅ RESOLVED
 
 **File:** namedb/namedb.go  
 **Severity:** Medium  
-**Description:** While the `AddHistory` function exists to record historical name operations (lines 157-167), there is no corresponding `GetHistory` function to retrieve the history for a specific name. The history bucket stores records keyed by transaction hash, but there's no index or method to query history by name.
+**Status:** ✅ RESOLVED
 
-**Expected Behavior:** According to README.md:
-- "Historical operation tracking" should be available
-- The `name_history` RPC method should return history (which requires history retrieval)
+**Resolution:** Implemented `GetHistory` function that retrieves all historical records for a specific name. Added a secondary index bucket (`historyIndexBucket`) that maps name -> list of transaction hashes for efficient lookups. The `AddHistory` function was updated to maintain this index. Comprehensive unit tests were added covering multiple entries, empty history, and multiple names scenarios.
 
-**Actual Behavior:** History can be added but cannot be retrieved. The history bucket uses transaction hash as the key, making it impossible to query by name without a full bucket scan.
-
-**Impact:** The documented "Historical operation tracking" feature is incomplete. History is stored but not retrievable.
-
-**Reproduction:** Call `AddHistory` multiple times for the same name, then attempt to retrieve all history entries for that name - no such function exists.
-
-**Code Reference:**
+**Fixed Code:**
 ```go
-// AddHistory adds a historical name operation
-func (ndb *NameDatabase) AddHistory(txHash chainhash.Hash, record *NameRecord) error {
-	ndb.mu.Lock()
-	defer ndb.mu.Unlock()
+// GetHistory retrieves all historical records for a specific name.
+// Returns a slice of NameRecords ordered by when they were added (oldest first).
+func (ndb *NameDatabase) GetHistory(name string) ([]*NameRecord, error) {
+	ndb.mu.RLock()
+	defer ndb.mu.RUnlock()
 
-	return ndb.db.Update(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket(historyBucket)
-		data := encodeNameRecord(record)
-		return bucket.Put(txHash[:], data)  // Keyed by txHash, not by name
+	var records []*NameRecord
+	err := ndb.db.View(func(tx *bbolt.Tx) error {
+		// Get the list of txHashes from the index
+		indexBucket := tx.Bucket(historyIndexBucket)
+		indexData := indexBucket.Get([]byte(name))
+		if indexData == nil {
+			return nil // No history for this name
+		}
+
+		// Each txHash is 32 bytes
+		const hashSize = 32
+		histBucket := tx.Bucket(historyBucket)
+		for i := 0; i < len(indexData); i += hashSize {
+			txHashBytes := indexData[i : i+hashSize]
+			data := histBucket.Get(txHashBytes)
+			if data != nil {
+				record := decodeNameRecord(data)
+				record.Name = name
+				records = append(records, record)
+			}
+		}
+		return nil
 	})
+	return records, err
 }
-// Note: No corresponding GetHistory function exists
 ```
 
 ---
@@ -346,7 +346,7 @@ Error handling is generally good with some exceptions:
 
 1. **High Priority:** Implement real Namecoin script parsing in `parseNameScript` to support actual network transactions
 2. **High Priority:** Implement NAME_NEW commitment tracking and validation for front-running protection
-3. **Medium Priority:** Add `GetHistory` function and fix `name_history` RPC endpoint
+3. ~~**Medium Priority:** Add `GetHistory` function and fix `name_history` RPC endpoint~~ ✅ RESOLVED
 4. **Medium Priority:** Implement MinBlocksBeforeFirstUpdate validation
 5. ~~**Low Priority:** Fix comma-separated flag parsing for multiple peers/addresses~~ ✅ RESOLVED
 6. **Low Priority:** Change `decodeNameRecord` to return errors on corrupt data

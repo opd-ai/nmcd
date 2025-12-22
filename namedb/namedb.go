@@ -11,9 +11,10 @@ import (
 )
 
 var (
-	namesBucket      = []byte("names")
-	historyBucket    = []byte("history")
-	expirationBucket = []byte("expiration")
+	namesBucket        = []byte("names")
+	historyBucket      = []byte("history")
+	historyIndexBucket = []byte("history_index")
+	expirationBucket   = []byte("expiration")
 )
 
 // NameOperation represents a name operation type
@@ -51,7 +52,7 @@ func NewNameDatabase(dbPath string) (*NameDatabase, error) {
 
 	// Initialize buckets
 	err = db.Update(func(tx *bbolt.Tx) error {
-		for _, bucket := range [][]byte{namesBucket, historyBucket, expirationBucket} {
+		for _, bucket := range [][]byte{namesBucket, historyBucket, historyIndexBucket, expirationBucket} {
 			if _, err := tx.CreateBucketIfNotExists(bucket); err != nil {
 				return err
 			}
@@ -154,16 +155,68 @@ func (ndb *NameDatabase) ListNames() ([]*NameRecord, error) {
 	return names, err
 }
 
-// AddHistory adds a historical name operation
+// AddHistory adds a historical name operation and updates the name-to-history index.
+// The history is stored keyed by transaction hash, and an index entry is added to map
+// the name to its list of transaction hashes for efficient retrieval.
 func (ndb *NameDatabase) AddHistory(txHash chainhash.Hash, record *NameRecord) error {
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
 
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket(historyBucket)
+		// Store the history record keyed by txHash
+		histBucket := tx.Bucket(historyBucket)
 		data := encodeNameRecord(record)
-		return bucket.Put(txHash[:], data)
+		if err := histBucket.Put(txHash[:], data); err != nil {
+			return err
+		}
+
+		// Update the name-to-history index
+		// The index stores a list of txHashes for each name
+		indexBucket := tx.Bucket(historyIndexBucket)
+		nameKey := []byte(record.Name)
+		existing := indexBucket.Get(nameKey)
+
+		// Append the new txHash to the existing list
+		newIndex := append(existing, txHash[:]...)
+		return indexBucket.Put(nameKey, newIndex)
 	})
+}
+
+// GetHistory retrieves all historical records for a specific name.
+// Returns a slice of NameRecords ordered by when they were added (oldest first).
+func (ndb *NameDatabase) GetHistory(name string) ([]*NameRecord, error) {
+	ndb.mu.RLock()
+	defer ndb.mu.RUnlock()
+
+	var records []*NameRecord
+	err := ndb.db.View(func(tx *bbolt.Tx) error {
+		// Get the list of txHashes from the index
+		indexBucket := tx.Bucket(historyIndexBucket)
+		indexData := indexBucket.Get([]byte(name))
+		if indexData == nil {
+			return nil // No history for this name
+		}
+
+		// Each txHash is 32 bytes
+		const hashSize = 32
+		if len(indexData)%hashSize != 0 {
+			return fmt.Errorf("corrupt history index for name: %s", name)
+		}
+
+		histBucket := tx.Bucket(historyBucket)
+		for i := 0; i < len(indexData); i += hashSize {
+			txHashBytes := indexData[i : i+hashSize]
+			data := histBucket.Get(txHashBytes)
+			if data == nil {
+				continue // Skip missing records
+			}
+			record := decodeNameRecord(data)
+			record.Name = name
+			records = append(records, record)
+		}
+		return nil
+	})
+	return records, err
 }
 
 // encodeNameRecord serializes a name record
