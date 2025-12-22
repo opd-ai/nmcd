@@ -442,3 +442,89 @@ func TestMultipleNameNews(t *testing.T) {
 		t.Errorf("Expected height 150, got %d", record2.Height)
 	}
 }
+
+func TestDecodeNameRecordCorruptData(t *testing.T) {
+	testCases := []struct {
+		name    string
+		data    []byte
+		wantErr string
+	}{
+		{
+			name:    "empty data",
+			data:    []byte{},
+			wantErr: "corrupt record: empty data",
+		},
+		{
+			name:    "truncated at value length",
+			data:    []byte{1, 0, 0}, // version byte + only 3 bytes for value length (needs 4)
+			wantErr: "corrupt record: truncated at value length",
+		},
+		{
+			name:    "truncated at value data",
+			data:    []byte{1, 10, 0, 0, 0, 'a', 'b'}, // version + value length 10, but only 2 chars
+			wantErr: "corrupt record: truncated at value data",
+		},
+		{
+			name:    "truncated at txhash",
+			data:    append([]byte{1, 5, 0, 0, 0}, append([]byte("hello"), make([]byte, 20)...)...), // version + value + partial txhash
+			wantErr: "corrupt record: truncated at txhash",
+		},
+		{
+			name: "truncated at height",
+			data: append([]byte{1, 5, 0, 0, 0}, append([]byte("hello"), append(make([]byte, 32), []byte{0, 0}...)...)...), // version + value + full txhash + partial height
+			wantErr: "corrupt record: truncated at height",
+		},
+		{
+			name: "truncated at expires_at",
+			data: append([]byte{1, 5, 0, 0, 0}, append([]byte("hello"), append(make([]byte, 32), []byte{100, 0, 0, 0, 0, 0}...)...)...), // version + value + full txhash + height + partial expires
+			wantErr: "corrupt record: truncated at expires_at",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			record, err := decodeNameRecord(tc.data)
+			if err == nil {
+				t.Errorf("expected error for %s, got nil (record: %+v)", tc.name, record)
+				return
+			}
+			if err.Error() != tc.wantErr {
+				t.Errorf("expected error %q, got %q", tc.wantErr, err.Error())
+			}
+		})
+	}
+}
+
+func TestDecodeNameRecordValid(t *testing.T) {
+	// Create a valid record and encode it
+	record := &NameRecord{
+		Name:      "test",
+		Value:     "testvalue",
+		Height:    12345,
+		ExpiresAt: 67890,
+		Address:   "N1234567890",
+	}
+
+	// Encode the record
+	encoded := encodeNameRecord(record)
+
+	// Decode it back
+	decoded, err := decodeNameRecord(encoded)
+	if err != nil {
+		t.Fatalf("unexpected error decoding valid record: %v", err)
+	}
+
+	// Verify the decoded values match
+	if decoded.Value != record.Value {
+		t.Errorf("expected value %q, got %q", record.Value, decoded.Value)
+	}
+	if decoded.Height != record.Height {
+		t.Errorf("expected height %d, got %d", record.Height, decoded.Height)
+	}
+	if decoded.ExpiresAt != record.ExpiresAt {
+		t.Errorf("expected expires_at %d, got %d", record.ExpiresAt, decoded.ExpiresAt)
+	}
+	if decoded.Address != record.Address {
+		t.Errorf("expected address %q, got %q", record.Address, decoded.Address)
+	}
+}
