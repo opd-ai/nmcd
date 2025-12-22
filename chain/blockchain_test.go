@@ -939,3 +939,114 @@ func TestRollbackNameUpdate(t *testing.T) {
 		t.Errorf("Expected 1 history entry after rollback, got %d", len(history))
 	}
 }
+
+// TestRollbackSameBlockNameNewAndFirstUpdate tests the edge case where both
+// NAME_NEW and NAME_FIRSTUPDATE are in the same block. When rolling back,
+// the NAME_FIRSTUPDATE restores the NAME_NEW commitment, and then the NAME_NEW
+// rollback should NOT delete it (since it was just restored).
+func TestRollbackSameBlockNameNewAndFirstUpdate(t *testing.T) {
+	// Create temporary database
+	dbPath := filepath.Join(os.TempDir(), "test-rollback-sameblock.db")
+	defer os.Remove(dbPath)
+
+	ndb, err := namedb.NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer ndb.Close()
+
+	// Create a BlockChain wrapper with just the nameDB
+	bc := &BlockChain{
+		nameDB: ndb,
+	}
+
+	// Set up scenario: Both NAME_NEW and NAME_FIRSTUPDATE in same block
+	nameStr := "d/example"
+	value := `{"ip":"1.2.3.4"}`
+	txHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+	rand := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+		0x11, 0x12, 0x13, 0x14}
+	height := int32(100)
+
+	// Compute the commitment hash that links NAME_NEW to NAME_FIRSTUPDATE
+	commitHash := computeCommitHash(rand, nameStr)
+
+	// Simulate the state after the block was processed:
+	// - NAME_NEW commitment was consumed (deleted)
+	// - Name was registered via NAME_FIRSTUPDATE
+	record := &namedb.NameRecord{
+		Name:      nameStr,
+		Value:     value,
+		TxHash:    *txHash,
+		Height:    height,
+		ExpiresAt: height + 36000,
+		Address:   "N1234567890",
+		UpdatedAt: time.Now(),
+	}
+	if err := ndb.PutName(nameStr, record); err != nil {
+		t.Fatalf("Failed to put name: %v", err)
+	}
+	if err := ndb.AddHistory(*txHash, record); err != nil {
+		t.Fatalf("Failed to add history: %v", err)
+	}
+
+	// Create a block with both NAME_NEW and NAME_FIRSTUPDATE
+	// NAME_NEW comes first (earlier in block), NAME_FIRSTUPDATE comes later
+	msgBlock := wire.NewMsgBlock(&wire.BlockHeader{})
+
+	// First transaction: NAME_NEW
+	tx1 := wire.NewMsgTx(1)
+	nameNewScript := buildScript(
+		[]byte{opNameNew},
+		pushData(commitHash), // The commitment hash
+	)
+	tx1.AddTxOut(wire.NewTxOut(0, nameNewScript))
+	msgBlock.AddTransaction(tx1)
+
+	// Second transaction: NAME_FIRSTUPDATE that consumes the NAME_NEW
+	tx2 := wire.NewMsgTx(1)
+	firstUpdateScript := buildScript(
+		[]byte{opNameFirstUpdate},
+		pushData([]byte(nameStr)),
+		pushData(rand),
+		pushData([]byte(value)),
+	)
+	tx2.AddTxOut(wire.NewTxOut(0, firstUpdateScript))
+	msgBlock.AddTransaction(tx2)
+
+	// Create btcutil.Block wrapper
+	block := btcutil.NewBlock(msgBlock)
+	block.SetHeight(height)
+
+	// Rollback the block
+	bc.rollbackNameOperations(block)
+
+	// Verify the name was removed
+	if _, err := ndb.GetName(nameStr); err == nil {
+		t.Error("Expected name to be deleted after rollback, but it still exists")
+	}
+
+	// Verify history was removed
+	history, err := ndb.GetHistory(nameStr)
+	if err != nil {
+		t.Fatalf("Failed to get history: %v", err)
+	}
+	if len(history) != 0 {
+		t.Errorf("Expected 0 history entries after rollback, got %d", len(history))
+	}
+
+	// KEY TEST: The NAME_NEW commitment should still exist!
+	// Even though we rolled back the NAME_NEW (which would normally delete it),
+	// it should be preserved because the NAME_FIRSTUPDATE rollback restored it.
+	restoredNameNew, err := ndb.GetNameNew(commitHash)
+	if err != nil {
+		t.Fatalf("Expected NAME_NEW commitment to exist after rollback of same-block NAME_NEW + NAME_FIRSTUPDATE: %v", err)
+	}
+
+	// The height should be the estimated value
+	expectedHeight := height - 12 // MinBlocksBeforeFirstUpdate = 12
+	if restoredNameNew.Height != expectedHeight {
+		t.Errorf("Expected restored NAME_NEW height %d, got %d", expectedHeight, restoredNameNew.Height)
+	}
+}

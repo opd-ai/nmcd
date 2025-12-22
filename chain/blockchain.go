@@ -511,6 +511,13 @@ func (bc *BlockChain) HandleBlockchainNotification(notification *blockchain.Noti
 // This is called during a blockchain reorganization to maintain consistency
 // between the name database and the main chain.
 func (bc *BlockChain) rollbackNameOperations(block *btcutil.Block) {
+	// Track NAME_NEW commitments that are restored during this rollback.
+	// When a NAME_FIRSTUPDATE is rolled back, it restores the NAME_NEW commitment.
+	// If the same block also contains that NAME_NEW, we must NOT delete it
+	// during the NAME_NEW rollback, as it was restored for a reason (the
+	// NAME_FIRSTUPDATE that consumed it is also being rolled back).
+	restoredCommitments := make(map[string]bool)
+
 	// Process transactions in reverse order to properly undo operations
 	txs := block.Transactions()
 	for i := len(txs) - 1; i >= 0; i-- {
@@ -529,8 +536,14 @@ func (bc *BlockChain) rollbackNameOperations(block *btcutil.Block) {
 			case namedb.NameNew:
 				// Rollback NAME_NEW: remove the commitment from the database.
 				// extra contains the commitment hash.
-				// Note: Deletion may fail if commitment was already consumed by
-				// a NAME_FIRSTUPDATE - this is expected and safe to ignore.
+				//
+				// Skip deletion if this commitment was restored during rollback
+				// of a NAME_FIRSTUPDATE in the same block. This handles the case
+				// where both NAME_NEW and NAME_FIRSTUPDATE are in the same block.
+				commitHashKey := string(extra)
+				if restoredCommitments[commitHashKey] {
+					continue
+				}
 				_ = bc.nameDB.DeleteNameNew(extra)
 
 			case namedb.NameFirstUpdate:
@@ -559,6 +572,10 @@ func (bc *BlockChain) rollbackNameOperations(block *btcutil.Block) {
 					estimatedNameNewHeight = 0
 				}
 				_ = bc.nameDB.RestoreNameNew(commitHash, estimatedNameNewHeight)
+
+				// Track this commitment as restored so we don't delete it if
+				// the NAME_NEW for this commitment is also in this block
+				restoredCommitments[string(commitHash)] = true
 
 			case namedb.NameUpdate:
 				// Rollback NAME_UPDATE:
