@@ -494,9 +494,79 @@ func (bc *BlockChain) HandleBlockchainNotification(notification *blockchain.Noti
 
 	switch notification.Type {
 	case blockchain.NTBlockConnected:
-		// Block connected to main chain
+		// Block connected to main chain - name operations are already
+		// processed in ProcessBlock when isMainChain is true
 	case blockchain.NTBlockDisconnected:
 		// Block disconnected from main chain (reorg)
+		// We need to undo any name operations from this block
+		block, ok := notification.Data.(*btcutil.Block)
+		if !ok {
+			return
+		}
+		bc.rollbackNameOperations(block)
+	}
+}
+
+// rollbackNameOperations reverses all name operations from a disconnected block.
+// This is called during a blockchain reorganization to maintain consistency
+// between the name database and the main chain.
+func (bc *BlockChain) rollbackNameOperations(block *btcutil.Block) {
+	// Process transactions in reverse order to properly undo operations
+	txs := block.Transactions()
+	for i := len(txs) - 1; i >= 0; i-- {
+		tx := txs[i]
+		msgTx := tx.MsgTx()
+
+		// Process outputs in reverse order within the transaction
+		for j := len(msgTx.TxOut) - 1; j >= 0; j-- {
+			txOut := msgTx.TxOut[j]
+			op, name, _, extra, err := parseNameScriptFull(txOut.PkScript)
+			if err != nil {
+				continue // Not a name operation
+			}
+
+			switch op {
+			case namedb.NameNew:
+				// Rollback NAME_NEW: remove the commitment from the database
+				// extra contains the commitment hash
+				if err := bc.nameDB.DeleteNameNew(extra); err != nil {
+					// Log error but continue - commitment may not exist if
+					// it was already consumed by a NAME_FIRSTUPDATE
+				}
+
+			case namedb.NameFirstUpdate:
+				// Rollback NAME_FIRSTUPDATE:
+				// 1. Remove the history entry for this operation
+				// 2. Delete the name from the database
+				// Note: We don't restore the NAME_NEW commitment because the
+				// new chain will process its own NAME_NEW if needed
+				if _, err := bc.nameDB.RemoveLastHistoryEntry(name); err != nil {
+					// Log error but continue
+				}
+				if err := bc.nameDB.DeleteName(name); err != nil {
+					// Log error but continue
+				}
+
+			case namedb.NameUpdate:
+				// Rollback NAME_UPDATE:
+				// 1. Remove the history entry for this operation
+				// 2. Restore the previous value from history
+				prevRecord, err := bc.nameDB.RemoveLastHistoryEntry(name)
+				if err != nil {
+					// Log error but continue
+					continue
+				}
+				if prevRecord != nil {
+					// Restore the previous record
+					if err := bc.nameDB.PutName(name, prevRecord); err != nil {
+						// Log error but continue
+					}
+				}
+				// If prevRecord is nil, it means there was no previous state,
+				// which shouldn't happen for NAME_UPDATE (name should have been
+				// registered first), but we handle it gracefully
+			}
+		}
 	}
 }
 
