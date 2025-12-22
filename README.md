@@ -88,18 +88,18 @@ go build -v ./cmd/nmcd
     -d '{"jsonrpc":"2.0","method":"name_show","params":["d/example"],"id":1}'
   ```
 
-- `name_history` - Get name history
-  ```bash
-  curl -X POST http://127.0.0.1:8336 \
-    -H "Content-Type: application/json" \
-    -d '{"jsonrpc":"2.0","method":"name_history","params":["d/example"],"id":1}'
-  ```
-
 - `name_list` - List all registered names
   ```bash
   curl -X POST http://127.0.0.1:8336 \
     -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","method":"name_list","params":[],"id":1}'
+  ```
+
+- `name_history` - Get name history
+  ```bash
+  curl -X POST http://127.0.0.1:8336 \
+    -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"name_history","params":["d/example"],"id":1}'
   ```
 
 ## Dependencies
