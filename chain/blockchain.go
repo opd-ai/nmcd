@@ -207,39 +207,163 @@ func (bc *BlockChain) GetNameHistory(name string) ([]*namedb.NameRecord, error) 
 	return bc.nameDB.GetHistory(name)
 }
 
-// parseNameScript extracts name operation from script
+// Namecoin-specific opcodes for name operations.
+// These opcodes extend Bitcoin's script language for name management.
+// See: https://github.com/namecoin/namecoin-core for reference.
+const (
+	// opNameNew is the opcode for NAME_NEW (pre-registration with hash commitment)
+	// Script format: OP_NAME_NEW <hash> OP_2DROP <standard script>
+	opNameNew = 0xd0
+
+	// opNameFirstUpdate is the opcode for NAME_FIRSTUPDATE (first registration)
+	// Script format: OP_NAME_FIRSTUPDATE <name> <rand> <value> OP_2DROP OP_2DROP <standard script>
+	opNameFirstUpdate = 0xd1
+
+	// opNameUpdate is the opcode for NAME_UPDATE (update existing name)
+	// Script format: OP_NAME_UPDATE <name> <value> OP_2DROP OP_DROP <standard script>
+	opNameUpdate = 0xd2
+
+	// opPushData1 is the opcode for pushing 76-255 bytes
+	opPushData1 = 0x4c
+
+	// opPushData2 is the opcode for pushing 256-65535 bytes
+	opPushData2 = 0x4d
+
+	// opPushData4 is the opcode for pushing up to 4GB of data (rarely used)
+	opPushData4 = 0x4e
+)
+
+// parseNameScript extracts name operation from script.
+// Namecoin scripts use Bitcoin's push data format with length-prefixed data.
+// Returns the operation type, name, value, and any parsing error.
 func parseNameScript(script []byte) (namedb.NameOperation, string, string, error) {
-	// Simple parsing - in real implementation would use proper script parsing
-	// This is a placeholder that looks for OP_NAME patterns
-	if len(script) < 10 {
+	if len(script) < 2 {
 		return 0, "", "", fmt.Errorf("script too short")
 	}
 
-	// Check for name operation opcodes (simplified)
-	// Real implementation would properly parse script opcodes
-	if script[0] == 0x51 { // OP_NAME_NEW placeholder
+	switch script[0] {
+	case opNameNew:
+		// NAME_NEW: OP_NAME_NEW <hash> ...
+		// The hash is a 20-byte commitment, but we don't need to extract it
+		// for validation purposes in this implementation.
 		return namedb.NameNew, "", "", nil
-	}
-	if script[0] == 0x52 { // OP_NAME_FIRSTUPDATE placeholder
-		// Extract name and value from script
-		if len(script) < 20 {
-			return 0, "", "", fmt.Errorf("invalid firstupdate script")
+
+	case opNameFirstUpdate:
+		// NAME_FIRSTUPDATE: OP_NAME_FIRSTUPDATE <name> <rand> <value> ...
+		// Parse: name, skip rand, then value
+		offset := 1
+
+		// Extract name
+		name, newOffset, err := readPushData(script, offset)
+		if err != nil {
+			return 0, "", "", fmt.Errorf("failed to read name: %w", err)
 		}
-		name := string(script[1:11])
-		value := string(script[11:])
-		return namedb.NameFirstUpdate, name, value, nil
-	}
-	if script[0] == 0x53 { // OP_NAME_UPDATE placeholder
-		// Extract name and value from script
-		if len(script) < 20 {
-			return 0, "", "", fmt.Errorf("invalid update script")
+		offset = newOffset
+
+		// Skip rand (20 bytes typically, but use push data format)
+		_, newOffset, err = readPushData(script, offset)
+		if err != nil {
+			return 0, "", "", fmt.Errorf("failed to read rand: %w", err)
 		}
-		name := string(script[1:11])
-		value := string(script[11:])
-		return namedb.NameUpdate, name, value, nil
+		offset = newOffset
+
+		// Extract value
+		value, _, err := readPushData(script, offset)
+		if err != nil {
+			return 0, "", "", fmt.Errorf("failed to read value: %w", err)
+		}
+
+		return namedb.NameFirstUpdate, string(name), string(value), nil
+
+	case opNameUpdate:
+		// NAME_UPDATE: OP_NAME_UPDATE <name> <value> ...
+		offset := 1
+
+		// Extract name
+		name, newOffset, err := readPushData(script, offset)
+		if err != nil {
+			return 0, "", "", fmt.Errorf("failed to read name: %w", err)
+		}
+		offset = newOffset
+
+		// Extract value
+		value, _, err := readPushData(script, offset)
+		if err != nil {
+			return 0, "", "", fmt.Errorf("failed to read value: %w", err)
+		}
+
+		return namedb.NameUpdate, string(name), string(value), nil
 	}
 
 	return 0, "", "", fmt.Errorf("not a name operation")
+}
+
+// readPushData reads a Bitcoin-style push data from the script at the given offset.
+// Returns the data, the new offset after reading, and any error.
+// Bitcoin script push data format:
+//   - 0x00: push empty byte array (OP_0)
+//   - 0x01-0x4b: next N bytes are data (N is the opcode value)
+//   - 0x4c (OP_PUSHDATA1): next byte is length, then data
+//   - 0x4d (OP_PUSHDATA2): next 2 bytes are length (little-endian), then data
+//   - 0x4e (OP_PUSHDATA4): next 4 bytes are length (little-endian), then data
+func readPushData(script []byte, offset int) ([]byte, int, error) {
+	if offset >= len(script) {
+		return nil, offset, fmt.Errorf("offset beyond script length")
+	}
+
+	startOffset := offset
+	opcode := script[offset]
+	offset++
+
+	var dataLen int
+
+	switch {
+	case opcode == 0x00:
+		// OP_0: push empty byte array
+		dataLen = 0
+
+	case opcode >= 0x01 && opcode <= 0x4b:
+		// Direct push: opcode is the length (1-75 bytes)
+		dataLen = int(opcode)
+
+	case opcode == opPushData1:
+		// OP_PUSHDATA1: next byte is length
+		if offset >= len(script) {
+			return nil, offset, fmt.Errorf("missing length byte for OP_PUSHDATA1")
+		}
+		dataLen = int(script[offset])
+		offset++
+
+	case opcode == opPushData2:
+		// OP_PUSHDATA2: next 2 bytes are length (little-endian)
+		if offset+1 >= len(script) {
+			return nil, offset, fmt.Errorf("missing length bytes for OP_PUSHDATA2")
+		}
+		dataLen = int(script[offset]) | (int(script[offset+1]) << 8)
+		offset += 2
+
+	case opcode == opPushData4:
+		// OP_PUSHDATA4: next 4 bytes are length (little-endian)
+		if offset+3 >= len(script) {
+			return nil, offset, fmt.Errorf("missing length bytes for OP_PUSHDATA4")
+		}
+		dataLen = int(script[offset]) |
+			(int(script[offset+1]) << 8) |
+			(int(script[offset+2]) << 16) |
+			(int(script[offset+3]) << 24)
+		offset += 4
+
+	default:
+		return nil, offset, fmt.Errorf("unexpected opcode 0x%02x at offset %d", opcode, startOffset)
+	}
+
+	// Check if we have enough data
+	if offset+dataLen > len(script) {
+		return nil, offset, fmt.Errorf("data length %d exceeds remaining script", dataLen)
+	}
+
+	data := script[offset : offset+dataLen]
+	return data, offset + dataLen, nil
 }
 
 // validateNameFormat validates name and value format
