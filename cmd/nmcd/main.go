@@ -56,8 +56,24 @@ func main() {
 
 	log.Printf("Network listening on %v", cfg.ListenAddrs)
 
-	// Connect to initial peers
-	for _, addr := range cfg.AddPeers {
+	// Connect to initial peers (from -addpeer flag or DNS seeds)
+	peersToConnect := cfg.AddPeers
+	if len(peersToConnect) == 0 {
+		// No peers specified, try DNS seed discovery
+		seeds := config.DNSSeeds(cfg.Network)
+		if len(seeds) > 0 {
+			log.Printf("No peers specified, resolving DNS seeds for %s...", cfg.Network)
+			seedAddrs := network.ResolveSeedNodes(seeds, config.DefaultPort(cfg.Network))
+			if len(seedAddrs) > 0 {
+				log.Printf("Discovered %d peer addresses from DNS seeds", len(seedAddrs))
+				peersToConnect = seedAddrs
+			} else {
+				log.Printf("Warning: No peers discovered from DNS seeds")
+			}
+		}
+	}
+
+	for _, addr := range peersToConnect {
 		if err := peerMgr.ConnectPeer(addr); err != nil {
 			log.Printf("Failed to connect to %s: %v", addr, err)
 		} else {
