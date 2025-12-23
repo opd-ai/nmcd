@@ -13,12 +13,12 @@
 |----------|-------|----------------------|
 | CRITICAL BUG | 0 | - |
 | FUNCTIONAL MISMATCH | 5 (4 fixed) | High: 2, Medium: 3 |
-| MISSING FEATURE | 5 (2 fixed) | High: 1, Medium: 3, Low: 1 |
+| MISSING FEATURE | 5 (3 fixed) | High: 1, Medium: 3, Low: 1 |
 | EDGE CASE BUG | 1 | Medium: 1 |
 | PERFORMANCE ISSUE | 0 | - |
 | DOCUMENTATION DISCREPANCY | 1 | Low: 1 |
 
-**Total Findings: 12 (6 fixed, 6 remaining)**
+**Total Findings: 12 (7 fixed, 5 remaining)**
 
 The codebase is well-structured with good test coverage. The primary concerns are around incomplete integration between components and missing address tracking for name records. No critical bugs that would cause crashes or data corruption were identified.
 
@@ -143,28 +143,24 @@ result := map[string]interface{}{
 
 ---
 
-### MISSING FEATURE: No Seed Node Support
+### [FIXED] MISSING FEATURE: No Seed Node Support
 
 **File:** network/peermgr.go, config/config.go  
 **Severity:** Medium  
+**Status:** ✅ FIXED  
+**Fix Date:** 2025-12-23
+
 **Description:** There is no implementation of DNS seed resolution or hardcoded seed nodes for initial peer discovery. The only way to connect to peers is via the `-addpeer` command line flag.
 
 **Expected Behavior:** A blockchain node typically has hardcoded seed nodes or DNS seeds for initial peer discovery.
 
 **Actual Behavior:** The node starts with zero peer connections unless `-addpeer` is explicitly specified.
 
-**Impact:** New nodes have no automatic way to discover the network and synchronize. Manual peer configuration is required.
-
-**Reproduction:** Start the node without `-addpeer` flag - it will have 0 connections.
-
-**Code Reference:**
-```go
-// config/config.go - no seed nodes defined
-return &Config{
-    // ...
-    AddPeers:    []string{},  // Empty by default
-}
-```
+**Fix Applied:**
+- Added `config/seeds.go` with official Namecoin DNS seed nodes for mainnet and testnet (sourced from namecoin-core repository)
+- Added `network/seeds.go` with `SeedResolver` for DNS seed resolution
+- Updated `cmd/nmcd/main.go` to automatically resolve DNS seeds when no `-addpeer` flag is specified
+- Added comprehensive unit tests for seed node functionality
 
 ---
 
@@ -319,7 +315,7 @@ The audit also identified several well-implemented aspects:
 
 2. **Medium Priority:**
    - ~~Implement `getnewaddress` and `listaddresses` RPC methods~~ ✅ DONE
-   - Add seed node support for peer discovery
+   - ~~Add seed node support for peer discovery~~ ✅ DONE
    - Complete `name_update` transaction broadcasting
 
 3. **Low Priority:**

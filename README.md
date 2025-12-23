@@ -53,7 +53,7 @@ go build -v ./cmd/nmcd
 ## Running
 
 ```bash
-# Run with defaults
+# Run with defaults (auto-discovers peers via DNS seeds)
 ./nmcd
 
 # Custom data directory
@@ -65,12 +65,33 @@ go build -v ./cmd/nmcd
 # Custom RPC port
 ./nmcd -rpcaddr=127.0.0.1:18336
 
-# Connect to specific peer
+# Connect to specific peer (bypasses DNS seed discovery)
 ./nmcd -addpeer=peer.example.com:8334
 
 # Enable RPC authentication (recommended for security)
 ./nmcd -rpcuser=myuser -rpcpassword=mypassword
 ```
+
+## Peer Discovery
+
+nmcd supports automatic peer discovery via DNS seeds. When started without the `-addpeer` flag, the node will:
+
+1. Query official Namecoin DNS seed servers
+2. Resolve IP addresses of active network nodes
+3. Connect to discovered peers automatically
+
+**Mainnet DNS Seeds:**
+- `nmc.seed.quisquis.de`
+- `seed.nmc.markasoftware.com`
+- `dnsseed1.nmc.dotbit.zone`
+- `dnsseed2.nmc.dotbit.zone`
+- `dnsseed.nmc.testls.space`
+- `namecoin.seed.cypherstack.com`
+
+**Testnet DNS Seeds:**
+- `dnsseed.test.namecoin.webbtc.com`
+
+To bypass DNS seed discovery and connect to specific peers, use the `-addpeer` flag.
 
 ## RPC API
 
