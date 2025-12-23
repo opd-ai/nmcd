@@ -2,10 +2,13 @@ package network
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"sync"
 	"time"
 
+	"github.com/btcsuite/btcd/blockchain"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/peer"
 	"github.com/btcsuite/btcd/wire"
@@ -223,8 +226,39 @@ func (pm *PeerManager) onInv(p *peer.Peer, msg *wire.MsgInv) {
 }
 
 func (pm *PeerManager) onBlock(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
-	// Handle block message - would process with blockchain
-	// This is where we'd call blockchain.ProcessBlock
+	// buf is part of the peer.MessageListeners interface but not used here.
+	_ = buf
+
+	// Check if blockchain is available for processing
+	if pm.blockchain == nil {
+		log.Printf("Cannot process block %s: blockchain not initialized",
+			msg.BlockHash().String())
+		return
+	}
+
+	// Convert wire.MsgBlock to btcutil.Block for processing
+	block := btcutil.NewBlock(msg)
+
+	// Process the block through the blockchain
+	// BFNone means no special behavior flags
+	isMainChain, isOrphan, err := pm.blockchain.ProcessBlock(block, blockchain.BFNone)
+	if err != nil {
+		log.Printf("Failed to process block %s from peer %s: %v",
+			msg.BlockHash().String(), p.Addr(), err)
+		return
+	}
+
+	// Log the result for debugging
+	if isOrphan {
+		log.Printf("Received orphan block %s from peer %s",
+			msg.BlockHash().String(), p.Addr())
+	} else if isMainChain {
+		log.Printf("Accepted block %s from peer %s on main chain",
+			msg.BlockHash().String(), p.Addr())
+	} else {
+		log.Printf("Accepted block %s from peer %s on side chain",
+			msg.BlockHash().String(), p.Addr())
+	}
 }
 
 func (pm *PeerManager) onTx(p *peer.Peer, msg *wire.MsgTx) {

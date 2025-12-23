@@ -12,13 +12,13 @@
 | Category | Count | Severity Distribution |
 |----------|-------|----------------------|
 | CRITICAL BUG | 0 | - |
-| FUNCTIONAL MISMATCH | 3 (2 fixed) | High: 1, Medium: 2 |
+| FUNCTIONAL MISMATCH | 5 (4 fixed) | High: 2, Medium: 3 |
 | MISSING FEATURE | 5 | High: 1, Medium: 3, Low: 1 |
 | EDGE CASE BUG | 1 | Medium: 1 |
 | PERFORMANCE ISSUE | 0 | - |
 | DOCUMENTATION DISCREPANCY | 1 | Low: 1 |
 
-**Total Findings: 12 (2 fixed, 10 remaining)**
+**Total Findings: 12 (4 fixed, 8 remaining)**
 
 The codebase is well-structured with good test coverage. The primary concerns are around incomplete integration between components and missing address tracking for name records. No critical bugs that would cause crashes or data corruption were identified.
 
@@ -57,58 +57,44 @@ The codebase is well-structured with good test coverage. The primary concerns ar
 
 ---
 
-### FUNCTIONAL MISMATCH: onBlock Handler Does Not Process Blocks
+### [FIXED] FUNCTIONAL MISMATCH: onBlock Handler Does Not Process Blocks
 
-**File:** network/peermgr.go:225-228  
+**File:** network/peermgr.go:228-252  
 **Severity:** High  
+**Status:** ✅ FIXED  
+**Fix Date:** 2025-12-22
+
 **Description:** The `onBlock` message handler receives blocks from peers but does not actually process them through the blockchain. There is a comment indicating this is where ProcessBlock should be called, but the implementation is empty.
 
 **Expected Behavior:** Per README.md "Handles block/tx propagation", received blocks should be validated and added to the blockchain.
 
 **Actual Behavior:** Blocks are received but silently discarded. The blockchain state never advances from peer-received blocks.
 
-**Impact:** The node cannot synchronize with the network. It will only have the genesis block unless blocks are submitted through some other mechanism.
-
-**Reproduction:** Start the node and connect to peers. The block count will remain at 0 (or genesis) even after receiving blocks.
-
-**Code Reference:**
-```go
-func (pm *PeerManager) onBlock(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
-    // Handle block message - would process with blockchain
-    // This is where we'd call blockchain.ProcessBlock
-}
-```
+**Fix Applied:**
+- Implemented the `onBlock` handler to convert `wire.MsgBlock` to `btcutil.Block`
+- Call `blockchain.ProcessBlock()` with `BFNone` behavior flags to process the block
+- Added logging for successful block acceptance (main chain vs side chain) and orphan blocks
+- Added error logging for block processing failures
+- Added unit tests for the network package
 
 ---
 
-### FUNCTIONAL MISMATCH: Blockchain Notifications Not Connected
+### [FIXED] FUNCTIONAL MISMATCH: Blockchain Notifications Not Connected
 
-**File:** chain/blockchain.go:490-508, cmd/nmcd/main.go  
+**File:** chain/blockchain.go:52-65  
 **Severity:** Medium  
+**Status:** ✅ FIXED  
+**Fix Date:** 2025-12-23
+
 **Description:** The `HandleBlockchainNotification` method exists to handle blockchain reorganization events, but it is never registered with btcd's blockchain notification system. The method handles NTBlockConnected and NTBlockDisconnected events, but no subscription is created.
 
 **Expected Behavior:** The blockchain should subscribe to notifications to properly handle chain reorganizations and update the name database accordingly.
 
 **Actual Behavior:** HandleBlockchainNotification is never called. Chain reorganizations would leave the name database in an inconsistent state with the blockchain.
 
-**Impact:** If a blockchain reorganization occurs (which shouldn't happen much on an isolated node), the name database would become inconsistent with the actual chain state.
-
-**Reproduction:** Induce a chain reorganization - the name database will not be updated.
-
-**Code Reference:**
-```go
-func (bc *BlockChain) HandleBlockchainNotification(notification *blockchain.Notification) {
-    bc.mu.Lock()
-    defer bc.mu.Unlock()
-    // This method exists but is never registered/called
-    switch notification.Type {
-    case blockchain.NTBlockConnected:
-        // ...
-    case blockchain.NTBlockDisconnected:
-        // ...
-    }
-}
-```
+**Fix Applied:**
+- Added `chain.Subscribe(bc.HandleBlockchainNotification)` call in `NewBlockChain()` after creating the blockchain instance
+- This ensures the name database stays consistent during blockchain reorganizations by properly handling NTBlockDisconnected events to rollback name operations
 
 ---
 

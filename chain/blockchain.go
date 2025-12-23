@@ -57,6 +57,12 @@ func NewBlockChain(cfg *Config, indexManager blockchain.IndexManager) (*BlockCha
 	}
 
 	bc.BlockChain = chain
+
+	// Subscribe to blockchain notifications to handle chain reorganizations.
+	// This ensures the name database stays consistent during reorgs by
+	// rolling back name operations when blocks are disconnected.
+	chain.Subscribe(bc.HandleBlockchainNotification)
+
 	return bc, nil
 }
 
