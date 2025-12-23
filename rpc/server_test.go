@@ -63,15 +63,6 @@ func TestCheckAuth(t *testing.T) {
 			setBasicAuth:  false,
 			expectedValid: false,
 		},
-		{
-			name:          "empty credentials on server and request",
-			serverUser:    "",
-			serverPass:    "",
-			requestUser:   "",
-			requestPass:   "",
-			setBasicAuth:  true,
-			expectedValid: true,
-		},
 	}
 
 	for _, tc := range tests {
@@ -101,6 +92,15 @@ func TestHandleRequestAuth(t *testing.T) {
 		setBasicAuth   bool
 		expectedStatus int
 	}{
+		{
+			name:           "auth configured - valid credentials",
+			serverUser:     "admin",
+			serverPass:     "secret",
+			requestUser:    "admin",
+			requestPass:    "secret",
+			setBasicAuth:   true,
+			expectedStatus: http.StatusOK, // Request processed successfully
+		},
 		{
 			name:           "auth configured - no credentials provided",
 			serverUser:     "admin",

@@ -89,6 +89,11 @@ func main() {
 		log.Printf("Warning: Both -rpcuser and -rpcpassword must be set for RPC authentication. Authentication is disabled.")
 	}
 
+	// Security warning about command-line credentials
+	if cfg.RPCUser != "" && cfg.RPCPassword != "" {
+		log.Printf("Warning: RPC credentials passed via command-line are visible in process listings. For production, consider using environment variables or a config file.")
+	}
+
 	rpcServer, err := rpc.NewServer(rpcCfg)
 	if err != nil {
 		log.Fatalf("Failed to create RPC server: %v", err)

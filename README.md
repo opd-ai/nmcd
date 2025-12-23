@@ -76,6 +76,11 @@ go build -v ./cmd/nmcd
 
 The RPC server supports HTTP Basic Authentication. When both `-rpcuser` and `-rpcpassword` flags are set, all RPC requests must include valid credentials.
 
+**Security Considerations:**
+- Use strong, unique passwords for RPC authentication
+- Command-line flags are visible in process listings (`ps`, `top`). For production use, consider environment variables or a configuration file
+- HTTP Basic Auth transmits credentials in base64 encoding (not encrypted). Only use RPC over localhost or with proper network security (firewall, VPN, or reverse proxy with HTTPS)
+
 ```bash
 # With authentication enabled
 curl -X POST http://127.0.0.1:8336 \

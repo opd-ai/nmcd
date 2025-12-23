@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -111,12 +112,15 @@ func (s *Server) Stop() error {
 // checkAuth validates HTTP Basic Authentication credentials.
 // Returns true if the request contains valid credentials matching
 // the configured rpcUser and rpcPassword.
+// Uses constant-time comparison to prevent timing attacks.
 func (s *Server) checkAuth(r *http.Request) bool {
 	user, pass, ok := r.BasicAuth()
 	if !ok {
 		return false
 	}
-	return user == s.rpcUser && pass == s.rpcPassword
+	userMatch := subtle.ConstantTimeCompare([]byte(user), []byte(s.rpcUser))
+	passMatch := subtle.ConstantTimeCompare([]byte(pass), []byte(s.rpcPassword))
+	return userMatch == 1 && passMatch == 1
 }
 
 // handleRequest handles incoming RPC requests
