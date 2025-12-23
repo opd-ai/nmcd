@@ -1065,12 +1065,12 @@ func TestExtractAddressFromNameScript(t *testing.T) {
 
 	// Build a P2PKH script: OP_DUP OP_HASH160 <pubkeyhash> OP_EQUALVERIFY OP_CHECKSIG
 	p2pkhScript := buildScript(
-		[]byte{0x76},       // OP_DUP
-		[]byte{0xa9},       // OP_HASH160
-		[]byte{0x14},       // Push 20 bytes
-		pubKeyHash,         // pubkeyhash
-		[]byte{0x88},       // OP_EQUALVERIFY
-		[]byte{0xac},       // OP_CHECKSIG
+		[]byte{0x76}, // OP_DUP
+		[]byte{0xa9}, // OP_HASH160
+		[]byte{0x14}, // Push 20 bytes
+		pubKeyHash,   // pubkeyhash
+		[]byte{0x88}, // OP_EQUALVERIFY
+		[]byte{0xac}, // OP_CHECKSIG
 	)
 
 	t.Run("NAME_FIRSTUPDATE with P2PKH", func(t *testing.T) {
@@ -1085,8 +1085,8 @@ func TestExtractAddressFromNameScript(t *testing.T) {
 			pushData(nameBytes),
 			pushData(rand),
 			pushData(valueBytes),
-			[]byte{0x6d},     // OP_2DROP
-			[]byte{0x6d},     // OP_2DROP
+			[]byte{0x6d}, // OP_2DROP
+			[]byte{0x6d}, // OP_2DROP
 			p2pkhScript,
 		)
 
@@ -1106,8 +1106,8 @@ func TestExtractAddressFromNameScript(t *testing.T) {
 			[]byte{opNameUpdate},
 			pushData(nameBytes),
 			pushData(valueBytes),
-			[]byte{0x6d},     // OP_2DROP
-			[]byte{0x75},     // OP_DROP
+			[]byte{0x6d}, // OP_2DROP
+			[]byte{0x75}, // OP_DROP
 			p2pkhScript,
 		)
 
@@ -1125,7 +1125,7 @@ func TestExtractAddressFromNameScript(t *testing.T) {
 		script := buildScript(
 			[]byte{opNameNew},
 			pushData(commitHash),
-			[]byte{0x6d},     // OP_2DROP
+			[]byte{0x6d}, // OP_2DROP
 			p2pkhScript,
 		)
 
