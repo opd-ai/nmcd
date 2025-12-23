@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/opd-ai/nmcd/wallet"
 )
 
 // testServer creates a minimal Server for testing authentication.
@@ -184,5 +187,149 @@ func TestHandleRequestMethodNotAllowed(t *testing.T) {
 
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Errorf("handleRequest() status = %d, want %d", rr.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestGetNewAddressNoWallet(t *testing.T) {
+	s := &Server{}
+	req := &Request{
+		Jsonrpc: "2.0",
+		Method:  "getnewaddress",
+		ID:      1,
+	}
+
+	resp := s.getNewAddress(req)
+
+	if resp.Error == nil {
+		t.Error("expected error when wallet is nil")
+	}
+	if resp.Error.Code != -1 {
+		t.Errorf("expected error code -1, got %d", resp.Error.Code)
+	}
+	if resp.Error.Message != "Wallet not initialized. Start the node with wallet enabled." {
+		t.Errorf("unexpected error message: %s", resp.Error.Message)
+	}
+}
+
+func TestListAddressesNoWallet(t *testing.T) {
+	s := &Server{}
+	req := &Request{
+		Jsonrpc: "2.0",
+		Method:  "listaddresses",
+		ID:      1,
+	}
+
+	resp := s.listAddresses(req)
+
+	if resp.Error == nil {
+		t.Error("expected error when wallet is nil")
+	}
+	if resp.Error.Code != -1 {
+		t.Errorf("expected error code -1, got %d", resp.Error.Code)
+	}
+	if resp.Error.Message != "Wallet not initialized. Start the node with wallet enabled." {
+		t.Errorf("unexpected error message: %s", resp.Error.Message)
+	}
+}
+
+func TestGetNewAddressWithWallet(t *testing.T) {
+	tmpDir := t.TempDir()
+	w, err := wallet.NewWallet(tmpDir, &chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("failed to create wallet: %v", err)
+	}
+
+	s := &Server{wallet: w}
+	req := &Request{
+		Jsonrpc: "2.0",
+		Method:  "getnewaddress",
+		ID:      1,
+	}
+
+	resp := s.getNewAddress(req)
+
+	if resp.Error != nil {
+		t.Errorf("unexpected error: %v", resp.Error)
+	}
+	if resp.Result == nil {
+		t.Error("expected result, got nil")
+	}
+
+	address, ok := resp.Result.(string)
+	if !ok {
+		t.Errorf("expected string result, got %T", resp.Result)
+	}
+	if address == "" {
+		t.Error("expected non-empty address")
+	}
+
+	// Verify the address was added to the wallet
+	if !w.HasKey(address) {
+		t.Error("generated address not found in wallet")
+	}
+}
+
+func TestListAddressesWithWallet(t *testing.T) {
+	tmpDir := t.TempDir()
+	w, err := wallet.NewWallet(tmpDir, &chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("failed to create wallet: %v", err)
+	}
+
+	s := &Server{wallet: w}
+
+	// Test with empty wallet
+	req := &Request{
+		Jsonrpc: "2.0",
+		Method:  "listaddresses",
+		ID:      1,
+	}
+
+	resp := s.listAddresses(req)
+	if resp.Error != nil {
+		t.Errorf("unexpected error: %v", resp.Error)
+	}
+
+	addresses, ok := resp.Result.([]string)
+	if !ok {
+		t.Errorf("expected []string result, got %T", resp.Result)
+	}
+	if len(addresses) != 0 {
+		t.Errorf("expected empty list, got %d addresses", len(addresses))
+	}
+
+	// Generate some addresses and verify they appear in the list
+	addr1, err := w.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+	addr2, err := w.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	resp = s.listAddresses(req)
+	if resp.Error != nil {
+		t.Errorf("unexpected error: %v", resp.Error)
+	}
+
+	addresses, ok = resp.Result.([]string)
+	if !ok {
+		t.Errorf("expected []string result, got %T", resp.Result)
+	}
+	if len(addresses) != 2 {
+		t.Errorf("expected 2 addresses, got %d", len(addresses))
+	}
+
+	// Verify both addresses are present
+	found := make(map[string]bool)
+	for _, addr := range addresses {
+		found[addr] = true
+	}
+	if !found[addr1] {
+		t.Errorf("address %s not found in list", addr1)
+	}
+	if !found[addr2] {
+		t.Errorf("address %s not found in list", addr2)
 	}
 }

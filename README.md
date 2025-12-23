@@ -133,8 +133,23 @@ curl -X POST http://127.0.0.1:8336 \
 
 ### Wallet Methods
 
-- `getnewaddress` - Generate a new address in the wallet (planned)
-- `listaddresses` - List all addresses in the wallet (planned)
+- `getnewaddress` - Generate a new address in the wallet
+  ```bash
+  curl -X POST http://127.0.0.1:8336 \
+    -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"getnewaddress","params":[],"id":1}'
+  ```
+  
+  Returns a new address string. The address is persisted to the wallet file.
+
+- `listaddresses` - List all addresses in the wallet
+  ```bash
+  curl -X POST http://127.0.0.1:8336 \
+    -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"listaddresses","params":[],"id":1}'
+  ```
+  
+  Returns an array of address strings currently stored in the wallet.
 
 ## Wallet
 

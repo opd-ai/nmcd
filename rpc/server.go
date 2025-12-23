@@ -179,6 +179,10 @@ func (s *Server) processRequest(req *Request) *Response {
 		return s.nameList(req)
 	case "name_history":
 		return s.nameHistory(req)
+	case "getnewaddress":
+		return s.getNewAddress(req)
+	case "listaddresses":
+		return s.listAddresses(req)
 	default:
 		return &Response{
 			Jsonrpc: "2.0",
@@ -435,15 +439,15 @@ func (s *Server) nameUpdate(req *Request) *Response {
 	// Return information about the update that would be performed
 	// In a full implementation, this would create and broadcast the transaction
 	result := map[string]interface{}{
-		"name":             name,
-		"value":            newValue,
-		"address":          destAddress,
-		"script":           hex.EncodeToString(nameScript),
-		"current_height":   bestHeight,
-		"expires_in":       record.ExpiresAt - bestHeight,
-		"new_expires_at":   bestHeight + 36000, // Name expiration extended on update
-		"status":           "prepared",
-		"message":          "NAME_UPDATE transaction prepared. Broadcasting requires UTXO management.",
+		"name":           name,
+		"value":          newValue,
+		"address":        destAddress,
+		"script":         hex.EncodeToString(nameScript),
+		"current_height": bestHeight,
+		"expires_in":     record.ExpiresAt - bestHeight,
+		"new_expires_at": bestHeight + 36000, // Name expiration extended on update
+		"status":         "prepared",
+		"message":        "NAME_UPDATE transaction prepared. Broadcasting requires UTXO management.",
 	}
 
 	return &Response{
@@ -534,6 +538,62 @@ func (s *Server) nameHistory(req *Request) *Response {
 	return &Response{
 		Jsonrpc: "2.0",
 		Result:  result,
+		ID:      req.ID,
+	}
+}
+
+// getNewAddress generates a new address in the wallet and returns it.
+// This method creates a new key pair and persists it to the wallet file.
+func (s *Server) getNewAddress(req *Request) *Response {
+	if s.wallet == nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: "Wallet not initialized. Start the node with wallet enabled.",
+			},
+			ID: req.ID,
+		}
+	}
+
+	address, err := s.wallet.GenerateKey()
+	if err != nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: fmt.Sprintf("Failed to generate address: %v", err),
+			},
+			ID: req.ID,
+		}
+	}
+
+	return &Response{
+		Jsonrpc: "2.0",
+		Result:  address,
+		ID:      req.ID,
+	}
+}
+
+// listAddresses returns all addresses in the wallet.
+// Returns an array of address strings currently stored in the wallet.
+func (s *Server) listAddresses(req *Request) *Response {
+	if s.wallet == nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: "Wallet not initialized. Start the node with wallet enabled.",
+			},
+			ID: req.ID,
+		}
+	}
+
+	addresses := s.wallet.GetAddresses()
+
+	return &Response{
+		Jsonrpc: "2.0",
+		Result:  addresses,
 		ID:      req.ID,
 	}
 }

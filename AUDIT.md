@@ -13,12 +13,12 @@
 |----------|-------|----------------------|
 | CRITICAL BUG | 0 | - |
 | FUNCTIONAL MISMATCH | 5 (4 fixed) | High: 2, Medium: 3 |
-| MISSING FEATURE | 5 (1 fixed) | High: 1, Medium: 3, Low: 1 |
+| MISSING FEATURE | 5 (2 fixed) | High: 1, Medium: 3, Low: 1 |
 | EDGE CASE BUG | 1 | Medium: 1 |
 | PERFORMANCE ISSUE | 0 | - |
 | DOCUMENTATION DISCREPANCY | 1 | Low: 1 |
 
-**Total Findings: 12 (5 fixed, 7 remaining)**
+**Total Findings: 12 (6 fixed, 6 remaining)**
 
 The codebase is well-structured with good test coverage. The primary concerns are around incomplete integration between components and missing address tracking for name records. No critical bugs that would cause crashes or data corruption were identified.
 
@@ -125,26 +125,21 @@ result := map[string]interface{}{
 
 ---
 
-### MISSING FEATURE: getnewaddress and listaddresses RPC Methods
+### [FIXED] MISSING FEATURE: getnewaddress and listaddresses RPC Methods
 
 **File:** rpc/server.go, README.md:117-119  
 **Severity:** Medium  
+**Status:** ✅ FIXED  
+**Fix Date:** 2025-12-23
+
 **Description:** The README.md documents `getnewaddress` and `listaddresses` RPC methods as "(planned)" but the wallet package has `GenerateKey()` and `GetAddresses()` methods that could implement these. The RPC server does not expose these wallet methods.
 
-**Expected Behavior:** README indicates these are planned features. The underlying wallet implementation exists.
-
-**Actual Behavior:** The RPC methods are not implemented despite the wallet having the necessary functionality.
-
-**Impact:** Users cannot generate new addresses or list existing addresses through the RPC API, despite the wallet supporting these operations internally.
-
-**Reproduction:** Call `getnewaddress` or `listaddresses` RPC - returns "Method not found" error.
-
-**Code Reference:**
-```go
-// In rpc/server.go processRequest - these cases are missing:
-// case "getnewaddress":
-// case "listaddresses":
-```
+**Fix Applied:**
+- Added `getnewaddress` RPC method that calls `wallet.GenerateKey()` to create and return a new address
+- Added `listaddresses` RPC method that calls `wallet.GetAddresses()` to return all wallet addresses
+- Both methods return appropriate error if wallet is not initialized
+- Added comprehensive unit tests for both methods (wallet nil case and with real wallet)
+- Updated README.md to document the new RPC methods with usage examples
 
 ---
 
@@ -323,7 +318,7 @@ The audit also identified several well-implemented aspects:
    - ~~Populate Address field when creating name records~~ ✅ DONE
 
 2. **Medium Priority:**
-   - Implement `getnewaddress` and `listaddresses` RPC methods
+   - ~~Implement `getnewaddress` and `listaddresses` RPC methods~~ ✅ DONE
    - Add seed node support for peer discovery
    - Complete `name_update` transaction broadcasting
 

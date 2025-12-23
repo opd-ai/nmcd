@@ -151,9 +151,9 @@ func TestBuildNameUpdateScript(t *testing.T) {
 
 func TestPushData(t *testing.T) {
 	tests := []struct {
-		name     string
-		data     []byte
-		wantLen  int
+		name      string
+		data      []byte
+		wantLen   int
 		firstByte byte
 	}{
 		{

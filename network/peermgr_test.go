@@ -15,7 +15,7 @@ func TestPeerManagerCreation(t *testing.T) {
 	// This tests the basic structure without needing a full blockchain instance
 	netCfg := &Config{
 		ChainParams: &chaincfg.MainNetParams,
-		Blockchain:  nil, // nil is acceptable when no block processing is needed
+		Blockchain:  nil,        // nil is acceptable when no block processing is needed
 		ListenAddrs: []string{}, // No listeners for this test
 		MaxPeers:    10,
 	}
