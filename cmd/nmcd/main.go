@@ -76,10 +76,17 @@ func main() {
 
 	// Create RPC server
 	rpcCfg := &rpc.Config{
-		Blockchain: bc,
-		PeerMgr:    peerMgr,
-		Wallet:     w,
-		ListenAddr: cfg.RPCAddr,
+		Blockchain:  bc,
+		PeerMgr:     peerMgr,
+		Wallet:      w,
+		ListenAddr:  cfg.RPCAddr,
+		RPCUser:     cfg.RPCUser,
+		RPCPassword: cfg.RPCPassword,
+	}
+
+	// Warn if only one of rpcuser/rpcpassword is set
+	if (cfg.RPCUser != "" && cfg.RPCPassword == "") || (cfg.RPCUser == "" && cfg.RPCPassword != "") {
+		log.Printf("Warning: Both -rpcuser and -rpcpassword must be set for RPC authentication. Authentication is disabled.")
 	}
 
 	rpcServer, err := rpc.NewServer(rpcCfg)
@@ -111,6 +118,8 @@ func parseFlags() *config.Config {
 	flag.StringVar(&cfg.DataDir, "datadir", cfg.DataDir, "Data directory")
 	flag.StringVar(&cfg.Network, "network", cfg.Network, "Network to use (mainnet, testnet, regtest)")
 	flag.StringVar(&cfg.RPCAddr, "rpcaddr", cfg.RPCAddr, "RPC server address")
+	flag.StringVar(&cfg.RPCUser, "rpcuser", cfg.RPCUser, "RPC authentication username")
+	flag.StringVar(&cfg.RPCPassword, "rpcpassword", cfg.RPCPassword, "RPC authentication password")
 
 	var listenAddrs string
 	flag.StringVar(&listenAddrs, "listen", "0.0.0.0:8334", "Network listen addresses (comma-separated)")

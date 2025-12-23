@@ -18,20 +18,24 @@ import (
 
 // Server provides RPC interface using standard library
 type Server struct {
-	blockchain *chain.BlockChain
-	peerMgr    *network.PeerManager
-	wallet     *wallet.Wallet
-	listener   net.Listener
-	server     *http.Server
-	mu         sync.RWMutex
+	blockchain  *chain.BlockChain
+	peerMgr     *network.PeerManager
+	wallet      *wallet.Wallet
+	listener    net.Listener
+	server      *http.Server
+	rpcUser     string
+	rpcPassword string
+	mu          sync.RWMutex
 }
 
 // Config holds RPC server configuration
 type Config struct {
-	Blockchain *chain.BlockChain
-	PeerMgr    *network.PeerManager
-	Wallet     *wallet.Wallet
-	ListenAddr string
+	Blockchain  *chain.BlockChain
+	PeerMgr     *network.PeerManager
+	Wallet      *wallet.Wallet
+	ListenAddr  string
+	RPCUser     string
+	RPCPassword string
 }
 
 // Request represents a JSON-RPC request
@@ -64,10 +68,12 @@ func NewServer(cfg *Config) (*Server, error) {
 	}
 
 	s := &Server{
-		blockchain: cfg.Blockchain,
-		peerMgr:    cfg.PeerMgr,
-		wallet:     cfg.Wallet,
-		listener:   listener,
+		blockchain:  cfg.Blockchain,
+		peerMgr:     cfg.PeerMgr,
+		wallet:      cfg.Wallet,
+		listener:    listener,
+		rpcUser:     cfg.RPCUser,
+		rpcPassword: cfg.RPCPassword,
 	}
 
 	mux := http.NewServeMux()
@@ -102,11 +108,32 @@ func (s *Server) Stop() error {
 	return s.server.Close()
 }
 
+// checkAuth validates HTTP Basic Authentication credentials.
+// Returns true if the request contains valid credentials matching
+// the configured rpcUser and rpcPassword.
+func (s *Server) checkAuth(r *http.Request) bool {
+	user, pass, ok := r.BasicAuth()
+	if !ok {
+		return false
+	}
+	return user == s.rpcUser && pass == s.rpcPassword
+}
+
 // handleRequest handles incoming RPC requests
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
+	}
+
+	// Check authentication if both credentials are configured.
+	// Both rpcUser and rpcPassword must be set for authentication to be enforced.
+	if s.rpcUser != "" && s.rpcPassword != "" {
+		if !s.checkAuth(r) {
+			w.Header().Set("WWW-Authenticate", `Basic realm="nmcd RPC"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
 	}
 
 	var req Request
