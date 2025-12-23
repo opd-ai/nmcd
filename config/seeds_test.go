@@ -6,14 +6,14 @@ import (
 
 func TestDNSSeeds(t *testing.T) {
 	tests := []struct {
-		network     string
-		expectEmpty bool
-		minCount    int
+		network       string
+		expectEmpty   bool
+		expectedSeeds []string
 	}{
-		{"mainnet", false, 6},  // MainNet should have at least 6 seeds
-		{"testnet", false, 1},  // TestNet should have at least 1 seed
-		{"regtest", true, 0},   // RegTest should have no seeds
-		{"unknown", false, 6},  // Unknown defaults to mainnet
+		{"mainnet", false, MainNetDNSSeeds},
+		{"testnet", false, TestNetDNSSeeds},
+		{"regtest", true, RegTestDNSSeeds},
+		{"unknown", false, MainNetDNSSeeds}, // Unknown defaults to mainnet
 	}
 
 	for _, tt := range tests {
@@ -22,8 +22,8 @@ func TestDNSSeeds(t *testing.T) {
 			if tt.expectEmpty && len(seeds) != 0 {
 				t.Errorf("Expected empty seeds for %s, got %d", tt.network, len(seeds))
 			}
-			if !tt.expectEmpty && len(seeds) < tt.minCount {
-				t.Errorf("Expected at least %d seeds for %s, got %d", tt.minCount, tt.network, len(seeds))
+			if !tt.expectEmpty && len(seeds) != len(tt.expectedSeeds) {
+				t.Errorf("Expected %d seeds for %s, got %d", len(tt.expectedSeeds), tt.network, len(seeds))
 			}
 		})
 	}

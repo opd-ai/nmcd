@@ -73,11 +73,16 @@ func (sr *SeedResolver) resolveSeed(seed string) ([]net.IP, error) {
 
 // ResolveSeedNodes is a convenience function that resolves DNS seeds
 // and returns peer addresses for the given network.
+// Returns an empty slice if no addresses can be resolved (errors are logged).
 func ResolveSeedNodes(seeds []string, defaultPort string) []string {
 	resolver := NewSeedResolver(seeds, defaultPort)
 	addresses, err := resolver.Resolve()
 	if err != nil {
 		log.Printf("Seed resolution warning: %v", err)
+		return []string{}
+	}
+	if addresses == nil {
+		return []string{}
 	}
 	return addresses
 }
