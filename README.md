@@ -67,9 +67,27 @@ go build -v ./cmd/nmcd
 
 # Connect to specific peer
 ./nmcd -addpeer=peer.example.com:8334
+
+# Enable RPC authentication (recommended for security)
+./nmcd -rpcuser=myuser -rpcpassword=mypassword
 ```
 
 ## RPC API
+
+The RPC server supports HTTP Basic Authentication. When both `-rpcuser` and `-rpcpassword` flags are set, all RPC requests must include valid credentials.
+
+**Security Considerations:**
+- Use strong, unique passwords for RPC authentication
+- Command-line flags are visible in process listings (`ps`, `top`). For production use, consider environment variables or a configuration file
+- HTTP Basic Auth transmits credentials in base64 encoding (not encrypted). Only use RPC over localhost or with proper network security (firewall, VPN, or reverse proxy with HTTPS)
+
+```bash
+# With authentication enabled
+curl -X POST http://127.0.0.1:8336 \
+  -u myuser:mypassword \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"getinfo","params":[],"id":1}'
+```
 
 ### Standard Methods
 
@@ -163,6 +181,7 @@ nmcd/
 
 ## Security
 
+- **RPC Authentication**: Use `-rpcuser` and `-rpcpassword` to require HTTP Basic Authentication for all RPC requests
 - All name operations are validated before blockchain processing
 - Names must be unique and unexpired
 - Value size limits enforced (1023 bytes)

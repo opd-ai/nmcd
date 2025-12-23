@@ -27,6 +27,8 @@ type Config struct {
 	DataDir     string
 	Network     string
 	RPCAddr     string
+	RPCUser     string
+	RPCPassword string
 	ListenAddrs []string
 	MaxPeers    int
 	AddPeers    []string
@@ -41,6 +43,8 @@ func DefaultConfig() *Config {
 		DataDir:     dataDir,
 		Network:     "mainnet",
 		RPCAddr:     "127.0.0.1:8336",
+		RPCUser:     "",
+		RPCPassword: "",
 		ListenAddrs: []string{"0.0.0.0:8334"},
 		MaxPeers:    125,
 		AddPeers:    []string{},
