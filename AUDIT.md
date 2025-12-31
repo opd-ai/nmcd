@@ -16,9 +16,9 @@
 | MISSING FEATURE | 5 (3 fixed) | High: 1, Medium: 3, Low: 1 |
 | EDGE CASE BUG | 1 (1 fixed) | Medium: 1 |
 | PERFORMANCE ISSUE | 0 | - |
-| DOCUMENTATION DISCREPANCY | 1 | Low: 1 |
+| DOCUMENTATION DISCREPANCY | 1 (1 fixed) | Low: 1 |
 
-**Total Findings: 12 (8 fixed, 4 remaining)**
+**Total Findings: 12 (9 fixed, 3 remaining)**
 
 The codebase is well-structured with good test coverage. The primary concerns are around incomplete integration between components and missing address tracking for name records. No critical bugs that would cause crashes or data corruption were identified.
 
@@ -266,26 +266,31 @@ func (pm *PeerManager) onInv(p *peer.Peer, msg *wire.MsgInv) {
 
 ---
 
-### DOCUMENTATION DISCREPANCY: Code Size Claim
+### [FIXED] DOCUMENTATION DISCREPANCY: Code Size Claim
 
 **File:** README.md:17  
 **Severity:** Low  
-**Description:** README.md states "~1200 lines of focused custom code" but the actual line count (excluding tests and examples) is 3044 lines across the main packages:
-- config: 398 lines
+**Status:** ✅ FIXED  
+**Fix Date:** 2025-12-31
+
+**Description:** README.md states "~1200 lines of focused custom code" but the actual line count (excluding tests and examples) is 3468 lines across the main packages:
+- config: 451 lines
 - namedb: 508 lines
-- chain: 605 lines
-- network: 321 lines
-- rpc: 525 lines
+- chain: 722 lines
+- network: 454 lines
+- rpc: 616 lines
 - wallet: 530 lines
-- cmd/nmcd: 157 lines
+- cmd/nmcd: 187 lines
 
 **Expected Behavior:** Documentation should accurately reflect codebase size.
 
-**Actual Behavior:** The codebase is approximately 2.5x larger than documented. This may be an outdated claim from when the codebase was smaller, or the original author may have counted only the core logic excluding boilerplate.
+**Actual Behavior:** The codebase is approximately 2.9x larger than documented. This may be an outdated claim from when the codebase was smaller, or the original author may have counted only the core logic excluding boilerplate.
 
 **Impact:** Minor - sets incorrect expectations for code review or maintenance effort.
 
-**Reproduction:** Run `find . -name '*.go' -not -path './.git/*' -not -name '*_test.go' -not -path './examples/*' | xargs wc -l`
+**Fix Applied:**
+- Updated README.md line 17 to state "~3,500 lines of focused custom code"
+- This accurately reflects the current codebase size (3468 lines as of 2025-12-31)
 
 ---
 

@@ -14,7 +14,7 @@ nmcd is a lightweight Namecoin daemon built using btcd libraries. It focuses on 
 - **Network Layer**: Uses btcd/peer for P2P networking with interface-based connections (net.Conn)
 - **RPC Server**: Standard library net/http for JSON-RPC interface
 - **Thread-Safe**: Mutex protection for all shared state
-- **Minimal Custom Code**: ~1200 lines of focused custom code
+- **Minimal Custom Code**: ~3,500 lines of focused custom code
 
 ## Architecture
 
