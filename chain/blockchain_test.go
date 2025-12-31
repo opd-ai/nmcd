@@ -943,6 +943,7 @@ func TestRollbackNameFirstUpdate(t *testing.T) {
 		Name:      nameStr,
 		Value:     value,
 		TxHash:    *txHash,
+		OutIndex:  0,
 		Height:    height,
 		ExpiresAt: height + 36000,
 		Address:   "N1234567890",
@@ -1042,6 +1043,7 @@ func TestRollbackNameUpdate(t *testing.T) {
 		Name:      nameStr,
 		Value:     originalValue,
 		TxHash:    *txHash1,
+		OutIndex:  0,
 		Height:    originalHeight,
 		ExpiresAt: originalHeight + 36000,
 		Address:   "N1234567890",
@@ -1058,6 +1060,7 @@ func TestRollbackNameUpdate(t *testing.T) {
 		Name:      nameStr,
 		Value:     updatedValue,
 		TxHash:    *txHash2,
+		OutIndex:  0,
 		Height:    updateHeight,
 		ExpiresAt: updateHeight + 36000,
 		Address:   "N1234567890",
@@ -1162,6 +1165,7 @@ func TestRollbackSameBlockNameNewAndFirstUpdate(t *testing.T) {
 		Name:      nameStr,
 		Value:     value,
 		TxHash:    *txHash,
+		OutIndex:  0,
 		Height:    height,
 		ExpiresAt: height + 36000,
 		Address:   "N1234567890",
@@ -1730,11 +1734,13 @@ func TestNameOperationDustLimitValidation(t *testing.T) {
 			t.Fatalf("Failed to create test hash: %v", err)
 		}
 		nameHeight := int32(100)
+		outIdx := uint32(0)
 
 		record := &namedb.NameRecord{
 			Name:      nameStr,
 			Value:     `{"ip":"1.2.3.4"}`,
 			TxHash:    *txHash,
+			OutIndex:  outIdx,
 			Height:    nameHeight,
 			ExpiresAt: nameHeight + config.NameExpirationBlocks,
 			Address:   "N1234567890",
@@ -1797,6 +1803,15 @@ func TestNameOperationDustLimitValidation(t *testing.T) {
 				)
 
 				tx := wire.NewMsgTx(1)
+				// Add input that spends the current name UTXO
+				tx.AddTxIn(&wire.TxIn{
+					PreviousOutPoint: wire.OutPoint{
+						Hash:  *txHash,
+						Index: outIdx,
+					},
+					SignatureScript: []byte{}, // Empty for test
+					Sequence:        0xffffffff,
+				})
 				tx.AddTxOut(&wire.TxOut{
 					Value:    tc.outputValue,
 					PkScript: script,
@@ -2041,15 +2056,17 @@ func TestTransactionFeeValidation(t *testing.T) {
 	})
 
 	t.Run("NAME_UPDATE fee validation", func(t *testing.T) {
-		// First, create a name in the database
+		// First, create a name in the database with a proper UTXO
 		nameStr := "d/testupdate"
-		txHash := chainhash.Hash{}
+		// Create a UTXO that the name will reference
+		nameUTXOTxHash, nameUTXOOutIdx := createUTXO(config.DustLimit, 100)
 		nameHeight := int32(100)
 
 		record := &namedb.NameRecord{
 			Name:      nameStr,
 			Value:     `{"ip":"1.2.3.4"}`,
-			TxHash:    txHash,
+			TxHash:    nameUTXOTxHash,
+			OutIndex:  nameUTXOOutIdx,
 			Height:    nameHeight,
 			ExpiresAt: nameHeight + config.NameExpirationBlocks,
 			Address:   "N1234567890",
@@ -2579,4 +2596,262 @@ func TestValidateNameFormat_WithValueEncoding(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestNameUpdateUTXOChainValidation tests that NAME_UPDATE operations properly validate
+// the UTXO chain to prevent name theft. This implements Issue #10 from PROTOCOL_COMPLIANCE_AUDIT.md.
+func TestNameUpdateUTXOChainValidation(t *testing.T) {
+	// Create temporary database
+	dbPath := filepath.Join(t.TempDir(), "test-utxo-chain.db")
+	ndb, err := namedb.NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer ndb.Close()
+
+	// Create a BlockChain wrapper with nameDB for testing
+	bc := &BlockChain{
+		nameDB:      ndb,
+		chainParams: &config.NamecoinRegTestParams,
+	}
+
+	nameStr := "d/securetest"
+	nameValue := `{"ip":"1.2.3.4"}`
+	updatedValue := `{"ip":"5.6.7.8"}`
+
+	// Create the UTXO that currently owns the name
+	currentTxHash, err := chainhash.NewHashFromStr("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if err != nil {
+		t.Fatalf("Failed to create test hash: %v", err)
+	}
+	currentOutIdx := uint32(1)
+	nameHeight := int32(100)
+
+	// Store the name record with its current UTXO
+	record := &namedb.NameRecord{
+		Name:      nameStr,
+		Value:     nameValue,
+		TxHash:    *currentTxHash,
+		OutIndex:  currentOutIdx,
+		Height:    nameHeight,
+		ExpiresAt: nameHeight + config.NameExpirationBlocks,
+		Address:   "N1234567890",
+		UpdatedAt: time.Now(),
+	}
+	if err := ndb.PutName(nameStr, record); err != nil {
+		t.Fatalf("Failed to create name: %v", err)
+	}
+
+	t.Run("valid NAME_UPDATE spending correct UTXO", func(t *testing.T) {
+		// Create a transaction that properly spends the current name UTXO
+		script := buildScript(
+			[]byte{opNameUpdate},
+			pushData([]byte(nameStr)),
+			pushData([]byte(updatedValue)),
+		)
+
+		tx := wire.NewMsgTx(1)
+		// Add input that spends the current name UTXO (correct hash and index)
+		tx.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: wire.OutPoint{
+				Hash:  *currentTxHash,
+				Index: currentOutIdx,
+			},
+			SignatureScript: []byte{},
+			Sequence:        0xffffffff,
+		})
+		tx.AddTxOut(&wire.TxOut{
+			Value:    config.DustLimit,
+			PkScript: script,
+		})
+
+		block := wire.NewMsgBlock(&wire.BlockHeader{
+			Version:   1,
+			Timestamp: time.Now(),
+			Bits:      0x207fffff,
+		})
+		block.AddTransaction(tx)
+
+		utilBlock := btcutil.NewBlock(block)
+		utilBlock.SetHeight(nameHeight + 50)
+
+		// This should pass validation
+		err := bc.validateNameOperations(utilBlock)
+		if err != nil {
+			t.Errorf("expected no error for valid UTXO chain, got: %v", err)
+		}
+	})
+
+	t.Run("invalid NAME_UPDATE - wrong transaction hash", func(t *testing.T) {
+		// Create a transaction that spends a different transaction (name theft attempt)
+		wrongTxHash, _ := chainhash.NewHashFromStr("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+
+		script := buildScript(
+			[]byte{opNameUpdate},
+			pushData([]byte(nameStr)),
+			pushData([]byte(updatedValue)),
+		)
+
+		tx := wire.NewMsgTx(1)
+		// Add input with wrong transaction hash
+		tx.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: wire.OutPoint{
+				Hash:  *wrongTxHash,
+				Index: currentOutIdx,
+			},
+			SignatureScript: []byte{},
+			Sequence:        0xffffffff,
+		})
+		tx.AddTxOut(&wire.TxOut{
+			Value:    config.DustLimit,
+			PkScript: script,
+		})
+
+		block := wire.NewMsgBlock(&wire.BlockHeader{
+			Version:   1,
+			Timestamp: time.Now(),
+			Bits:      0x207fffff,
+		})
+		block.AddTransaction(tx)
+
+		utilBlock := btcutil.NewBlock(block)
+		utilBlock.SetHeight(nameHeight + 50)
+
+		// This should fail validation
+		err := bc.validateNameOperations(utilBlock)
+		if err == nil {
+			t.Error("expected error for wrong transaction hash, got nil")
+		} else if !strings.Contains(err.Error(), "does not spend current name UTXO") {
+			t.Errorf("expected error about UTXO validation, got: %v", err)
+		}
+	})
+
+	t.Run("invalid NAME_UPDATE - wrong output index", func(t *testing.T) {
+		// Create a transaction that spends the same transaction but wrong output index
+		wrongOutIdx := uint32(0) // Different from currentOutIdx (1)
+
+		script := buildScript(
+			[]byte{opNameUpdate},
+			pushData([]byte(nameStr)),
+			pushData([]byte(updatedValue)),
+		)
+
+		tx := wire.NewMsgTx(1)
+		// Add input with wrong output index
+		tx.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: wire.OutPoint{
+				Hash:  *currentTxHash,
+				Index: wrongOutIdx,
+			},
+			SignatureScript: []byte{},
+			Sequence:        0xffffffff,
+		})
+		tx.AddTxOut(&wire.TxOut{
+			Value:    config.DustLimit,
+			PkScript: script,
+		})
+
+		block := wire.NewMsgBlock(&wire.BlockHeader{
+			Version:   1,
+			Timestamp: time.Now(),
+			Bits:      0x207fffff,
+		})
+		block.AddTransaction(tx)
+
+		utilBlock := btcutil.NewBlock(block)
+		utilBlock.SetHeight(nameHeight + 50)
+
+		// This should fail validation
+		err := bc.validateNameOperations(utilBlock)
+		if err == nil {
+			t.Error("expected error for wrong output index, got nil")
+		} else if !strings.Contains(err.Error(), "does not spend current name UTXO") {
+			t.Errorf("expected error about UTXO validation, got: %v", err)
+		}
+	})
+
+	t.Run("invalid NAME_UPDATE - no inputs (theft attempt)", func(t *testing.T) {
+		// Create a transaction with no inputs (trying to update without spending the UTXO)
+		script := buildScript(
+			[]byte{opNameUpdate},
+			pushData([]byte(nameStr)),
+			pushData([]byte(updatedValue)),
+		)
+
+		tx := wire.NewMsgTx(1)
+		// No inputs added - theft attempt
+		tx.AddTxOut(&wire.TxOut{
+			Value:    config.DustLimit,
+			PkScript: script,
+		})
+
+		block := wire.NewMsgBlock(&wire.BlockHeader{
+			Version:   1,
+			Timestamp: time.Now(),
+			Bits:      0x207fffff,
+		})
+		block.AddTransaction(tx)
+
+		utilBlock := btcutil.NewBlock(block)
+		utilBlock.SetHeight(nameHeight + 50)
+
+		// This should fail validation
+		err := bc.validateNameOperations(utilBlock)
+		if err == nil {
+			t.Error("expected error for missing inputs, got nil")
+		} else if !strings.Contains(err.Error(), "does not spend current name UTXO") {
+			t.Errorf("expected error about UTXO validation, got: %v", err)
+		}
+	})
+
+	t.Run("valid NAME_UPDATE with multiple inputs - one spends name UTXO", func(t *testing.T) {
+		// Create a transaction with multiple inputs, where one of them spends the name UTXO
+		otherTxHash, _ := chainhash.NewHashFromStr("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")
+
+		script := buildScript(
+			[]byte{opNameUpdate},
+			pushData([]byte(nameStr)),
+			pushData([]byte(updatedValue)),
+		)
+
+		tx := wire.NewMsgTx(1)
+		// Add a different input first
+		tx.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: wire.OutPoint{
+				Hash:  *otherTxHash,
+				Index: 0,
+			},
+			SignatureScript: []byte{},
+			Sequence:        0xffffffff,
+		})
+		// Add the correct name UTXO input
+		tx.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: wire.OutPoint{
+				Hash:  *currentTxHash,
+				Index: currentOutIdx,
+			},
+			SignatureScript: []byte{},
+			Sequence:        0xffffffff,
+		})
+		tx.AddTxOut(&wire.TxOut{
+			Value:    config.DustLimit,
+			PkScript: script,
+		})
+
+		block := wire.NewMsgBlock(&wire.BlockHeader{
+			Version:   1,
+			Timestamp: time.Now(),
+			Bits:      0x207fffff,
+		})
+		block.AddTransaction(tx)
+
+		utilBlock := btcutil.NewBlock(block)
+		utilBlock.SetHeight(nameHeight + 50)
+
+		// This should pass validation - one of the inputs spends the correct UTXO
+		err := bc.validateNameOperations(utilBlock)
+		if err != nil {
+			t.Errorf("expected no error for multiple inputs with correct UTXO, got: %v", err)
+		}
+	})
 }
