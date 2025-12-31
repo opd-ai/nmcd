@@ -319,6 +319,20 @@ func (bc *BlockChain) GetNameHistory(name string) ([]*namedb.NameRecord, error) 
 	return bc.nameDB.GetHistory(name)
 }
 
+// GetNameUTXO retrieves the UTXO that holds a specific name
+func (bc *BlockChain) GetNameUTXO(name string) (*namedb.UTXO, error) {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	return bc.nameDB.GetNameUTXO(name)
+}
+
+// GetUTXOsForAddress retrieves all UTXOs for a specific address
+func (bc *BlockChain) GetUTXOsForAddress(address string) ([]*namedb.UTXO, error) {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	return bc.nameDB.GetUTXOsForAddress(address)
+}
+
 // Namecoin-specific opcodes for name operations.
 // These opcodes extend Bitcoin's script language for name management.
 // See: https://github.com/namecoin/namecoin-core for reference.
