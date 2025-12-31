@@ -3,6 +3,7 @@ package chain
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -1330,7 +1331,7 @@ func TestNameFirstUpdateTimingWindow(t *testing.T) {
 			if tc.wantErr {
 				if err == nil {
 					t.Errorf("expected error containing %q, got nil", tc.errContains)
-				} else if tc.errContains != "" && !contains(err.Error(), tc.errContains) {
+				} else if tc.errContains != "" && !strings.Contains(err.Error(), tc.errContains) {
 					t.Errorf("expected error containing %q, got %q", tc.errContains, err.Error())
 				}
 			} else {
@@ -1380,21 +1381,4 @@ func createBlockWithNameFirstUpdate(t *testing.T, name string, rand []byte, heig
 	utilBlock.SetHeight(height)
 
 	return utilBlock
-}
-
-// contains checks if a string contains a substring
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) &&
-		(s[:len(substr)] == substr || s[len(s)-len(substr):] == substr ||
-			findSubstring(s, substr)))
-}
-
-// findSubstring is a helper to check if substr exists in s
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
