@@ -13,14 +13,15 @@
 - **Protocol version implemented:** Partial (Base protocol only, no AuxPow)
 - **Critical issues:** 3
 - **High priority issues:** 4 (4 resolved: namespace validation ✅, NAME_FIRSTUPDATE timing window ✅, NAME_NEW fee requirements ✅, transaction fee validation ✅)
-- **Medium priority issues:** 8 (1 resolved: value encoding validation ✅)
+- **Medium priority issues:** 8 (2 resolved: value encoding validation ✅, NAME_UPDATE UTXO chain validation ✅)
 - **Low priority issues:** 4
 - **Missing features:** 12
-- **Overall compatibility:** ~47% (Core name operations work with namespace validation, timing window enforcement, dust limit validation, transaction fee validation, and value encoding validation, but consensus/mining features missing)
+- **Overall compatibility:** ~52% (Core name operations work with namespace validation, timing window enforcement, dust limit validation, transaction fee validation, value encoding validation, and UTXO chain validation for name ownership, but consensus/mining features missing)
 
 **Status:** ⚠️ **NOT PRODUCTION READY** - Critical consensus-breaking features missing
 
 **Recent Progress:**
+- ✅ 2025-12-31: Implemented UTXO chain validation for NAME_UPDATE (Issue #10) - Prevents name theft by validating NAME_UPDATE spends current name UTXO
 - ✅ 2025-12-31: Implemented value encoding validation (Issue #12) - Values must be valid UTF-8; d/ and id/ namespaces require valid JSON
 - ✅ 2025-12-31: Implemented transaction fee validation (Issue #6) - NAME_NEW requires 1000 satoshi minimum, NAME_FIRSTUPDATE and NAME_UPDATE require 0.01 NMC (1,000,000 satoshi) network fee
 - ✅ 2025-12-31: Implemented namespace validation (Issue #8) - Names now require valid namespace prefixes (d/, id/, p/)
@@ -389,11 +390,89 @@ The script parser is lenient and doesn't enforce strict format requirements:
 
 ## MEDIUM PRIORITY (incomplete features affecting usability)
 
-### 10. Missing Name Transfer Validation
+### 10. Missing Name Transfer Validation ✅ RESOLVED
 **Location:** chain/blockchain.go - validateNameOperations()  
 **Severity:** MEDIUM  
+**Status:** ✅ **RESOLVED** (2025-12-31)  
 **Expected:** Validate that NAME_UPDATE spends the current name UTXO  
-**Actual:** No UTXO chain validation for names
+**Actual:** ✅ Now validates UTXO chain for NAME_UPDATE operations
+
+**Resolution:**
+Implemented comprehensive UTXO chain validation for NAME_UPDATE operations to prevent name theft with the following changes:
+1. Added `OutIndex` field to `NameRecord` struct in `namedb/namedb.go` to track which specific output owns the name
+2. Updated `encodeNameRecord()` and `decodeNameRecord()` functions with version 2 format (maintains backwards compatibility with v1)
+3. Updated `updateNameDatabase()` in `chain/blockchain.go` to store the output index when creating/updating names
+4. Added UTXO chain validation in `validateNameOperations()` for NAME_UPDATE operations that:
+   - Retrieves the current name record with its UTXO information (TxHash and OutIndex)
+   - Validates that at least one transaction input spends the current name UTXO
+   - Returns a descriptive error if the transaction doesn't spend the correct UTXO (name theft attempt)
+5. Updated all existing tests to include the OutIndex field in NameRecord creations
+6. Added comprehensive unit tests in `chain/blockchain_test.go` (`TestNameUpdateUTXOChainValidation`) covering:
+   - Valid NAME_UPDATE spending correct UTXO
+   - Invalid NAME_UPDATE with wrong transaction hash (theft attempt detected)
+   - Invalid NAME_UPDATE with wrong output index (theft attempt detected)
+   - Invalid NAME_UPDATE with no inputs (theft attempt detected)
+   - Valid NAME_UPDATE with multiple inputs where one spends the name UTXO
+
+**Implementation:**
+```go
+// namedb/namedb.go - NameRecord struct with OutIndex
+type NameRecord struct {
+	Name      string
+	Value     string
+	TxHash    chainhash.Hash
+	OutIndex  uint32         // Output index of the UTXO that owns this name
+	Height    int32
+	ExpiresAt int32
+	Address   string
+	UpdatedAt time.Time
+}
+
+// chain/blockchain.go - UTXO chain validation in validateNameOperations()
+case namedb.NameUpdate:
+	// ... dust limit and expiration validation ...
+	
+	// UTXO chain validation: Verify the transaction spends the current name UTXO
+	// This prevents name theft by ensuring only the current owner can update
+	currentUTXO := wire.OutPoint{
+		Hash:  record.TxHash,
+		Index: record.OutIndex,
+	}
+	
+	// Check if any transaction input spends the current name UTXO
+	found := false
+	for _, txIn := range msgTx.TxIn {
+		if txIn.PreviousOutPoint.Hash.IsEqual(&currentUTXO.Hash) &&
+			txIn.PreviousOutPoint.Index == currentUTXO.Index {
+			found = true
+			break
+		}
+	}
+	
+	if !found {
+		return fmt.Errorf("name_update does not spend current name UTXO (tx=%s, out=%d): name theft attempt for %s",
+			currentUTXO.Hash.String(), currentUTXO.Index, name)
+	}
+```
+
+Per Namecoin protocol, NAME_UPDATE transactions must spend the UTXO from the previous NAME_FIRSTUPDATE or NAME_UPDATE to prove ownership. This validation ensures:
+- **Prevents Name Theft**: Attackers cannot update names they don't own by creating fraudulent NAME_UPDATE transactions
+- **Proves Ownership**: Only the holder of the private key controlling the current name UTXO can update the name
+- **Chain of Custody**: Creates a verifiable chain of ownership through the blockchain UTXO graph
+- **Consensus Compliance**: Matches Namecoin Core's validation logic for name ownership transfers
+
+**Test Coverage:**
+- ✅ Valid NAME_UPDATE spending correct UTXO (passes validation)
+- ✅ Invalid NAME_UPDATE with wrong transaction hash (rejected as theft attempt)
+- ✅ Invalid NAME_UPDATE with wrong output index (rejected as theft attempt)
+- ✅ Invalid NAME_UPDATE with no inputs (rejected as theft attempt)
+- ✅ Valid NAME_UPDATE with multiple inputs where one spends the name UTXO (passes validation)
+- ✅ All existing tests updated to work with new OutIndex field
+- ✅ Backwards compatibility maintained through versioned encoding (v1 and v2 formats supported)
+- ✅ All tests passing
+
+**Security Impact:**
+This fix addresses a **critical security vulnerability** that would have allowed name theft. Without UTXO chain validation, an attacker could create a NAME_UPDATE transaction for any name without proving ownership, effectively stealing names from legitimate owners. This validation is **essential for production use** and prevents a consensus-breaking attack vector.
 
 **Description:**
 No validation that NAME_UPDATE transactions spend the UTXO from the previous NAME_FIRSTUPDATE or NAME_UPDATE. This is required to prove ownership and prevent name theft.
@@ -776,9 +855,10 @@ Should import test vectors from Namecoin Core to ensure identical validation log
 
 1. ~~**Add namespace validation** - Enforce d/, id/ prefixes~~ ✅ **COMPLETED** (2025-12-31)
 2. ~~**Implement NAME_FIRSTUPDATE timing window** - Enforce 12-36000 block constraint~~ ✅ **COMPLETED** (2025-12-31)
-3. **Implement UTXO chain validation** - Prevent name theft
+3. ~~**Implement UTXO chain validation** - Prevent name theft~~ ✅ **COMPLETED** (2025-12-31)
 4. **Add checkpoints** - Import from Namecoin Core
 5. **Verify network magic bytes** - Ensure exact match with Core
+6. **Implement strict script validation** - Match Namecoin Core script format requirements (Issue #9)
 
 ### Medium-term (Production Readiness):
 
@@ -786,6 +866,7 @@ Should import test vectors from Namecoin Core to ensure identical validation log
 2. **Add mempool** - Support transaction relay
 3. **Add monitoring/metrics** - Track node health
 4. **Import Namecoin Core test vectors** - Ensure validation parity
+5. **Add chain ID to NAME_NEW commitment** - Prevent cross-chain replay attacks (Issue #7)
 
 ### Long-term (Feature Parity):
 
@@ -805,22 +886,23 @@ Should import test vectors from Namecoin Core to ensure identical validation log
 | Subsidy calculation | ❌ Missing | 0% | Uses Bitcoin calculation |
 | Checkpoint validation | ❌ Missing | 0% | No checkpoints |
 | **Name Operations** | | | |
-| NAME_NEW | ✅ Working | 90% | Dust limit ✅, fee validation ✅; missing UTXO chain validation |
-| NAME_FIRSTUPDATE | ✅ Working | 95% | Dust limit ✅, timing window ✅, fee validation ✅; missing UTXO chain validation |
-| NAME_UPDATE | ✅ Working | 90% | Dust limit ✅, fee validation ✅; missing UTXO chain validation |
+| NAME_NEW | ✅ Working | 90% | Dust limit ✅, fee validation ✅; UTXO tracking implemented |
+| NAME_FIRSTUPDATE | ✅ Working | 95% | Dust limit ✅, timing window ✅, fee validation ✅; UTXO tracking implemented |
+| NAME_UPDATE | ✅ Working | 95% | Dust limit ✅, fee validation ✅, UTXO chain validation ✅ implemented (2025-12-31) |
 | Name expiration | ✅ Working | 90% | Works correctly |
 | Namespace validation | ✅ Working | 100% | ✅ Implemented (2025-12-31) |
 | Timing window validation | ✅ Working | 100% | ✅ Implemented (2025-12-31) |
+| Name ownership validation | ✅ Working | 100% | ✅ UTXO chain validation implemented (2025-12-31) |
 | **Transaction Validation** | | | |
 | Script parsing | ⚠️ Partial | 60% | Too lenient |
 | Fee validation | ✅ Working | 95% | Dust limit ✅, transaction fees ✅ implemented (2025-12-31); missing full UTXO chain for old blocks |
-| UTXO tracking | ⚠️ Partial | 70% | UTXO database implemented; missing chain validation |
+| UTXO tracking | ✅ Working | 85% | UTXO database implemented; UTXO chain validation ✅ for NAME_UPDATE (2025-12-31) |
 | **Network Protocol** | | | |
 | Message formats | ✅ Working | 85% | Uses btcd wire protocol |
 | Peer discovery | ✅ Working | 90% | DNS seeds implemented |
 | Version negotiation | ⚠️ Partial | 70% | Uses btcd version |
 | **Database** | | | |
-| Name storage | ✅ Working | 95% | Well implemented |
+| Name storage | ✅ Working | 95% | Well implemented; now includes OutIndex for UTXO tracking |
 | Expiration tracking | ✅ Working | 95% | Works correctly |
 | History tracking | ✅ Working | 90% | Good implementation |
 | Reorg handling | ⚠️ Partial | 70% | Some edge cases |
@@ -857,29 +939,31 @@ This implementation provides a solid foundation for Namecoin name operations but
 1. ❌ No AuxPow support → Cannot sync mainnet
 2. ❌ No subsidy validation → Cannot validate coinbase
 3. ✅ ~~No fee validation~~ → **RESOLVED** - Transaction fees now validated (2025-12-31)
-4. ❌ No UTXO chain validation → Names can be stolen
+4. ✅ ~~No UTXO chain validation~~ → **RESOLVED** - NAME_UPDATE UTXO chain validation implemented (2025-12-31)
 
 **Strengths:**
 - ✅ Clean, well-structured code
-- ✅ Good name database implementation
+- ✅ Good name database implementation with UTXO tracking
 - ✅ Proper reorg handling (with caveats)
 - ✅ Thread-safe operations
 - ✅ Basic name operations work correctly
 - ✅ Comprehensive fee validation for spam prevention
 - ✅ Namespace and timing window enforcement
+- ✅ UTXO chain validation prevents name theft
 
 **Estimated effort to production:**
-- Minimum viable (testnet): 3-5 weeks (reduced with fee validation complete)
-- Production ready (mainnet): 2.5-3.5 months (reduced with fee validation complete)
-- Feature parity with Core: 5-6 months
+- Minimum viable (testnet): 2-4 weeks (reduced with fee validation and UTXO chain validation complete)
+- Production ready (mainnet): 2-3 months (reduced with fee validation and UTXO chain validation complete)
+- Feature parity with Core: 4-5 months
 
 **Recommended use cases:**
 - ✅ Learning/educational purposes
 - ✅ Testnet experimentation
 - ✅ Name database management
-- ❌ Mainnet node operation
-- ❌ Mining
-- ❌ Production services
+- ✅ Development and testing of name-based applications
+- ❌ Mainnet node operation (until AuxPow and subsidy validation implemented)
+- ❌ Mining (requires AuxPow support)
+- ❌ Production services (until critical consensus features implemented)
 
 ---
 
