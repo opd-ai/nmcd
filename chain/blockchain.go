@@ -1,9 +1,11 @@
 package chain
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/btcutil"
@@ -769,6 +771,45 @@ func validateNameFormat(name, value string) error {
 	if len(value) > config.MaxValueLength {
 		return fmt.Errorf("value too large: %d bytes (max: %d)", len(value), config.MaxValueLength)
 	}
+
+	// Validate value encoding based on namespace
+	// Per Namecoin protocol, different namespaces have different encoding requirements
+	if err := validateValueEncoding(name, value); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateValueEncoding validates the encoding of a name value based on its namespace.
+// Per Namecoin protocol:
+// - d/ (domain) namespace: values must be valid UTF-8 and should be valid JSON for DNS records
+// - id/ (identity) namespace: values must be valid UTF-8 and should be valid JSON
+// - p/ (personal) namespace: values must be valid UTF-8, JSON recommended but not required
+func validateValueEncoding(name, value string) error {
+	// Empty values are allowed (deletion/reservation pattern)
+	if len(value) == 0 {
+		return nil
+	}
+
+	// All namespaces require valid UTF-8 encoding
+	if !utf8.ValidString(value) {
+		return fmt.Errorf("value must be valid UTF-8")
+	}
+
+	// For d/ (domain) and id/ (identity) namespaces, validate JSON encoding
+	// These namespaces store structured data (DNS records, identity records)
+	if len(name) >= 2 && (name[:2] == "d/" || name[:3] == "id/") {
+		// Attempt to parse as JSON
+		var jsonData interface{}
+		if err := json.Unmarshal([]byte(value), &jsonData); err != nil {
+			return fmt.Errorf("value must be valid JSON for %s namespace: %w", name[:2], err)
+		}
+	}
+
+	// For p/ (personal) namespace, only UTF-8 validation is required
+	// Personal namespace is more flexible and can contain arbitrary text
+
 	return nil
 }
 

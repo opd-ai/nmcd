@@ -483,13 +483,13 @@ func TestValidateNameFormat(t *testing.T) {
 		{
 			name:      "max valid name length with namespace",
 			inputName: "d/" + string(make([]byte, 253)), // d/ (2 bytes) + 253 bytes = 255 total (MaxNameLength)
-			value:     "test",
+			value:     `{"ip":"1.2.3.4"}`,               // Valid JSON for d/ namespace
 			wantErr:   false,
 		},
 		{
 			name:      "max valid value length",
 			inputName: "d/test",
-			value:     string(make([]byte, 1023)),
+			value:     `{"data":"` + strings.Repeat("x", 1000) + `"}`, // Valid JSON close to max length
 			wantErr:   false,
 		},
 		{
@@ -2100,3 +2100,340 @@ func TestTransactionFeeValidation(t *testing.T) {
 	})
 }
 
+// TestValidateValueEncoding tests value encoding validation for different namespaces
+func TestValidateValueEncoding(t *testing.T) {
+	tests := []struct {
+		name        string
+		nameInput   string
+		value       string
+		expectError bool
+		errorText   string
+	}{
+		// Empty value tests - should be allowed for all namespaces
+		{
+			name:        "empty value for d/ namespace",
+			nameInput:   "d/example",
+			value:       "",
+			expectError: false,
+		},
+		{
+			name:        "empty value for id/ namespace",
+			nameInput:   "id/alice",
+			value:       "",
+			expectError: false,
+		},
+		{
+			name:        "empty value for p/ namespace",
+			nameInput:   "p/bob",
+			value:       "",
+			expectError: false,
+		},
+
+		// Valid JSON for d/ namespace (domain names)
+		{
+			name:        "valid JSON for d/ namespace - simple object",
+			nameInput:   "d/example",
+			value:       `{"ip":"1.2.3.4"}`,
+			expectError: false,
+		},
+		{
+			name:        "valid JSON for d/ namespace - complex DNS record",
+			nameInput:   "d/bitcoin",
+			value:       `{"ip":"10.0.0.1","ns":["ns1.example.com","ns2.example.com"],"email":"admin@example.com"}`,
+			expectError: false,
+		},
+		{
+			name:        "valid JSON for d/ namespace - array",
+			nameInput:   "d/test",
+			value:       `["value1","value2"]`,
+			expectError: false,
+		},
+		{
+			name:        "valid JSON for d/ namespace - string",
+			nameInput:   "d/simple",
+			value:       `"simple string value"`,
+			expectError: false,
+		},
+		{
+			name:        "valid JSON for d/ namespace - number",
+			nameInput:   "d/number",
+			value:       `42`,
+			expectError: false,
+		},
+		{
+			name:        "valid JSON for d/ namespace - boolean",
+			nameInput:   "d/flag",
+			value:       `true`,
+			expectError: false,
+		},
+		{
+			name:        "valid JSON for d/ namespace - null",
+			nameInput:   "d/null",
+			value:       `null`,
+			expectError: false,
+		},
+
+		// Invalid JSON for d/ namespace
+		{
+			name:        "invalid JSON for d/ namespace - malformed object",
+			nameInput:   "d/example",
+			value:       `{"ip":"1.2.3.4"`,
+			expectError: true,
+			errorText:   "value must be valid JSON",
+		},
+		{
+			name:        "invalid JSON for d/ namespace - plain text",
+			nameInput:   "d/example",
+			value:       `just plain text`,
+			expectError: true,
+			errorText:   "value must be valid JSON",
+		},
+		{
+			name:        "invalid JSON for d/ namespace - incomplete array",
+			nameInput:   "d/test",
+			value:       `["incomplete"`,
+			expectError: true,
+			errorText:   "value must be valid JSON",
+		},
+		{
+			name:        "invalid JSON for d/ namespace - trailing comma",
+			nameInput:   "d/example",
+			value:       `{"ip":"1.2.3.4",}`,
+			expectError: true,
+			errorText:   "value must be valid JSON",
+		},
+
+		// Valid JSON for id/ namespace (identity records)
+		{
+			name:        "valid JSON for id/ namespace - identity record",
+			nameInput:   "id/alice",
+			value:       `{"name":"Alice","email":"alice@example.com","pubkey":"abc123"}`,
+			expectError: false,
+		},
+		{
+			name:        "valid JSON for id/ namespace - simple object",
+			nameInput:   "id/bob",
+			value:       `{"profile":"https://example.com/bob"}`,
+			expectError: false,
+		},
+
+		// Invalid JSON for id/ namespace
+		{
+			name:        "invalid JSON for id/ namespace - plain text",
+			nameInput:   "id/charlie",
+			value:       `not json content`,
+			expectError: true,
+			errorText:   "value must be valid JSON",
+		},
+		{
+			name:        "invalid JSON for id/ namespace - malformed",
+			nameInput:   "id/dave",
+			value:       `{invalid}`,
+			expectError: true,
+			errorText:   "value must be valid JSON",
+		},
+
+		// p/ namespace - flexible format (UTF-8 text, JSON optional)
+		{
+			name:        "valid plain text for p/ namespace",
+			nameInput:   "p/alice",
+			value:       `This is plain text content`,
+			expectError: false,
+		},
+		{
+			name:        "valid JSON for p/ namespace",
+			nameInput:   "p/bob",
+			value:       `{"note":"personal note"}`,
+			expectError: false,
+		},
+		{
+			name:        "valid UTF-8 text with special chars for p/ namespace",
+			nameInput:   "p/unicode",
+			value:       `Hello 世界 🌍`,
+			expectError: false,
+		},
+		{
+			name:        "valid multiline text for p/ namespace",
+			nameInput:   "p/diary",
+			value:       "Line 1\nLine 2\nLine 3",
+			expectError: false,
+		},
+
+		// Invalid UTF-8 tests for all namespaces
+		{
+			name:        "invalid UTF-8 for d/ namespace",
+			nameInput:   "d/example",
+			value:       string([]byte{0xff, 0xfe, 0xfd}),
+			expectError: true,
+			errorText:   "value must be valid UTF-8",
+		},
+		{
+			name:        "invalid UTF-8 for id/ namespace",
+			nameInput:   "id/test",
+			value:       string([]byte{0x80, 0x81, 0x82}),
+			expectError: true,
+			errorText:   "value must be valid UTF-8",
+		},
+		{
+			name:        "invalid UTF-8 for p/ namespace",
+			nameInput:   "p/test",
+			value:       string([]byte{0xc0, 0xc1}),
+			expectError: true,
+			errorText:   "value must be valid UTF-8",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateValueEncoding(tc.nameInput, tc.value)
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("expected error containing '%s', got nil", tc.errorText)
+				} else if !strings.Contains(err.Error(), tc.errorText) {
+					t.Errorf("expected error containing '%s', got: %v", tc.errorText, err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("expected no error, got: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateNameFormat_WithValueEncoding tests the integrated validateNameFormat function
+// including the new value encoding validation
+func TestValidateNameFormat_WithValueEncoding(t *testing.T) {
+	tests := []struct {
+		name        string
+		nameInput   string
+		value       string
+		expectError bool
+		errorText   string
+	}{
+		// Valid cases
+		{
+			name:        "valid d/ namespace with JSON value",
+			nameInput:   "d/example",
+			value:       `{"ip":"1.2.3.4"}`,
+			expectError: false,
+		},
+		{
+			name:        "valid id/ namespace with JSON value",
+			nameInput:   "id/alice",
+			value:       `{"email":"alice@example.com"}`,
+			expectError: false,
+		},
+		{
+			name:        "valid p/ namespace with plain text",
+			nameInput:   "p/bob",
+			value:       "plain text is ok here",
+			expectError: false,
+		},
+		{
+			name:        "valid p/ namespace with JSON",
+			nameInput:   "p/charlie",
+			value:       `{"note":"JSON also works"}`,
+			expectError: false,
+		},
+
+		// Invalid namespace
+		{
+			name:        "invalid namespace prefix",
+			nameInput:   "x/test",
+			value:       `{"data":"value"}`,
+			expectError: true,
+			errorText:   "invalid namespace",
+		},
+
+		// Invalid name length
+		{
+			name:        "name too long",
+			nameInput:   "d/" + strings.Repeat("x", 254), // d/ (2) + 254 = 256 (exceeds MaxNameLength)
+			value:       `{"ip":"1.2.3.4"}`,
+			expectError: true,
+			errorText:   "invalid name length",
+		},
+		{
+			name:        "empty name",
+			nameInput:   "",
+			value:       `{"ip":"1.2.3.4"}`,
+			expectError: true,
+			errorText:   "invalid name length",
+		},
+
+		// Invalid value length
+		{
+			name:        "value too large",
+			nameInput:   "d/example",
+			value:       strings.Repeat("x", 1024), // exceeds MaxValueLength (1023)
+			expectError: true,
+			errorText:   "value too large",
+		},
+
+		// Invalid JSON for d/ namespace
+		{
+			name:        "d/ namespace with invalid JSON",
+			nameInput:   "d/example",
+			value:       "not valid json",
+			expectError: true,
+			errorText:   "value must be valid JSON",
+		},
+
+		// Invalid JSON for id/ namespace
+		{
+			name:        "id/ namespace with invalid JSON",
+			nameInput:   "id/test",
+			value:       "{broken json}",
+			expectError: true,
+			errorText:   "value must be valid JSON",
+		},
+
+		// Invalid UTF-8
+		{
+			name:        "invalid UTF-8 encoding",
+			nameInput:   "p/test",
+			value:       string([]byte{0xff, 0xfe}),
+			expectError: true,
+			errorText:   "value must be valid UTF-8",
+		},
+
+		// Edge cases
+		{
+			name:        "namespace prefix only - no content",
+			nameInput:   "d/",
+			value:       `{"ip":"1.2.3.4"}`,
+			expectError: true,
+			errorText:   "must have content after namespace prefix",
+		},
+		{
+			name:        "max length name with valid value",
+			nameInput:   "d/" + strings.Repeat("x", 253), // d/ (2) + 253 = 255 (MaxNameLength)
+			value:       `{"ip":"1.2.3.4"}`,
+			expectError: false,
+		},
+		{
+			name:        "max length value",
+			nameInput:   "d/example",
+			value:       `{"data":"` + strings.Repeat("x", 1000) + `"}`, // construct JSON that's exactly at limit
+			expectError: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateNameFormat(tc.nameInput, tc.value)
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("expected error containing '%s', got nil", tc.errorText)
+				} else if !strings.Contains(err.Error(), tc.errorText) {
+					t.Errorf("expected error containing '%s', got: %v", tc.errorText, err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("expected no error, got: %v", err)
+				}
+			}
+		})
+	}
+}
