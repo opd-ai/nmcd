@@ -120,6 +120,13 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 
 			switch op {
 			case namedb.NameNew:
+				// Validate NAME_NEW output value meets dust limit
+				// This prevents spam and uneconomical UTXO creation
+				if txOut.Value < config.DustLimit {
+					return fmt.Errorf("name_new output value %d below dust limit %d", 
+						txOut.Value, config.DustLimit)
+				}
+
 				// Check for duplicate commitment hash in this block
 				commitHashStr := string(extra)
 				if seenNameNewCommits[commitHashStr] {
@@ -133,6 +140,12 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 				}
 
 			case namedb.NameFirstUpdate:
+				// Validate NAME_FIRSTUPDATE output value meets dust limit
+				if txOut.Value < config.DustLimit {
+					return fmt.Errorf("name_firstupdate output value %d below dust limit %d", 
+						txOut.Value, config.DustLimit)
+				}
+
 				// Verify name doesn't exist
 				if _, err := bc.nameDB.GetName(name); err == nil {
 					return fmt.Errorf("name already exists: %s", name)
@@ -165,6 +178,12 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 				}
 
 			case namedb.NameUpdate:
+				// Validate NAME_UPDATE output value meets dust limit
+				if txOut.Value < config.DustLimit {
+					return fmt.Errorf("name_update output value %d below dust limit %d", 
+						txOut.Value, config.DustLimit)
+				}
+
 				// Verify name exists and not expired
 				record, err := bc.nameDB.GetName(name)
 				if err != nil {
@@ -175,9 +194,11 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 				}
 			}
 
-			// Validate name format and value size
-			if err := validateNameFormat(name, value); err != nil {
-				return err
+			// Validate name format and value size (not applicable to NAME_NEW which has no name field)
+			if op != namedb.NameNew {
+				if err := validateNameFormat(name, value); err != nil {
+					return err
+				}
 			}
 		}
 	}
