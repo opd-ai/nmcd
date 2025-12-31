@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/btcsuite/btcd/chaincfg"
 )
@@ -87,7 +88,7 @@ func (c *Config) EnsureDataDir() error {
 // IsValidNamespace checks if a name starts with a valid namespace prefix
 func IsValidNamespace(name string) bool {
 	for _, ns := range ValidNamespaces {
-		if len(name) >= len(ns) && name[:len(ns)] == ns {
+		if strings.HasPrefix(name, ns) {
 			return true
 		}
 	}

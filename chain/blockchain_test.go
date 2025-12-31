@@ -515,6 +515,24 @@ func TestValidateNameFormat(t *testing.T) {
 			value:     "personal data",
 			wantErr:   false,
 		},
+		{
+			name:      "namespace only - d/ with no content",
+			inputName: "d/",
+			value:     "test",
+			wantErr:   true,
+		},
+		{
+			name:      "namespace only - id/ with no content",
+			inputName: "id/",
+			value:     "test",
+			wantErr:   true,
+		},
+		{
+			name:      "namespace only - p/ with no content",
+			inputName: "p/",
+			value:     "test",
+			wantErr:   true,
+		},
 	}
 
 	for _, tc := range testCases {
