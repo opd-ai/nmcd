@@ -511,40 +511,50 @@ func TestDecodeNameRecordCorruptData(t *testing.T) {
 			wantErr: "corrupt record: empty data",
 		},
 		{
+			name:    "unsupported version",
+			data:    []byte{1, 0, 0, 0, 0}, // version 1 (unsupported)
+			wantErr: "unsupported record version: 1 (expected 2)",
+		},
+		{
 			name:    "truncated at value length",
-			data:    []byte{1, 0, 0}, // version byte + only 3 bytes for value length (needs 4)
+			data:    []byte{2, 0, 0}, // version byte + only 3 bytes for value length (needs 4)
 			wantErr: "corrupt record: truncated at value length",
 		},
 		{
 			name:    "truncated at value data",
-			data:    []byte{1, 10, 0, 0, 0, 'a', 'b'}, // version + value length 10, but only 2 chars
+			data:    []byte{2, 10, 0, 0, 0, 'a', 'b'}, // version + value length 10, but only 2 chars
 			wantErr: "corrupt record: truncated at value data",
 		},
 		{
 			name:    "truncated at txhash",
-			data:    append([]byte{1, 5, 0, 0, 0}, append([]byte("hello"), make([]byte, 20)...)...), // version + value + partial txhash
+			data:    append([]byte{2, 5, 0, 0, 0}, append([]byte("hello"), make([]byte, 20)...)...), // version + value + partial txhash
 			wantErr: "corrupt record: truncated at txhash",
 		},
 		{
+			name:    "truncated at outindex",
+			data:    append([]byte{2, 5, 0, 0, 0}, append([]byte("hello"), append(make([]byte, 32), []byte{0, 0}...)...)...), // version + value + full txhash + partial outindex
+			wantErr: "corrupt record: truncated at outindex",
+		},
+		{
 			name:    "truncated at height",
-			data:    append([]byte{1, 5, 0, 0, 0}, append([]byte("hello"), append(make([]byte, 32), []byte{0, 0}...)...)...), // version + value + full txhash + partial height
+			data:    append([]byte{2, 5, 0, 0, 0}, append([]byte("hello"), append(make([]byte, 32), []byte{0, 0, 0, 0, 0, 0}...)...)...), // version + value + full txhash + outindex + partial height
 			wantErr: "corrupt record: truncated at height",
 		},
 		{
 			name:    "truncated at expires_at",
-			data:    append([]byte{1, 5, 0, 0, 0}, append([]byte("hello"), append(make([]byte, 32), []byte{100, 0, 0, 0, 0, 0}...)...)...), // version + value + full txhash + height + partial expires
+			data:    append([]byte{2, 5, 0, 0, 0}, append([]byte("hello"), append(make([]byte, 32), []byte{0, 0, 0, 0, 100, 0, 0, 0, 0, 0}...)...)...), // version + value + full txhash + outindex + height + partial expires
 			wantErr: "corrupt record: truncated at expires_at",
 		},
 		{
 			name: "truncated at address length",
-			// version(1) + value_len(4) + value(5) + txhash(32) + height(4) + expires(4) + partial addr_len(2)
-			data:    append([]byte{1, 5, 0, 0, 0}, append([]byte("hello"), append(make([]byte, 32), []byte{100, 0, 0, 0, 200, 0, 0, 0, 0, 0}...)...)...),
+			// version(1) + value_len(4) + value(5) + txhash(32) + outindex(4) + height(4) + expires(4) + partial addr_len(2)
+			data:    append([]byte{2, 5, 0, 0, 0}, append([]byte("hello"), append(make([]byte, 32), []byte{0, 0, 0, 0, 100, 0, 0, 0, 200, 0, 0, 0, 0, 0}...)...)...),
 			wantErr: "corrupt record: truncated at address length",
 		},
 		{
 			name: "truncated at address data",
-			// version(1) + value_len(4) + value(5) + txhash(32) + height(4) + expires(4) + addr_len(4, value=10) + partial addr(2)
-			data:    append([]byte{1, 5, 0, 0, 0}, append([]byte("hello"), append(make([]byte, 32), []byte{100, 0, 0, 0, 200, 0, 0, 0, 10, 0, 0, 0, 'a', 'b'}...)...)...),
+			// version(1) + value_len(4) + value(5) + txhash(32) + outindex(4) + height(4) + expires(4) + addr_len(4, value=10) + partial addr(2)
+			data:    append([]byte{2, 5, 0, 0, 0}, append([]byte("hello"), append(make([]byte, 32), []byte{0, 0, 0, 0, 100, 0, 0, 0, 200, 0, 0, 0, 10, 0, 0, 0, 'a', 'b'}...)...)...),
 			wantErr: "corrupt record: truncated at address data",
 		},
 	}

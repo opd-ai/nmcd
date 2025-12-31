@@ -468,11 +468,14 @@ Per Namecoin protocol, NAME_UPDATE transactions must spend the UTXO from the pre
 - ✅ Invalid NAME_UPDATE with no inputs (rejected as theft attempt)
 - ✅ Valid NAME_UPDATE with multiple inputs where one spends the name UTXO (passes validation)
 - ✅ All existing tests updated to work with new OutIndex field
-- ✅ Backwards compatibility maintained through versioned encoding (v1 and v2 formats supported)
+- ✅ Clean Namecoin protocol implementation without legacy compatibility concerns
 - ✅ All tests passing
 
 **Security Impact:**
 This fix addresses a **critical security vulnerability** that would have allowed name theft. Without UTXO chain validation, an attacker could create a NAME_UPDATE transaction for any name without proving ownership, effectively stealing names from legitimate owners. This validation is **essential for production use** and prevents a consensus-breaking attack vector.
+
+**Implementation Note:**
+This is a clean implementation of the Namecoin protocol. The database format uses a simple versioned encoding (version 2) that includes OutIndex for UTXO tracking. There is no backward compatibility with non-Namecoin legacy formats - this implementation follows Namecoin Core's behavior from the start.
 
 **Description:**
 No validation that NAME_UPDATE transactions spend the UTXO from the previous NAME_FIRSTUPDATE or NAME_UPDATE. This is required to prove ownership and prevent name theft.
