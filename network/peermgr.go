@@ -100,9 +100,10 @@ func (pm *PeerManager) listenLoop(listener net.Listener) {
 		case conn := <-acceptCh:
 			pm.wg.Add(1)
 			go pm.handleInboundPeer(conn)
-		case <-errCh:
+		case err := <-errCh:
 			// Accept error, likely due to listener closure.
 			// The accept goroutine has already stopped, so we should exit too.
+			log.Printf("Accept error: %v", err)
 			return
 		}
 	}
