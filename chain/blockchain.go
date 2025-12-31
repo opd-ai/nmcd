@@ -251,12 +251,13 @@ func (bc *BlockChain) validateTransactionFee(tx *wire.MsgTx, opType namedb.NameO
 			// 2. Blocks being validated before they're added to our UTXO set
 			// 3. Coinbase transactions (which have no previous output)
 			//
-			// For now, we skip fee validation if we can't find all inputs.
-			// A production implementation would query the full blockchain UTXO set.
-			// This is a known limitation documented in the audit.
+			// Previously, we skipped fee validation if we couldn't find all inputs.
+			// This allowed transactions with missing UTXO data to bypass fee checks.
+			// Instead, return an error so callers can safely reject such transactions.
 			log.Printf("Warning: Cannot validate transaction fee - UTXO not found: %s:%d",
 				txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index)
-			return nil
+			return fmt.Errorf("cannot validate transaction fee: UTXO %s:%d not found: %w",
+				txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index, err)
 		}
 		totalInputValue += utxo.Value
 	}
