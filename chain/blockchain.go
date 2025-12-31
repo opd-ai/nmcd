@@ -173,8 +173,9 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 					return fmt.Errorf("name already exists: %s", name)
 				}
 
-				// Compute the commitment hash from rand (extra) and name
-				commitHash := computeCommitHash(extra, name)
+				// Compute the commitment hash from rand (extra), name, and chain ID
+				// This prevents cross-chain replay attacks
+				commitHash := computeCommitHash(extra, name, bc.chainParams)
 
 				// Verify NAME_NEW exists and MinBlocksBeforeFirstUpdate has passed
 				nameNewRecord, err := bc.nameDB.GetNameNew(commitHash)
@@ -397,7 +398,8 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 					return err
 				}
 				// Clean up the NAME_NEW commitment after successful registration
-				commitHash := computeCommitHash(extra, name)
+				// Use chain-specific commitment hash to match the NAME_NEW validation
+				commitHash := computeCommitHash(extra, name, bc.chainParams)
 				if err := bc.nameDB.DeleteNameNew(commitHash); err != nil {
 					return err
 				}
@@ -489,14 +491,33 @@ const (
 	opPushData4 = 0x4e
 )
 
-// computeCommitHash computes the NAME_NEW commitment hash.
-// The commitment is RIPEMD160(SHA256(rand || name)) as per Namecoin protocol.
-// This hash is stored in NAME_NEW and verified during NAME_FIRSTUPDATE.
-func computeCommitHash(rand []byte, name string) []byte {
+// computeCommitHash computes the NAME_NEW commitment hash with chain ID.
+// The commitment is RIPEMD160(SHA256(rand || name || chainID)) to prevent
+// cross-chain replay attacks. The chain ID is derived from the network magic bytes.
+// This ensures that NAME_NEW commitments are network-specific and cannot be
+// replayed across mainnet, testnet, or regtest networks.
+//
+// Parameters:
+//   - rand: Random salt value from NAME_NEW
+//   - name: Name to be registered
+//   - chainParams: Network parameters containing the unique network magic bytes
+//
+// Returns: 20-byte commitment hash (RIPEMD160(SHA256(data)))
+func computeCommitHash(rand []byte, name string, chainParams *chaincfg.Params) []byte {
 	nameBytes := []byte(name)
-	data := make([]byte, len(rand)+len(nameBytes))
+	// Extract network magic bytes as chain ID (4 bytes)
+	chainID := make([]byte, 4)
+	chainID[0] = byte(chainParams.Net)
+	chainID[1] = byte(chainParams.Net >> 8)
+	chainID[2] = byte(chainParams.Net >> 16)
+	chainID[3] = byte(chainParams.Net >> 24)
+
+	// Concatenate: rand || name || chainID
+	data := make([]byte, len(rand)+len(nameBytes)+len(chainID))
 	copy(data, rand)
 	copy(data[len(rand):], nameBytes)
+	copy(data[len(rand)+len(nameBytes):], chainID)
+
 	return btcutil.Hash160(data)
 }
 
@@ -943,7 +964,7 @@ func (bc *BlockChain) rollbackNameOperations(block *btcutil.Block) {
 				_ = bc.nameDB.DeleteName(name)
 
 				// Restore the NAME_NEW commitment. The commitment hash is
-				// computed from rand (extra) and name.
+				// computed from rand (extra), name, and chain ID.
 				//
 				// Height estimation: We use block.Height() - MinBlocksBeforeFirstUpdate
 				// as a conservative estimate. The actual NAME_NEW could have been
@@ -952,7 +973,7 @@ func (bc *BlockChain) rollbackNameOperations(block *btcutil.Block) {
 				// - If a new NAME_FIRSTUPDATE is attempted, it will pass the
 				//   MinBlocksBeforeFirstUpdate check since actual elapsed blocks >= min
 				// - The exact original height isn't stored, so estimation is necessary
-				commitHash := computeCommitHash(extra, name)
+				commitHash := computeCommitHash(extra, name, bc.chainParams)
 				estimatedNameNewHeight := block.Height() - config.MinBlocksBeforeFirstUpdate
 				// Ensure height is non-negative (shouldn't happen in practice
 				// since NAME_FIRSTUPDATE requires MinBlocksBeforeFirstUpdate to pass)
