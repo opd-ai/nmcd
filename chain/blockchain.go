@@ -112,23 +112,22 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 		msgTx := tx.MsgTx()
 
 		// Detect and validate name operations in transaction outputs
-		var hasNameOperation bool
-		var nameOpType namedb.NameOperation
+		nameOpTypes := make(map[namedb.NameOperation]struct{})
 		for _, txOut := range msgTx.TxOut {
 			op, _, _, _, err := parseNameScriptFull(txOut.PkScript)
 			if err != nil {
 				continue // Not a name operation
 			}
-			hasNameOperation = true
-			nameOpType = op
-			break // Only need to know if transaction has a name operation
+			nameOpTypes[op] = struct{}{}
 		}
 
-		// Validate transaction fee for name operations
-		// Skip coinbase transaction (no inputs to validate)
-		if hasNameOperation && txIdx > 0 {
-			if err := bc.validateTransactionFee(msgTx, nameOpType, height); err != nil {
-				return fmt.Errorf("invalid transaction fee for %s: %w", nameOpType, err)
+		// Validate transaction fee for name operations.
+		// Skip coinbase transaction (no inputs to validate).
+		if len(nameOpTypes) > 0 && txIdx > 0 {
+			for opType := range nameOpTypes {
+				if err := bc.validateTransactionFee(msgTx, opType, height); err != nil {
+					return fmt.Errorf("invalid transaction fee for %s: %w", opType, err)
+				}
 			}
 		}
 
