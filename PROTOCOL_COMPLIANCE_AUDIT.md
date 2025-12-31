@@ -645,7 +645,7 @@ Should import test vectors from Namecoin Core to ensure identical validation log
 | Checkpoint validation | ❌ Missing | 0% | No checkpoints |
 | **Name Operations** | | | |
 | NAME_NEW | ✅ Working | 70% | Missing fee validation |
-| NAME_FIRSTUPDATE | ✅ Working | 85% | Missing UTXO validation, timing window ✅ |
+| NAME_FIRSTUPDATE | ✅ Working | 85% | Missing UTXO validation; timing window enforcement ✅ implemented |
 | NAME_UPDATE | ✅ Working | 70% | Missing UTXO validation |
 | Name expiration | ✅ Working | 90% | Works correctly |
 | Namespace validation | ✅ Working | 100% | ✅ Implemented (2025-12-31) |
