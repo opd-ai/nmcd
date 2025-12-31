@@ -18,6 +18,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/opd-ai/nmcd/config"
 )
 
 // Wallet manages keys and creates transactions for name operations.
@@ -219,9 +220,6 @@ const (
 
 	// opCheckSig (0xac) verifies a signature against the transaction
 	opCheckSig = 0xac
-
-	// dustLimit is the minimum output value in satoshis to avoid dust outputs
-	dustLimit = 546
 )
 
 // BuildNameUpdateScript creates a NAME_UPDATE output script.
@@ -358,7 +356,7 @@ func (w *Wallet) CreateNameUpdateTx(
 	tx.AddTxOut(wire.NewTxOut(nameOutValue, nameScript))
 
 	// Add change output if above dust
-	if changeValue >= dustLimit {
+	if changeValue >= config.DustLimit {
 		changeScript, err := txscript.PayToAddrScript(kp.Address)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create change script: %w", err)
@@ -458,7 +456,7 @@ func CreateNameUpdateTxRaw(
 	tx.AddTxOut(wire.NewTxOut(nameOutValue, nameScript))
 
 	// Add change output if above dust
-	if changeValue >= dustLimit {
+	if changeValue >= config.DustLimit {
 		changeScript, err := txscript.PayToAddrScript(destAddress)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create change script: %w", err)

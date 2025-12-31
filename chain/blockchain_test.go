@@ -758,7 +758,7 @@ func TestRollbackNameNew(t *testing.T) {
 		[]byte{opNameNew},
 		pushData(commitHash),
 	)
-	tx.AddTxOut(wire.NewTxOut(0, script))
+	tx.AddTxOut(wire.NewTxOut(config.DustLimit, script))
 	msgBlock.AddTransaction(tx)
 
 	// Create btcutil.Block wrapper
@@ -835,7 +835,7 @@ func TestRollbackNameFirstUpdate(t *testing.T) {
 		pushData(rand),
 		pushData([]byte(value)),
 	)
-	tx.AddTxOut(wire.NewTxOut(0, script))
+	tx.AddTxOut(wire.NewTxOut(config.DustLimit, script))
 	msgBlock.AddTransaction(tx)
 
 	// Create btcutil.Block wrapper
@@ -953,7 +953,7 @@ func TestRollbackNameUpdate(t *testing.T) {
 		pushData([]byte(nameStr)),
 		pushData([]byte(updatedValue)),
 	)
-	tx.AddTxOut(wire.NewTxOut(0, script))
+	tx.AddTxOut(wire.NewTxOut(config.DustLimit, script))
 	msgBlock.AddTransaction(tx)
 
 	// Create btcutil.Block wrapper
@@ -1045,7 +1045,7 @@ func TestRollbackSameBlockNameNewAndFirstUpdate(t *testing.T) {
 		[]byte{opNameNew},
 		pushData(commitHash), // The commitment hash
 	)
-	tx1.AddTxOut(wire.NewTxOut(0, nameNewScript))
+	tx1.AddTxOut(wire.NewTxOut(config.DustLimit, nameNewScript))
 	msgBlock.AddTransaction(tx1)
 
 	// Second transaction: NAME_FIRSTUPDATE that consumes the NAME_NEW
@@ -1056,7 +1056,7 @@ func TestRollbackSameBlockNameNewAndFirstUpdate(t *testing.T) {
 		pushData(rand),
 		pushData([]byte(value)),
 	)
-	tx2.AddTxOut(wire.NewTxOut(0, firstUpdateScript))
+	tx2.AddTxOut(wire.NewTxOut(config.DustLimit, firstUpdateScript))
 	msgBlock.AddTransaction(tx2)
 
 	// Create btcutil.Block wrapper
@@ -1371,7 +1371,7 @@ func createBlockWithNameFirstUpdate(t *testing.T, name string, rand []byte, heig
 	// Create transaction with NAME_FIRSTUPDATE
 	tx := wire.NewMsgTx(1)
 	tx.AddTxOut(&wire.TxOut{
-		Value:    0,
+		Value:    config.DustLimit, // Use dust limit (546 satoshis) for valid transaction
 		PkScript: script,
 	})
 
@@ -1387,4 +1387,306 @@ func createBlockWithNameFirstUpdate(t *testing.T, name string, rand []byte, heig
 	utilBlock.SetHeight(height)
 
 	return utilBlock
+}
+
+// TestNameOperationDustLimitValidation tests that name operations enforce
+// the dust limit (546 satoshis) to prevent spam and uneconomical UTXOs.
+// This implements Issue #4 from PROTOCOL_COMPLIANCE_AUDIT.md.
+func TestNameOperationDustLimitValidation(t *testing.T) {
+	// Create temporary database
+	dbPath := filepath.Join(t.TempDir(), "test-dust-limit.db")
+	ndb, err := namedb.NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer ndb.Close()
+
+	// Create a BlockChain wrapper with nameDB for testing
+	bc := &BlockChain{
+		nameDB:      ndb,
+		chainParams: &config.NamecoinRegTestParams,
+	}
+
+	// Helper function to create a block with a name operation at specified output value
+	createBlockWithValue := func(opType namedb.NameOperation, outputValue int64, height int32) *btcutil.Block {
+		var script []byte
+		nameStr := "d/example"
+		value := `{"ip":"1.2.3.4"}`
+		rand := make([]byte, 20)
+
+		switch opType {
+		case namedb.NameNew:
+			commitHash := make([]byte, 20)
+			script = buildScript(
+				[]byte{opNameNew},
+				pushData(commitHash),
+			)
+		case namedb.NameFirstUpdate:
+			script = buildScript(
+				[]byte{opNameFirstUpdate},
+				pushData([]byte(nameStr)),
+				pushData(rand),
+				pushData([]byte(value)),
+			)
+		case namedb.NameUpdate:
+			script = buildScript(
+				[]byte{opNameUpdate},
+				pushData([]byte(nameStr)),
+				pushData([]byte(value)),
+			)
+		}
+
+		tx := wire.NewMsgTx(1)
+		tx.AddTxOut(&wire.TxOut{
+			Value:    outputValue,
+			PkScript: script,
+		})
+
+		block := wire.NewMsgBlock(&wire.BlockHeader{
+			Version:   1,
+			Timestamp: time.Now(),
+			Bits:      0x207fffff,
+		})
+		block.AddTransaction(tx)
+
+		utilBlock := btcutil.NewBlock(block)
+		utilBlock.SetHeight(height)
+		return utilBlock
+	}
+
+	t.Run("NAME_NEW with dust limit validation", func(t *testing.T) {
+		testCases := []struct {
+			name        string
+			outputValue int64
+			wantErr     bool
+			errContains string
+		}{
+			{
+				name:        "below dust limit - 0 satoshis",
+				outputValue: 0,
+				wantErr:     true,
+				errContains: "below dust limit",
+			},
+			{
+				name:        "below dust limit - 545 satoshis",
+				outputValue: 545,
+				wantErr:     true,
+				errContains: "below dust limit",
+			},
+			{
+				name:        "exactly at dust limit - 546 satoshis",
+				outputValue: config.DustLimit,
+				wantErr:     false,
+			},
+			{
+				name:        "above dust limit - 547 satoshis",
+				outputValue: 547,
+				wantErr:     false,
+			},
+			{
+				name:        "above dust limit - 1000 satoshis",
+				outputValue: 1000,
+				wantErr:     false,
+			},
+			{
+				name:        "above dust limit - 100000 satoshis (0.001 NMC)",
+				outputValue: 100000,
+				wantErr:     false,
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				block := createBlockWithValue(namedb.NameNew, tc.outputValue, 100)
+				err := bc.validateNameOperations(block)
+
+				if tc.wantErr {
+					if err == nil {
+						t.Errorf("expected error containing %q, got nil", tc.errContains)
+					} else if !strings.Contains(err.Error(), tc.errContains) {
+						t.Errorf("expected error containing %q, got %q", tc.errContains, err.Error())
+					}
+				} else {
+					if err != nil {
+						t.Errorf("unexpected error: %v", err)
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("NAME_FIRSTUPDATE with dust limit validation", func(t *testing.T) {
+		// Setup: Create NAME_NEW commitment for NAME_FIRSTUPDATE to reference
+		nameStr := "d/example"
+		rand := make([]byte, 20)
+		commitHash := computeCommitHash(rand, nameStr)
+		nameNewHeight := int32(100)
+		if err := ndb.PutNameNew(commitHash, nameNewHeight); err != nil {
+			t.Fatalf("Failed to store NAME_NEW: %v", err)
+		}
+
+		testCases := []struct {
+			name        string
+			outputValue int64
+			wantErr     bool
+			errContains string
+		}{
+			{
+				name:        "below dust limit - 0 satoshis",
+				outputValue: 0,
+				wantErr:     true,
+				errContains: "below dust limit",
+			},
+			{
+				name:        "below dust limit - 100 satoshis",
+				outputValue: 100,
+				wantErr:     true,
+				errContains: "below dust limit",
+			},
+			{
+				name:        "below dust limit - 545 satoshis",
+				outputValue: 545,
+				wantErr:     true,
+				errContains: "below dust limit",
+			},
+			{
+				name:        "exactly at dust limit - 546 satoshis",
+				outputValue: config.DustLimit,
+				wantErr:     false,
+			},
+			{
+				name:        "above dust limit - 1000 satoshis",
+				outputValue: 1000,
+				wantErr:     false,
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				// NAME_FIRSTUPDATE must be at least MinBlocksBeforeFirstUpdate after NAME_NEW
+				firstUpdateHeight := nameNewHeight + config.MinBlocksBeforeFirstUpdate
+				block := createBlockWithValue(namedb.NameFirstUpdate, tc.outputValue, firstUpdateHeight)
+				err := bc.validateNameOperations(block)
+
+				if tc.wantErr {
+					if err == nil {
+						t.Errorf("expected error containing %q, got nil", tc.errContains)
+					} else if !strings.Contains(err.Error(), tc.errContains) {
+						t.Errorf("expected error containing %q, got %q", tc.errContains, err.Error())
+					}
+				} else {
+					if err != nil {
+						t.Errorf("unexpected error: %v", err)
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("NAME_UPDATE with dust limit validation", func(t *testing.T) {
+		// Setup: Create existing name for NAME_UPDATE to reference
+		nameStr := "d/updatetest"
+		txHash, err := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+		if err != nil {
+			t.Fatalf("Failed to create test hash: %v", err)
+		}
+		nameHeight := int32(100)
+
+		record := &namedb.NameRecord{
+			Name:      nameStr,
+			Value:     `{"ip":"1.2.3.4"}`,
+			TxHash:    *txHash,
+			Height:    nameHeight,
+			ExpiresAt: nameHeight + config.NameExpirationBlocks,
+			Address:   "N1234567890",
+			UpdatedAt: time.Now(),
+		}
+		if err := ndb.PutName(nameStr, record); err != nil {
+			t.Fatalf("Failed to create name for update test: %v", err)
+		}
+
+		testCases := []struct {
+			name        string
+			outputValue int64
+			wantErr     bool
+			errContains string
+		}{
+			{
+				name:        "below dust limit - 0 satoshis",
+				outputValue: 0,
+				wantErr:     true,
+				errContains: "below dust limit",
+			},
+			{
+				name:        "below dust limit - 500 satoshis",
+				outputValue: 500,
+				wantErr:     true,
+				errContains: "below dust limit",
+			},
+			{
+				name:        "below dust limit - 545 satoshis",
+				outputValue: 545,
+				wantErr:     true,
+				errContains: "below dust limit",
+			},
+			{
+				name:        "exactly at dust limit - 546 satoshis",
+				outputValue: config.DustLimit,
+				wantErr:     false,
+			},
+			{
+				name:        "above dust limit - 600 satoshis",
+				outputValue: 600,
+				wantErr:     false,
+			},
+			{
+				name:        "above dust limit - 10000 satoshis",
+				outputValue: 10000,
+				wantErr:     false,
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				// Create NAME_UPDATE block with custom name for this test
+				updateHeight := nameHeight + 50
+
+				script := buildScript(
+					[]byte{opNameUpdate},
+					pushData([]byte(nameStr)),
+					pushData([]byte(`{"ip":"5.6.7.8"}`)),
+				)
+
+				tx := wire.NewMsgTx(1)
+				tx.AddTxOut(&wire.TxOut{
+					Value:    tc.outputValue,
+					PkScript: script,
+				})
+
+				block := wire.NewMsgBlock(&wire.BlockHeader{
+					Version:   1,
+					Timestamp: time.Now(),
+					Bits:      0x207fffff,
+				})
+				block.AddTransaction(tx)
+
+				utilBlock := btcutil.NewBlock(block)
+				utilBlock.SetHeight(updateHeight)
+
+				err := bc.validateNameOperations(utilBlock)
+
+				if tc.wantErr {
+					if err == nil {
+						t.Errorf("expected error containing %q, got nil", tc.errContains)
+					} else if !strings.Contains(err.Error(), tc.errContains) {
+						t.Errorf("expected error containing %q, got %q", tc.errContains, err.Error())
+					}
+				} else {
+					if err != nil {
+						t.Errorf("unexpected error: %v", err)
+					}
+				}
+			})
+		}
+	})
 }

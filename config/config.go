@@ -25,6 +25,13 @@ const (
 
 	// MaxValueLength is the maximum length of a value in bytes
 	MaxValueLength = 1023
+
+	// DustLimit is the minimum output value for name operations (in satoshis).
+	// This follows Bitcoin's standard dust limit for P2PKH outputs (546 satoshis).
+	// Name operation outputs (NAME_NEW, NAME_FIRSTUPDATE, and NAME_UPDATE) below
+	// this limit are considered dust and will be rejected to prevent spam and
+	// uneconomical UTXO creation.
+	DustLimit = 546
 )
 
 // ValidNamespaces defines the allowed namespace prefixes for Namecoin names
