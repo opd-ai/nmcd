@@ -620,6 +620,27 @@ func validateNameFormat(name, value string) error {
 	if len(name) == 0 || len(name) > config.MaxNameLength {
 		return fmt.Errorf("invalid name length: %d (max: %d)", len(name), config.MaxNameLength)
 	}
+
+	// Validate namespace prefix
+	if !config.IsValidNamespace(name) {
+		return fmt.Errorf("invalid namespace: name must start with a valid namespace prefix (d/, id/, p/)")
+	}
+
+	// Ensure there is content after the namespace prefix
+	// Check each valid namespace to find which one matches and verify content exists after it
+	hasContent := false
+	for _, ns := range config.ValidNamespaces {
+		if len(name) >= len(ns) && name[:len(ns)] == ns {
+			if len(name) > len(ns) {
+				hasContent = true
+				break
+			}
+		}
+	}
+	if !hasContent {
+		return fmt.Errorf("invalid name: must have content after namespace prefix")
+	}
+
 	if len(value) > config.MaxValueLength {
 		return fmt.Errorf("value too large: %d bytes (max: %d)", len(value), config.MaxValueLength)
 	}

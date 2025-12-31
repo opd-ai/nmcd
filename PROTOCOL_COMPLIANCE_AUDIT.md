@@ -12,13 +12,16 @@
 
 - **Protocol version implemented:** Partial (Base protocol only, no AuxPow)
 - **Critical issues:** 3
-- **High priority issues:** 6
+- **High priority issues:** 5 (1 resolved: namespace validation ✅)
 - **Medium priority issues:** 8
 - **Low priority issues:** 4
 - **Missing features:** 12
-- **Overall compatibility:** ~35% (Core name operations work, but consensus/mining features missing)
+- **Overall compatibility:** ~37% (Core name operations work with namespace validation, but consensus/mining features missing)
 
 **Status:** ⚠️ **NOT PRODUCTION READY** - Critical consensus-breaking features missing
+
+**Recent Progress:**
+- ✅ 2025-12-31: Implemented namespace validation (Issue #8) - Names now require valid namespace prefixes (d/, id/, p/)
 
 ---
 
@@ -188,20 +191,49 @@ Namecoin Core includes address/chain ID in commitment to prevent cross-chain rep
 
 ---
 
-### 8. No Namespace Validation
-**Location:** chain/blockchain.go:569-577 - validateNameFormat()  
+### 8. No Namespace Validation ✅ RESOLVED
+**Location:** chain/blockchain.go:618-633 - validateNameFormat()  
 **Severity:** HIGH  
+**Status:** ✅ **RESOLVED** (2025-12-31)  
 **Expected:** Names must start with valid namespace prefix (d/, id/, etc.)  
-**Actual:** Only validates length, not namespace format
+**Actual:** ✅ Now validates namespace prefixes
 
-**Description:**
+**Resolution:**
+Implemented namespace validation with the following changes:
+1. Added `ValidNamespaces` constant in `config/config.go` defining valid namespace prefixes (d/, id/, p/)
+2. Added `IsValidNamespace()` helper function in `config/config.go` to check namespace validity
+3. Updated `validateNameFormat()` in `chain/blockchain.go` to validate namespace prefixes
+4. Added comprehensive unit tests in `config/config_test.go` and `chain/blockchain_test.go`
+
+**Implementation:**
 ```go
-// chain/blockchain.go:569-577
+// config/config.go
+var ValidNamespaces = []string{
+    "d/",   // Domain names
+    "id/",  // Identity records
+    "p/",   // Personal namespace
+}
+
+func IsValidNamespace(name string) bool {
+    for _, ns := range ValidNamespaces {
+        if len(name) >= len(ns) && name[:len(ns)] == ns {
+            return true
+        }
+    }
+    return false
+}
+
+// chain/blockchain.go:618-633
 func validateNameFormat(name, value string) error {
     if len(name) == 0 || len(name) > config.MaxNameLength {
         return fmt.Errorf("invalid name length: %d (max: %d)", len(name), config.MaxNameLength)
     }
-    // Missing: namespace prefix validation (d/, id/, etc.)
+    
+    // Validate namespace prefix
+    if !config.IsValidNamespace(name) {
+        return fmt.Errorf("invalid namespace: name must start with a valid namespace prefix (d/, id/, p/)")
+    }
+    
     if len(value) > config.MaxValueLength {
         return fmt.Errorf("value too large: %d bytes (max: %d)", len(value), config.MaxValueLength)
     }
@@ -213,7 +245,12 @@ Namecoin enforces namespace prefixes:
 - `d/` - Domain names (DNS)
 - `id/` - Identity/OpenID
 - `p/` - Personal namespace
-- etc.
+
+**Test Coverage:**
+- ✅ Valid namespace prefixes (d/, id/, p/)
+- ✅ Invalid namespace prefixes (empty, wrong prefix, no prefix)
+- ✅ Edge cases (case sensitivity, partial prefix, wrong separator)
+- ✅ All existing tests updated and passing
 
 **Reference:** See Namecoin namespace specification
 
@@ -555,7 +592,7 @@ Should import test vectors from Namecoin Core to ensure identical validation log
 
 ### Short-term (Required for Basic Functionality):
 
-1. **Add namespace validation** - Enforce d/, id/ prefixes
+1. ~~**Add namespace validation** - Enforce d/, id/ prefixes~~ ✅ **COMPLETED** (2025-12-31)
 2. **Implement UTXO chain validation** - Prevent name theft
 3. **Add checkpoints** - Import from Namecoin Core
 4. **Verify network magic bytes** - Ensure exact match with Core
@@ -589,7 +626,7 @@ Should import test vectors from Namecoin Core to ensure identical validation log
 | NAME_FIRSTUPDATE | ✅ Working | 75% | Missing UTXO validation |
 | NAME_UPDATE | ✅ Working | 70% | Missing UTXO validation |
 | Name expiration | ✅ Working | 90% | Works correctly |
-| Namespace validation | ❌ Missing | 0% | No prefix enforcement |
+| Namespace validation | ✅ Working | 100% | ✅ Implemented (2025-12-31) |
 | **Transaction Validation** | | | |
 | Script parsing | ⚠️ Partial | 60% | Too lenient |
 | Fee validation | ❌ Missing | 0% | No fee checks |

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/btcsuite/btcd/chaincfg"
 )
@@ -21,6 +22,17 @@ const (
 	// MaxValueLength is the maximum length of a value in bytes
 	MaxValueLength = 1023
 )
+
+// ValidNamespaces defines the allowed namespace prefixes for Namecoin names
+// Per Namecoin protocol specification:
+// - d/ : Domain names (DNS, .bit TLD)
+// - id/ : Identity/OpenID records
+// - p/ : Personal namespace
+var ValidNamespaces = []string{
+	"d/",  // Domain names
+	"id/", // Identity records
+	"p/",  // Personal namespace
+}
 
 // Config holds all configuration for nmcd
 type Config struct {
@@ -71,4 +83,14 @@ func (c *Config) NameDBPath() string {
 // EnsureDataDir creates the data directory if it doesn't exist
 func (c *Config) EnsureDataDir() error {
 	return os.MkdirAll(c.DataDir, 0700)
+}
+
+// IsValidNamespace checks if a name starts with a valid namespace prefix
+func IsValidNamespace(name string) bool {
+	for _, ns := range ValidNamespaces {
+		if strings.HasPrefix(name, ns) {
+			return true
+		}
+	}
+	return false
 }
