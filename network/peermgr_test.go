@@ -266,3 +266,35 @@ func TestOnBlockBufferParameter(t *testing.T) {
 		})
 	}
 }
+
+// TestEdgeCaseBugAcceptLoopRace tests that the accept loop goroutine
+// properly handles shutdown without races or goroutine leaks.
+// This test reproduces the race condition where the accept goroutine may try
+// to send on channels after the main loop has exited.
+func TestEdgeCaseBugAcceptLoopRace(t *testing.T) {
+	// Run the test multiple times to increase the chance of detecting a race
+	for i := 0; i < 10; i++ {
+		netCfg := &Config{
+			ChainParams: &chaincfg.MainNetParams,
+			Blockchain:  nil,
+			ListenAddrs: []string{"127.0.0.1:0"}, // Use port 0 to get a free port
+			MaxPeers:    10,
+		}
+
+		pm, err := NewPeerManager(netCfg)
+		if err != nil {
+			t.Fatalf("Failed to create PeerManager: %v", err)
+		}
+
+		// Give it a tiny bit of time to start listening
+		time.Sleep(10 * time.Millisecond)
+
+		// Stop immediately - this should trigger the race condition
+		// where the accept goroutine may still be blocked on Accept()
+		pm.Stop()
+
+		// Give a small window for any potential race to manifest
+		time.Sleep(20 * time.Millisecond)
+	}
+	// If we get here without a panic or hanging, the test passes
+}

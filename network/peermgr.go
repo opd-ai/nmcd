@@ -20,6 +20,7 @@ type PeerManager struct {
 	peers       map[string]*peer.Peer
 	listeners   []net.Listener
 	blockchain  *chain.BlockChain
+	mempool     *Mempool
 	chainParams *chaincfg.Params
 	maxPeers    int
 	mu          sync.RWMutex
@@ -40,6 +41,7 @@ func NewPeerManager(cfg *Config) (*PeerManager, error) {
 	pm := &PeerManager{
 		peers:       make(map[string]*peer.Peer),
 		blockchain:  cfg.Blockchain,
+		mempool:     NewMempool(),
 		chainParams: cfg.ChainParams,
 		maxPeers:    cfg.MaxPeers,
 		quit:        make(chan struct{}),
@@ -65,18 +67,29 @@ func NewPeerManager(cfg *Config) (*PeerManager, error) {
 func (pm *PeerManager) listenLoop(listener net.Listener) {
 	defer pm.wg.Done()
 
-	// Use a goroutine to handle Accept() calls that can be interrupted
-	acceptCh := make(chan net.Conn)
-	errCh := make(chan error)
+	// Use buffered channels to prevent goroutine leaks when the main loop exits
+	// via the quit signal before the accept goroutine sends.
+	acceptCh := make(chan net.Conn, 1)
+	errCh := make(chan error, 1)
 
 	go func() {
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
-				errCh <- err
+				select {
+				case errCh <- err:
+				case <-pm.quit:
+					// Main loop has exited, stop sending
+				}
 				return
 			}
-			acceptCh <- conn
+			select {
+			case acceptCh <- conn:
+			case <-pm.quit:
+				// Main loop has exited, close the connection
+				conn.Close()
+				return
+			}
 		}
 	}()
 
@@ -118,12 +131,14 @@ func (pm *PeerManager) handleInboundPeer(conn net.Conn) {
 		Services:         wire.SFNodeNetwork,
 		TrickleInterval:  time.Second * 10,
 		Listeners: peer.MessageListeners{
-			OnVersion: pm.onVersion,
-			OnVerAck:  pm.onVerAck,
-			OnInv:     pm.onInv,
-			OnBlock:   pm.onBlock,
-			OnTx:      pm.onTx,
-			OnGetData: pm.onGetData,
+			OnVersion:    pm.onVersion,
+			OnVerAck:     pm.onVerAck,
+			OnInv:        pm.onInv,
+			OnBlock:      pm.onBlock,
+			OnTx:         pm.onTx,
+			OnGetData:    pm.onGetData,
+			OnGetHeaders: pm.onGetHeaders,
+			OnGetBlocks:  pm.onGetBlocks,
 		},
 	}
 
@@ -169,12 +184,14 @@ func (pm *PeerManager) ConnectPeer(addr string) error {
 		Services:         wire.SFNodeNetwork,
 		TrickleInterval:  time.Second * 10,
 		Listeners: peer.MessageListeners{
-			OnVersion: pm.onVersion,
-			OnVerAck:  pm.onVerAck,
-			OnInv:     pm.onInv,
-			OnBlock:   pm.onBlock,
-			OnTx:      pm.onTx,
-			OnGetData: pm.onGetData,
+			OnVersion:    pm.onVersion,
+			OnVerAck:     pm.onVerAck,
+			OnInv:        pm.onInv,
+			OnBlock:      pm.onBlock,
+			OnTx:         pm.onTx,
+			OnGetData:    pm.onGetData,
+			OnGetHeaders: pm.onGetHeaders,
+			OnGetBlocks:  pm.onGetBlocks,
 		},
 	}
 
@@ -262,7 +279,19 @@ func (pm *PeerManager) onBlock(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
 }
 
 func (pm *PeerManager) onTx(p *peer.Peer, msg *wire.MsgTx) {
-	// Handle transaction message
+	// Handle transaction message by adding to mempool
+	if msg == nil {
+		return
+	}
+
+	// Add transaction to mempool
+	err := pm.mempool.AddTx(msg)
+	if err != nil {
+		log.Printf("Failed to add transaction to mempool: %v", err)
+		return
+	}
+
+	log.Printf("Added transaction %s to mempool (total: %d)", msg.TxHash(), pm.mempool.Count())
 }
 
 func (pm *PeerManager) onGetData(p *peer.Peer, msg *wire.MsgGetData) {
@@ -275,6 +304,51 @@ func (pm *PeerManager) onGetData(p *peer.Peer, msg *wire.MsgGetData) {
 			// Would fetch and send transaction
 		}
 	}
+}
+
+// onGetHeaders handles getheaders requests for block synchronization
+func (pm *PeerManager) onGetHeaders(p *peer.Peer, msg *wire.MsgGetHeaders) {
+	// Handle getheaders message - respond with block headers for sync
+	if pm.blockchain == nil {
+		log.Printf("Cannot process getheaders: blockchain not initialized")
+		return
+	}
+
+	// Get the best block hash
+	bestHash := pm.blockchain.BestSnapshot().Hash
+
+	// Send headers message with our best chain
+	// In a full implementation, this would:
+	// 1. Find the common ancestor with msg.BlockLocatorHashes
+	// 2. Send headers from that point to our best block (max 2000 headers)
+	// For now, just log that we received the request
+	log.Printf("Received getheaders request from %s (best hash: %s)", p.Addr(), bestHash.String())
+
+	// Create headers message (empty for minimal implementation)
+	headersMsg := wire.NewMsgHeaders()
+	p.QueueMessage(headersMsg, nil)
+}
+
+// onGetBlocks handles getblocks requests for block synchronization
+func (pm *PeerManager) onGetBlocks(p *peer.Peer, msg *wire.MsgGetBlocks) {
+	// Handle getblocks message - respond with block inventory for sync
+	if pm.blockchain == nil {
+		log.Printf("Cannot process getblocks: blockchain not initialized")
+		return
+	}
+
+	// Get the best block hash
+	bestHash := pm.blockchain.BestSnapshot().Hash
+
+	// In a full implementation, this would:
+	// 1. Find the common ancestor with msg.BlockLocatorHashes
+	// 2. Send inventory message with block hashes from that point
+	// For now, just log that we received the request
+	log.Printf("Received getblocks request from %s (best hash: %s)", p.Addr(), bestHash.String())
+
+	// Create inv message (empty for minimal implementation)
+	invMsg := wire.NewMsgInv()
+	p.QueueMessage(invMsg, nil)
 }
 
 // BroadcastBlock broadcasts a block to all peers
@@ -326,6 +400,39 @@ func (pm *PeerManager) GetPeerInfo() []PeerInfo {
 		})
 	}
 	return info
+}
+
+// GetMempool returns the mempool instance
+func (pm *PeerManager) GetMempool() *Mempool {
+	return pm.mempool
+}
+
+// SyncBlocks initiates block synchronization with peers
+// This sends getheaders requests to connected peers to start syncing
+func (pm *PeerManager) SyncBlocks() {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	if pm.blockchain == nil {
+		log.Printf("Cannot sync blocks: blockchain not initialized")
+		return
+	}
+
+	// Get our best block hash to use as the starting point
+	bestHash := pm.blockchain.BestSnapshot().Hash
+
+	// Create a getheaders message
+	getHeadersMsg := wire.NewMsgGetHeaders()
+	getHeadersMsg.AddBlockLocatorHash(&bestHash)
+
+	// Send to all connected peers
+	for _, p := range pm.peers {
+		if p.Connected() {
+			p.QueueMessage(getHeadersMsg, nil)
+			log.Printf("Requesting headers from peer %s (our best: %s)", 
+				p.Addr(), bestHash.String())
+		}
+	}
 }
 
 // PeerInfo contains information about a peer

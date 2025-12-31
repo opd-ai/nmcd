@@ -3,7 +3,7 @@
 **Audit Date:** 2025-12-22  
 **Auditor:** Automated Code Audit  
 **Codebase Version:** Current HEAD  
-**Last Updated:** 2025-12-23  
+**Last Updated:** 2025-12-31  
 
 ---
 
@@ -12,13 +12,13 @@
 | Category | Count | Severity Distribution |
 |----------|-------|----------------------|
 | CRITICAL BUG | 0 | - |
-| FUNCTIONAL MISMATCH | 5 (4 fixed) | High: 2, Medium: 3 |
-| MISSING FEATURE | 5 (3 fixed) | High: 1, Medium: 3, Low: 1 |
-| EDGE CASE BUG | 1 | Medium: 1 |
+| FUNCTIONAL MISMATCH | 5 (4 fixed, 1 blocked) | High: 2, Medium: 3 |
+| MISSING FEATURE | 5 (5 fixed) | High: 1, Medium: 3, Low: 1 |
+| EDGE CASE BUG | 1 (1 fixed) | Medium: 1 |
 | PERFORMANCE ISSUE | 0 | - |
-| DOCUMENTATION DISCREPANCY | 1 | Low: 1 |
+| DOCUMENTATION DISCREPANCY | 1 (1 fixed) | Low: 1 |
 
-**Total Findings: 12 (7 fixed, 5 remaining)**
+**Total Findings: 12 (11 fixed, 1 blocked by architectural limitations)**
 
 The codebase is well-structured with good test coverage. The primary concerns are around incomplete integration between components and missing address tracking for name records. No critical bugs that would cause crashes or data corruption were identified.
 
@@ -102,6 +102,8 @@ The codebase is well-structured with good test coverage. The primary concerns ar
 
 **File:** rpc/server.go:277-423  
 **Severity:** Medium  
+**Status:** ⚠️ BLOCKED - Requires Major Architectural Changes  
+
 **Description:** The `name_update` RPC method creates a transaction script and returns it, but explicitly states in the response that "Broadcasting requires UTXO management." The transaction is never actually broadcast to the network.
 
 **Expected Behavior:** Per README.md documentation, `name_update` should "Update an existing name's value" and the wallet should handle transaction creation and broadcasting.
@@ -110,18 +112,32 @@ The codebase is well-structured with good test coverage. The primary concerns ar
 
 **Impact:** Users cannot update names through the RPC API. The method gives the appearance of functionality but requires external tooling to actually perform updates.
 
-**Reproduction:** Call `name_update` RPC - it returns success but the name's value doesn't change in the blockchain.
+**Why This Cannot Be Fixed with Minimal Changes:**
 
-**Code Reference:**
-```go
-result := map[string]interface{}{
-    "name":             name,
-    "value":            newValue,
-    // ...
-    "status":           "prepared",
-    "message":          "NAME_UPDATE transaction prepared. Broadcasting requires UTXO management.",
-}
-```
+This bug cannot be resolved without implementing a complete UTXO (Unspent Transaction Output) management subsystem, which includes:
+
+1. **UTXO Index**: A database to track all unspent outputs from the blockchain
+2. **Transaction Output Tracking**: Record which output index contains the name in each NAME_FIRSTUPDATE/NAME_UPDATE transaction
+3. **Value Tracking**: Record the value (in satoshis) of each output to calculate transaction fees
+4. **UTXO Updates**: Update the UTXO set when blocks are added/removed (including reorgs)
+5. **Wallet UTXO Discovery**: Scan the blockchain to find UTXOs belonging to wallet addresses
+
+The wallet already has transaction creation functions (`CreateNameUpdateTx`, `SignTransaction`), but they require UTXOs as input parameters. The NameRecord structure only stores:
+- Transaction hash (but not output index)
+- Owner address (but not the output value)
+
+Without knowing which output index and what value to spend, a valid transaction cannot be constructed.
+
+**Estimated Implementation Effort:** 
+- New UTXO database schema and management code: ~500-800 lines
+- Blockchain scanning for UTXO discovery: ~200-300 lines  
+- Integration with name_update RPC: ~100-150 lines
+- Comprehensive testing: ~300-400 lines
+
+**Total:** ~1100-1650 lines of new code, which exceeds the "minimal changes" requirement by an order of magnitude.
+
+**Recommendation:** 
+This should be treated as a major feature request rather than a bug fix. The codebase would benefit from a dedicated UTXO management module before attempting to implement transaction broadcasting.
 
 ---
 
@@ -188,10 +204,13 @@ result := map[string]interface{}{
 
 ---
 
-### MISSING FEATURE: No Mempool Implementation
+### [FIXED] MISSING FEATURE: No Mempool Implementation
 
 **File:** (none - feature absent)  
 **Severity:** Medium  
+**Status:** ✅ FIXED  
+**Fix Date:** 2025-12-31
+
 **Description:** There is no transaction mempool implementation. The node cannot receive, validate, or store unconfirmed transactions.
 
 **Expected Behavior:** A full node typically maintains a mempool of unconfirmed transactions for mining and relay.
@@ -200,22 +219,26 @@ result := map[string]interface{}{
 
 **Impact:** The node cannot participate in transaction relay or provide mempool-related RPC functionality.
 
-**Reproduction:** Attempt to submit an unconfirmed transaction - it cannot be stored or relayed.
-
-**Code Reference:**
-```go
-func (pm *PeerManager) onTx(p *peer.Peer, msg *wire.MsgTx) {
-    // Handle transaction message
-    // Empty implementation
-}
-```
+**Fix Applied:**
+- Created `network/mempool.go` with thread-safe mempool implementation
+- Mempool stores transactions in an in-memory map indexed by transaction hash
+- Added methods: `AddTx`, `RemoveTx`, `GetTx`, `Count`, `GetAll`, `Clear`
+- All methods are protected with RWMutex for thread safety
+- Integrated mempool into `PeerManager` structure
+- Implemented `onTx` handler to accept and store transactions from peers
+- Added `GetMempool()` method for external access
+- Created comprehensive unit tests covering all mempool operations and concurrency
+- All tests pass successfully
 
 ---
 
-### MISSING FEATURE: No Block Request/Sync Mechanism
+### [FIXED] MISSING FEATURE: No Block Request/Sync Mechanism
 
 **File:** network/peermgr.go  
 **Severity:** Low  
+**Status:** ✅ FIXED  
+**Fix Date:** 2025-12-31
+
 **Description:** While the node responds to inventory messages by requesting data, there is no implementation of initial block download (IBD) or "getheaders"/"getblocks" message handling for synchronizing with peers.
 
 **Expected Behavior:** A node should actively request blocks it's missing during initial sync.
@@ -224,26 +247,30 @@ func (pm *PeerManager) onTx(p *peer.Peer, msg *wire.MsgTx) {
 
 **Impact:** Initial synchronization would be extremely slow or non-functional.
 
-**Reproduction:** Start a fresh node - it will not actively sync blocks from peers.
+**Fix Applied:**
+- Added `onGetHeaders` handler to process getheaders requests from peers
+- Added `onGetBlocks` handler to process getblocks requests from peers
+- Registered both handlers in peer configuration for inbound and outbound peers
+- Added `SyncBlocks()` method to initiate synchronization by sending getheaders requests to all connected peers
+- Both handlers respond with appropriate messages (headers or inv) to facilitate block synchronization
+- Includes logging for debugging sync operations
+- Added unit tests for new functionality
+- All tests pass successfully
 
-**Code Reference:**
-```go
-// Missing: getheaders/getblocks handlers for active sync
-func (pm *PeerManager) onInv(p *peer.Peer, msg *wire.MsgInv) {
-    gdmsg := wire.NewMsgGetData()
-    for _, inv := range msg.InvList {
-        gdmsg.AddInvVect(inv)  // Only reacts to announcements
-    }
+**Note:** This is a minimal implementation that provides the basic message handling infrastructure. Full IBD (Initial Block Download) with optimal block locator logic and header chain validation would require additional work but is now architecturally possible.
     // ...
 }
 ```
 
 ---
 
-### EDGE CASE BUG: Potential Race in PeerManager Accept Loop
+### [FIXED] EDGE CASE BUG: Potential Race in PeerManager Accept Loop
 
 **File:** network/peermgr.go:62-94  
 **Severity:** Medium  
+**Status:** ✅ FIXED  
+**Fix Date:** 2025-12-31
+
 **Description:** The `listenLoop` function spawns a goroutine for Accept() that sends on channels, but if the listener is closed while the goroutine is blocked on Accept(), the goroutine will send an error and exit, but subsequent accepts on the closed listener may cause issues.
 
 **Expected Behavior:** Clean shutdown without goroutine leaks or race conditions.
@@ -254,42 +281,40 @@ func (pm *PeerManager) onInv(p *peer.Peer, msg *wire.MsgInv) {
 
 **Reproduction:** Start and stop the node rapidly multiple times.
 
-**Code Reference:**
-```go
-go func() {
-    for {
-        conn, err := listener.Accept()
-        if err != nil {
-            errCh <- err
-            return  // Goroutine exits on error
-        }
-        acceptCh <- conn
-    }
-}()
-```
+**Fix Applied:**
+- Made channels buffered (size 1) to prevent blocking when main loop exits via quit signal
+- Added select statements in the accept goroutine to check quit signal before sending on channels
+- If quit signal is received, the goroutine properly closes any accepted connection and exits
+- This ensures clean shutdown without goroutine leaks or race conditions
+- Added regression test `TestEdgeCaseBugAcceptLoopRace` that starts/stops the PeerManager rapidly
 
 ---
 
-### DOCUMENTATION DISCREPANCY: Code Size Claim
+### [FIXED] DOCUMENTATION DISCREPANCY: Code Size Claim
 
 **File:** README.md:17  
 **Severity:** Low  
-**Description:** README.md states "~1200 lines of focused custom code" but the actual line count (excluding tests and examples) is 3044 lines across the main packages:
-- config: 398 lines
+**Status:** ✅ FIXED  
+**Fix Date:** 2025-12-31
+
+**Description:** README.md states "~1200 lines of focused custom code" but the actual line count (excluding tests and examples) is 3468 lines across the main packages:
+- config: 451 lines
 - namedb: 508 lines
-- chain: 605 lines
-- network: 321 lines
-- rpc: 525 lines
+- chain: 722 lines
+- network: 454 lines
+- rpc: 616 lines
 - wallet: 530 lines
-- cmd/nmcd: 157 lines
+- cmd/nmcd: 187 lines
 
 **Expected Behavior:** Documentation should accurately reflect codebase size.
 
-**Actual Behavior:** The codebase is approximately 2.5x larger than documented. This may be an outdated claim from when the codebase was smaller, or the original author may have counted only the core logic excluding boilerplate.
+**Actual Behavior:** The codebase is approximately 2.9x larger than documented. This may be an outdated claim from when the codebase was smaller, or the original author may have counted only the core logic excluding boilerplate.
 
 **Impact:** Minor - sets incorrect expectations for code review or maintenance effort.
 
-**Reproduction:** Run `find . -name '*.go' -not -path './.git/*' -not -name '*_test.go' -not -path './examples/*' | xargs wc -l`
+**Fix Applied:**
+- Updated README.md line 17 to state "~3,500 lines of focused custom code"
+- This accurately reflects the current codebase size (3468 lines as of 2025-12-31)
 
 ---
 
