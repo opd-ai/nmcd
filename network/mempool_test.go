@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/peer"
 	"github.com/btcsuite/btcd/wire"
 )
 
@@ -183,5 +184,51 @@ func TestMempoolConcurrency(t *testing.T) {
 	// Verify count
 	if mp.Count() != 10 {
 		t.Errorf("Expected count 10, got %d", mp.Count())
+	}
+}
+
+// TestSyncBlocks tests that SyncBlocks sends getheaders requests
+func TestSyncBlocks(t *testing.T) {
+	// Create a PeerManager with no blockchain (should handle gracefully)
+	pm := &PeerManager{
+		peers:      make(map[string]*peer.Peer),
+		blockchain: nil,
+		mempool:    NewMempool(),
+		quit:       make(chan struct{}),
+	}
+
+	// Should not panic when blockchain is nil
+	pm.SyncBlocks()
+
+	// In a real test with a blockchain, we would verify that getheaders
+	// messages are sent to peers. For this minimal test, we just ensure
+	// it doesn't crash.
+}
+
+// TestGetMempoolMethod tests the GetMempool accessor
+func TestGetMempoolMethod(t *testing.T) {
+	pm := &PeerManager{
+		peers:   make(map[string]*peer.Peer),
+		mempool: NewMempool(),
+		quit:    make(chan struct{}),
+	}
+
+	mp := pm.GetMempool()
+	if mp == nil {
+		t.Fatal("GetMempool returned nil")
+	}
+
+	// Add a transaction and verify it's accessible
+	tx := wire.NewMsgTx(1)
+	tx.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: wire.OutPoint{
+			Hash:  chainhash.Hash{},
+			Index: 0,
+		},
+	})
+	mp.AddTx(tx)
+
+	if mp.Count() != 1 {
+		t.Errorf("Expected mempool count 1, got %d", mp.Count())
 	}
 }

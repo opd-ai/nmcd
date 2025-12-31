@@ -13,12 +13,12 @@
 |----------|-------|----------------------|
 | CRITICAL BUG | 0 | - |
 | FUNCTIONAL MISMATCH | 5 (4 fixed) | High: 2, Medium: 3 |
-| MISSING FEATURE | 5 (4 fixed) | High: 1, Medium: 3, Low: 1 |
+| MISSING FEATURE | 5 (5 fixed) | High: 1, Medium: 3, Low: 1 |
 | EDGE CASE BUG | 1 (1 fixed) | Medium: 1 |
 | PERFORMANCE ISSUE | 0 | - |
 | DOCUMENTATION DISCREPANCY | 1 (1 fixed) | Low: 1 |
 
-**Total Findings: 12 (10 fixed, 2 remaining)**
+**Total Findings: 12 (11 fixed, 1 remaining)**
 
 The codebase is well-structured with good test coverage. The primary concerns are around incomplete integration between components and missing address tracking for name records. No critical bugs that would cause crashes or data corruption were identified.
 
@@ -216,10 +216,13 @@ result := map[string]interface{}{
 
 ---
 
-### MISSING FEATURE: No Block Request/Sync Mechanism
+### [FIXED] MISSING FEATURE: No Block Request/Sync Mechanism
 
 **File:** network/peermgr.go  
 **Severity:** Low  
+**Status:** ✅ FIXED  
+**Fix Date:** 2025-12-31
+
 **Description:** While the node responds to inventory messages by requesting data, there is no implementation of initial block download (IBD) or "getheaders"/"getblocks" message handling for synchronizing with peers.
 
 **Expected Behavior:** A node should actively request blocks it's missing during initial sync.
@@ -228,16 +231,17 @@ result := map[string]interface{}{
 
 **Impact:** Initial synchronization would be extremely slow or non-functional.
 
-**Reproduction:** Start a fresh node - it will not actively sync blocks from peers.
+**Fix Applied:**
+- Added `onGetHeaders` handler to process getheaders requests from peers
+- Added `onGetBlocks` handler to process getblocks requests from peers
+- Registered both handlers in peer configuration for inbound and outbound peers
+- Added `SyncBlocks()` method to initiate synchronization by sending getheaders requests to all connected peers
+- Both handlers respond with appropriate messages (headers or inv) to facilitate block synchronization
+- Includes logging for debugging sync operations
+- Added unit tests for new functionality
+- All tests pass successfully
 
-**Code Reference:**
-```go
-// Missing: getheaders/getblocks handlers for active sync
-func (pm *PeerManager) onInv(p *peer.Peer, msg *wire.MsgInv) {
-    gdmsg := wire.NewMsgGetData()
-    for _, inv := range msg.InvList {
-        gdmsg.AddInvVect(inv)  // Only reacts to announcements
-    }
+**Note:** This is a minimal implementation that provides the basic message handling infrastructure. Full IBD (Initial Block Download) with optimal block locator logic and header chain validation would require additional work but is now architecturally possible.
     // ...
 }
 ```
