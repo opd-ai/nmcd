@@ -16,6 +16,8 @@ var (
 	historyIndexBucket = []byte("history_index")
 	expirationBucket   = []byte("expiration")
 	nameNewBucket      = []byte("name_new") // Tracks NAME_NEW commitments
+	utxoBucket         = []byte("utxo")     // Tracks unspent transaction outputs
+	utxoAddrBucket     = []byte("utxo_addr") // Index: address -> UTXOs
 )
 
 // txHashSize is the size of a transaction hash in bytes.
@@ -43,6 +45,16 @@ type NameRecord struct {
 	UpdatedAt time.Time
 }
 
+// UTXO represents an unspent transaction output
+type UTXO struct {
+	TxHash   chainhash.Hash // Transaction hash
+	OutIndex uint32         // Output index
+	Value    int64          // Output value in satoshis
+	Address  string         // Output address
+	PkScript []byte         // Output script
+	Height   int32          // Block height where UTXO was created
+}
+
 // NameDatabase manages name operations with bbolt storage
 type NameDatabase struct {
 	db *bbolt.DB
@@ -58,7 +70,7 @@ func NewNameDatabase(dbPath string) (*NameDatabase, error) {
 
 	// Initialize buckets
 	err = db.Update(func(tx *bbolt.Tx) error {
-		for _, bucket := range [][]byte{namesBucket, historyBucket, historyIndexBucket, expirationBucket, nameNewBucket} {
+		for _, bucket := range [][]byte{namesBucket, historyBucket, historyIndexBucket, expirationBucket, nameNewBucket, utxoBucket, utxoAddrBucket} {
 			if _, err := tx.CreateBucketIfNotExists(bucket); err != nil {
 				return err
 			}
