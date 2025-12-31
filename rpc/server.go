@@ -457,8 +457,9 @@ func (s *Server) nameUpdate(req *Request) *Response {
 	}
 
 	// Create the NAME_UPDATE transaction
-	// Use a fee rate of 1000 satoshis/KB (0.001 NMC/KB)
-	feeRate := int64(1)
+	// Use a fee rate of 1 satoshi/byte (1000 satoshis/KB)
+	// This is a reasonable fee for Namecoin transactions
+	feeRate := int64(1) // satoshis per byte
 	tx, err := s.wallet.CreateNameUpdateTx(name, newValue, utxos, nameUtxoIndex, feeRate)
 	if err != nil {
 		return &Response{
@@ -486,8 +487,11 @@ func (s *Server) nameUpdate(req *Request) *Response {
 		}
 	}
 
-	// TODO: Relay transaction to peers
-	// For now, the transaction is in the mempool and will be included when we mine a block
+	// Note: Transaction relay to peers is not yet implemented
+	// The transaction is now in the mempool and will be:
+	// 1. Available for inclusion in blocks we mine
+	// 2. Returned in mempool queries
+	// Future enhancement: Add peer.QueueMessage to broadcast to network
 
 	// Return success with transaction details
 	txHash := tx.TxHash()
@@ -495,7 +499,7 @@ func (s *Server) nameUpdate(req *Request) *Response {
 		"txid":   txHash.String(),
 		"name":   name,
 		"value":  newValue,
-		"status": "broadcast",
+		"status": "mempool",
 	}
 
 	return &Response{
