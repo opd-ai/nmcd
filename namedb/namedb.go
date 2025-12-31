@@ -25,8 +25,9 @@ var (
 // a 32-byte result, same as a single SHA256.
 const txHashSize = 32
 
-// NameRecord encoding version. We use a single version format that includes
-// OutIndex for UTXO chain validation, matching Namecoin Core's requirements.
+// NameRecord encoding version. This implementation uses a single version format
+// that includes OutIndex for UTXO chain validation, matching Namecoin Core's
+// requirements. This is a clean Namecoin implementation - no legacy versions exist.
 const NameRecordVersion = 2
 
 // NameOperation represents a name operation type
