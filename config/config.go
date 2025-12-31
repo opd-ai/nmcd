@@ -16,6 +16,10 @@ const (
 	// MinBlocksBeforeFirstUpdate is the minimum blocks between name_new and name_firstupdate
 	MinBlocksBeforeFirstUpdate = 12
 
+	// MaxBlocksBeforeFirstUpdate is the maximum blocks between name_new and name_firstupdate
+	// After this period, the NAME_NEW commitment expires and the name becomes available
+	MaxBlocksBeforeFirstUpdate = 36000
+
 	// MaxNameLength is the maximum length of a name in bytes
 	MaxNameLength = 255
 

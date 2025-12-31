@@ -158,6 +158,11 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 					return fmt.Errorf("name_firstupdate too early: %d blocks since name_new, minimum %d required",
 						blocksSinceNew, config.MinBlocksBeforeFirstUpdate)
 				}
+				// Validate maximum timing window - NAME_NEW commitment expires after MaxBlocksBeforeFirstUpdate
+				if blocksSinceNew > config.MaxBlocksBeforeFirstUpdate {
+					return fmt.Errorf("name_firstupdate too late: %d blocks since name_new, maximum %d allowed (commitment expired)",
+						blocksSinceNew, config.MaxBlocksBeforeFirstUpdate)
+				}
 
 			case namedb.NameUpdate:
 				// Verify name exists and not expired
