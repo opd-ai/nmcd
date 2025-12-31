@@ -1,5 +1,27 @@
 PERMAMAIL IMPLEMENTATION ROADMAP
 ================================
+
+**⚠️ CRITICAL: DEPENDENCIES MUST BE RESOLVED FIRST ⚠️**
+
+**STOP! Before working on ANY items in this roadmap, you MUST complete ALL items in PROTOCOL_COMPLIANCE_AUDIT.md first.**
+
+PROTOCOL_COMPLIANCE_AUDIT.md contains critical consensus-breaking issues that prevent nmcd from functioning as a production Namecoin node. These are foundational dependencies that MUST be resolved before building additional features on top of nmcd.
+
+**Working on this roadmap before completing PROTOCOL_COMPLIANCE_AUDIT.md would be:**
+- Building on a broken foundation
+- Creating technical debt
+- Wasting development effort on features that won't work properly
+- Ignoring critical security and consensus issues
+
+**The correct order of execution is:**
+1. PROTOCOL_COMPLIANCE_AUDIT.md (TOP PRIORITY - consensus/security issues)
+2. PLAN.md (if it exists - short-term tactical fixes)
+3. ROADMAP.md (LAST - strategic feature additions)
+
+**DO NOT proceed with this roadmap until PROTOCOL_COMPLIANCE_AUDIT.md shows all critical and high-priority issues resolved.**
+
+================================================================================
+
 Target: Minimal Go Implementation
 Constraint: Namecoin core already exists; mail logic fully decoupled
 Principle: Simple, minimal, maintainable
