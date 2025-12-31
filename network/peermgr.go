@@ -20,6 +20,7 @@ type PeerManager struct {
 	peers       map[string]*peer.Peer
 	listeners   []net.Listener
 	blockchain  *chain.BlockChain
+	mempool     *Mempool
 	chainParams *chaincfg.Params
 	maxPeers    int
 	mu          sync.RWMutex
@@ -40,6 +41,7 @@ func NewPeerManager(cfg *Config) (*PeerManager, error) {
 	pm := &PeerManager{
 		peers:       make(map[string]*peer.Peer),
 		blockchain:  cfg.Blockchain,
+		mempool:     NewMempool(),
 		chainParams: cfg.ChainParams,
 		maxPeers:    cfg.MaxPeers,
 		quit:        make(chan struct{}),
@@ -273,7 +275,19 @@ func (pm *PeerManager) onBlock(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
 }
 
 func (pm *PeerManager) onTx(p *peer.Peer, msg *wire.MsgTx) {
-	// Handle transaction message
+	// Handle transaction message by adding to mempool
+	if msg == nil {
+		return
+	}
+
+	// Add transaction to mempool
+	err := pm.mempool.AddTx(msg)
+	if err != nil {
+		log.Printf("Failed to add transaction to mempool: %v", err)
+		return
+	}
+
+	log.Printf("Added transaction %s to mempool (total: %d)", msg.TxHash(), pm.mempool.Count())
 }
 
 func (pm *PeerManager) onGetData(p *peer.Peer, msg *wire.MsgGetData) {
@@ -337,6 +351,11 @@ func (pm *PeerManager) GetPeerInfo() []PeerInfo {
 		})
 	}
 	return info
+}
+
+// GetMempool returns the mempool instance
+func (pm *PeerManager) GetMempool() *Mempool {
+	return pm.mempool
 }
 
 // PeerInfo contains information about a peer
