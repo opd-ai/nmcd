@@ -259,12 +259,21 @@ func (bc *BlockChain) validateTransactionFee(tx *wire.MsgTx, opType namedb.NameO
 			return fmt.Errorf("cannot validate transaction fee: UTXO %s:%d not found: %w",
 				txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index, err)
 		}
+		// Check for overflow when adding input values
+		// This prevents integer overflow attacks where sum of inputs wraps around
+		if totalInputValue > 0 && utxo.Value > 0 && totalInputValue > (1<<63-1)-utxo.Value {
+			return fmt.Errorf("transaction input value overflow: %d + %d", totalInputValue, utxo.Value)
+		}
 		totalInputValue += utxo.Value
 	}
 
 	// Calculate total output value
 	var totalOutputValue int64
 	for _, txOut := range tx.TxOut {
+		// Check for overflow when adding output values
+		if totalOutputValue > 0 && txOut.Value > 0 && totalOutputValue > (1<<63-1)-txOut.Value {
+			return fmt.Errorf("transaction output value overflow: %d + %d", totalOutputValue, txOut.Value)
+		}
 		totalOutputValue += txOut.Value
 	}
 

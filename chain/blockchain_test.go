@@ -2022,4 +2022,81 @@ func TestTransactionFeeValidation(t *testing.T) {
 			t.Errorf("expected error about negative fee, got: %v", err)
 		}
 	})
+
+	t.Run("multiple inputs fee calculation", func(t *testing.T) {
+		// Create multiple input UTXOs
+		txHashIn1, outIdx1 := createUTXO(500000, 100)
+		txHashIn2, outIdx2 := createUTXO(700000, 101)
+		txHashIn3, outIdx3 := createUTXO(300000, 102)
+		// Total inputs: 1,500,000 satoshis
+
+		// Create NAME_FIRSTUPDATE transaction with multiple inputs
+		nameBytes := []byte("d/multiinput")
+		rand := make([]byte, 20)
+		value := []byte(`{"ip":"1.2.3.4"}`)
+
+		script := buildScript(
+			[]byte{opNameFirstUpdate},
+			pushData(nameBytes),
+			pushData(rand),
+			pushData(value),
+		)
+
+		tx := wire.NewMsgTx(1)
+		// Add three inputs
+		tx.AddTxIn(wire.NewTxIn(
+			wire.NewOutPoint(&txHashIn1, outIdx1),
+			nil,
+			nil,
+		))
+		tx.AddTxIn(wire.NewTxIn(
+			wire.NewOutPoint(&txHashIn2, outIdx2),
+			nil,
+			nil,
+		))
+		tx.AddTxIn(wire.NewTxIn(
+			wire.NewOutPoint(&txHashIn3, outIdx3),
+			nil,
+			nil,
+		))
+		// Add NAME_FIRSTUPDATE output
+		// Total inputs: 1,500,000
+		// Output: 400,000
+		// Fee: 1,100,000 (above minimum of 1,000,000)
+		tx.AddTxOut(&wire.TxOut{
+			Value:    400000,
+			PkScript: script,
+		})
+
+		// First create NAME_NEW commitment
+		commitHash := computeCommitHash(rand, string(nameBytes))
+		if err := bc.nameDB.PutNameNew(commitHash, 100); err != nil {
+			t.Fatalf("Failed to create NAME_NEW: %v", err)
+		}
+
+		// Validate the transaction fee - should pass with fee of 1,100,000
+		err := bc.validateTransactionFee(tx, namedb.NameFirstUpdate, 150)
+		if err != nil {
+			t.Errorf("unexpected error with multiple inputs: %v", err)
+		}
+
+		// Now test with insufficient fee
+		tx2 := wire.NewMsgTx(1)
+		tx2.AddTxIn(wire.NewTxIn(wire.NewOutPoint(&txHashIn1, outIdx1), nil, nil))
+		tx2.AddTxIn(wire.NewTxIn(wire.NewOutPoint(&txHashIn2, outIdx2), nil, nil))
+		tx2.AddTxIn(wire.NewTxIn(wire.NewOutPoint(&txHashIn3, outIdx3), nil, nil))
+		// Output: 1,400,000 -> Fee: 100,000 (below minimum of 1,000,000)
+		tx2.AddTxOut(&wire.TxOut{
+			Value:    1400000,
+			PkScript: script,
+		})
+
+		err = bc.validateTransactionFee(tx2, namedb.NameFirstUpdate, 150)
+		if err == nil {
+			t.Error("expected error for insufficient fee with multiple inputs, got nil")
+		} else if !strings.Contains(err.Error(), "below minimum") {
+			t.Errorf("expected error about insufficient fee, got: %v", err)
+		}
+	})
 }
+
