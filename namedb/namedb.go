@@ -25,6 +25,18 @@ var (
 // a 32-byte result, same as a single SHA256.
 const txHashSize = 32
 
+// NameRecord encoding version constants
+const (
+	// LegacyNameRecordVersion indicates records without a version byte (pre-v1)
+	LegacyNameRecordVersion = 0
+	
+	// NameRecordVersion1 is the original encoding format without OutIndex
+	NameRecordVersion1 = 1
+	
+	// NameRecordVersion2 is the current encoding format with OutIndex for UTXO tracking
+	NameRecordVersion2 = 2
+)
+
 // NameOperation represents a name operation type
 type NameOperation uint8
 
@@ -423,7 +435,7 @@ func encodeNameRecord(record *NameRecord) []byte {
 	data := make([]byte, 0, 1+len(record.Value)+32+4+4+4+len(record.Address)+8)
 
 	// Version byte (v2)
-	data = append(data, byte(2))
+	data = append(data, byte(NameRecordVersion2))
 
 	// Value length + value
 	valLen := make([]byte, 4)
@@ -477,12 +489,14 @@ func decodeNameRecord(data []byte) (*NameRecord, error) {
 	version := data[offset]
 	offset++
 
-	// Handle legacy format (no version byte) - values > 2 indicate legacy format
-	// where the first byte is actually part of the value length, not a version byte
-	if version > 2 {
+	// Handle legacy format (no version byte) - Legacy records don't have a version byte,
+	// so what looks like a version will actually be the first byte of the 4-byte value length.
+	// Since value lengths are encoded as little-endian uint32, values > 2 indicate this is
+	// likely the first byte of the length field, not a version byte.
+	if version > NameRecordVersion2 {
 		// Likely legacy format without version byte, rewind
 		offset = 0
-		version = 0 // Mark as legacy
+		version = LegacyNameRecordVersion
 	}
 
 	record := &NameRecord{}
@@ -507,7 +521,7 @@ func decodeNameRecord(data []byte) (*NameRecord, error) {
 	offset += 32
 
 	// OutIndex (only in v2+)
-	if version >= 2 {
+	if version >= NameRecordVersion2 {
 		if offset+4 > len(data) {
 			return nil, fmt.Errorf("corrupt record: truncated at outindex")
 		}
