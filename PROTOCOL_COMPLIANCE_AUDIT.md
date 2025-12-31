@@ -13,14 +13,15 @@
 - **Protocol version implemented:** Partial (Base protocol only, no AuxPow)
 - **Critical issues:** 3
 - **High priority issues:** 4 (4 resolved: namespace validation ✅, NAME_FIRSTUPDATE timing window ✅, NAME_NEW fee requirements ✅, transaction fee validation ✅)
-- **Medium priority issues:** 8
+- **Medium priority issues:** 8 (1 resolved: value encoding validation ✅)
 - **Low priority issues:** 4
 - **Missing features:** 12
-- **Overall compatibility:** ~45% (Core name operations work with namespace validation, timing window enforcement, dust limit validation, and transaction fee validation, but consensus/mining features missing)
+- **Overall compatibility:** ~47% (Core name operations work with namespace validation, timing window enforcement, dust limit validation, transaction fee validation, and value encoding validation, but consensus/mining features missing)
 
 **Status:** ⚠️ **NOT PRODUCTION READY** - Critical consensus-breaking features missing
 
 **Recent Progress:**
+- ✅ 2025-12-31: Implemented value encoding validation (Issue #12) - Values must be valid UTF-8; d/ and id/ namespaces require valid JSON
 - ✅ 2025-12-31: Implemented transaction fee validation (Issue #6) - NAME_NEW requires 1000 satoshi minimum, NAME_FIRSTUPDATE and NAME_UPDATE require 0.01 NMC (1,000,000 satoshi) network fee
 - ✅ 2025-12-31: Implemented namespace validation (Issue #8) - Names now require valid namespace prefixes (d/, id/, p/)
 - ✅ 2025-12-31: Implemented NAME_FIRSTUPDATE timing window validation (Issue #5) - NAME_FIRSTUPDATE must occur within 12-36,000 blocks after NAME_NEW
@@ -421,11 +422,83 @@ The original NAME_NEW height is not stored, so during rollback it's estimated. T
 
 ---
 
-### 12. Missing Value Encoding Validation
-**Location:** chain/blockchain.go:569-577 - validateNameFormat()  
+### 12. Missing Value Encoding Validation ✅ RESOLVED
+**Location:** chain/blockchain.go:743-772 - validateNameFormat() and validateValueEncoding()  
 **Severity:** MEDIUM  
+**Status:** ✅ **RESOLVED** (2025-12-31)  
 **Expected:** Validate value is valid JSON/text encoding  
-**Actual:** Only checks size
+**Actual:** ✅ Now validates UTF-8 encoding for all namespaces and JSON encoding for d/ and id/ namespaces
+
+**Resolution:**
+Implemented comprehensive value encoding validation with the following changes:
+1. Added `encoding/json` and `unicode/utf8` imports to `chain/blockchain.go`
+2. Created `validateValueEncoding()` function that validates:
+   - All values must be valid UTF-8
+   - d/ (domain) namespace values must be valid JSON (for DNS records)
+   - id/ (identity) namespace values must be valid JSON (for identity records)
+   - p/ (personal) namespace values can be plain UTF-8 text or JSON (flexible format)
+3. Integrated `validateValueEncoding()` into `validateNameFormat()` for all name operations
+4. Added comprehensive unit tests in `chain/blockchain_test.go` covering:
+   - Empty values (allowed for all namespaces)
+   - Valid JSON formats (objects, arrays, strings, numbers, booleans, null)
+   - Invalid JSON (malformed objects, plain text for d/ and id/ namespaces)
+   - UTF-8 validation (valid unicode, special chars, multiline text, invalid byte sequences)
+   - Edge cases and boundary conditions
+
+**Implementation:**
+```go
+// chain/blockchain.go:784-818
+func validateValueEncoding(name, value string) error {
+    // Empty values are allowed (deletion/reservation pattern)
+    if len(value) == 0 {
+        return nil
+    }
+
+    // All namespaces require valid UTF-8 encoding
+    if !utf8.ValidString(value) {
+        return fmt.Errorf("value must be valid UTF-8")
+    }
+
+    // For d/ (domain) and id/ (identity) namespaces, validate JSON encoding
+    // These namespaces store structured data (DNS records, identity records)
+    if (len(name) >= 2 && name[:2] == "d/") || (len(name) >= 3 && name[:3] == "id/") {
+        // Attempt to parse as JSON
+        var jsonData interface{}
+        if err := json.Unmarshal([]byte(value), &jsonData); err != nil {
+            ns := "specified"
+            if len(name) >= 2 && name[:2] == "d/" {
+                ns = "d/"
+            } else if len(name) >= 3 && name[:3] == "id/" {
+                ns = "id/"
+            }
+            return fmt.Errorf("value must be valid JSON for %s namespace: %w", ns, err)
+        }
+    }
+
+    // For p/ (personal) namespace, only UTF-8 validation is required
+    // Personal namespace is more flexible and can contain arbitrary text
+
+    return nil
+}
+```
+
+Per Namecoin protocol:
+- **d/ namespace (domains)**: Values must be valid JSON containing DNS configuration (IP addresses, NS records, etc.)
+- **id/ namespace (identity)**: Values must be valid JSON containing identity information (email, profile URLs, public keys, etc.)
+- **p/ namespace (personal)**: Values must be valid UTF-8 but can be plain text or JSON (flexible format for personal data)
+
+All values must be valid UTF-8 to ensure proper text encoding and prevent corruption.
+
+**Test Coverage:**
+- ✅ Empty values for all namespaces (d/, id/, p/)
+- ✅ Valid JSON for d/ namespace: objects, arrays, strings, numbers, booleans, null
+- ✅ Invalid JSON for d/ namespace: malformed objects, plain text, incomplete arrays, trailing commas
+- ✅ Valid JSON for id/ namespace: identity records, profile data
+- ✅ Invalid JSON for id/ namespace: plain text, malformed JSON
+- ✅ Valid UTF-8 text for p/ namespace: plain text, JSON, unicode chars, multiline
+- ✅ Invalid UTF-8 for all namespaces: invalid byte sequences
+- ✅ Integration with validateNameFormat() function
+- ✅ All existing tests updated and passing
 
 **Description:**
 Namecoin Core validates that name values are properly encoded (typically JSON for domain records). This implementation only validates byte length.
