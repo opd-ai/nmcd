@@ -689,14 +689,14 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 	// (multiple NAME_FIRSTUPDATE or NAME_UPDATE operations for the same name)
 	seenNames := make(map[string]bool)
 
-// For NAME_FIRSTUPDATE (lines 164-180):
+// For NAME_FIRSTUPDATE (lines 175-179):
 	// Check for duplicate name operation in this block
 	if seenNames[name] {
 		return fmt.Errorf("duplicate name operation in block for name: %s", name)
 	}
 	seenNames[name] = true
 
-// For NAME_UPDATE (lines 203-220):
+// For NAME_UPDATE (lines 220-224):
 	// Check for duplicate name operation in this block
 	if seenNames[name] {
 		return fmt.Errorf("duplicate name operation in block for name: %s", name)
@@ -712,8 +712,8 @@ Per Namecoin consensus rules, only one operation per name is allowed within a si
 
 **Test Coverage:**
 - ✅ Duplicate NAME_NEW commitment detection (existing test verified)
-- ✅ Duplicate NAME_FIRSTUPDATE detection (5 test cases)
-- ✅ Duplicate NAME_UPDATE detection (5 test cases)
+- ✅ Duplicate NAME_FIRSTUPDATE detection (1 test case)
+- ✅ Duplicate NAME_UPDATE detection (1 test case)
 - ✅ Multiple different names in same block (allowed)
 - ✅ Same name with different operation types (rejected)
 - ✅ All tests passing with proper UTXO and fee validation

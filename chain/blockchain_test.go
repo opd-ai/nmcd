@@ -3689,12 +3689,10 @@ func TestDoubleSpendDetection(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for same name with different operations in same block, got nil")
 		}
-		// The error might be "duplicate name operation" or "name not found" since
-		// the NAME_UPDATE will be validated but the name doesn't exist in the DB yet.
-		// Both are acceptable since the block should be rejected.
-		if !strings.Contains(err.Error(), "duplicate name operation") && 
-		   !strings.Contains(err.Error(), "name not found") {
-			t.Errorf("expected duplicate name operation or name not found error, got: %v", err)
+		// The duplicate name check for NAME_UPDATE runs before any DB-based
+		// validation, so this must fail with a "duplicate name operation" error.
+		if !strings.Contains(err.Error(), "duplicate name operation") {
+			t.Errorf("expected duplicate name operation error, got: %v", err)
 		}
 	})
 }
