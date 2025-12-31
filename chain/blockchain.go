@@ -238,6 +238,8 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 // The network fee for NAME_FIRSTUPDATE and NAME_UPDATE is "destroyed" by making
 // it part of the transaction fee, which reduces the total coin supply.
 func (bc *BlockChain) validateTransactionFee(tx *wire.MsgTx, opType namedb.NameOperation, height int32) error {
+	// height is reserved for future use (e.g., height-based fee adjustments).
+	_ = height
 	// Calculate total input value by looking up previous outputs
 	var totalInputValue int64
 	for _, txIn := range tx.TxIn {
