@@ -480,8 +480,8 @@ func TestValidateNameFormat(t *testing.T) {
 			wantErr:   true,
 		},
 		{
-			name:      "max valid name length",
-			inputName: string(make([]byte, 255)),
+			name:      "max valid name length with namespace",
+			inputName: "d/" + string(make([]byte, 252)), // d/ (2 bytes) + 252 bytes = 254 total
 			value:     "test",
 			wantErr:   false,
 		},
@@ -489,6 +489,30 @@ func TestValidateNameFormat(t *testing.T) {
 			name:      "max valid value length",
 			inputName: "d/test",
 			value:     string(make([]byte, 1023)),
+			wantErr:   false,
+		},
+		{
+			name:      "invalid namespace - no prefix",
+			inputName: "example",
+			value:     "test",
+			wantErr:   true,
+		},
+		{
+			name:      "invalid namespace - wrong prefix",
+			inputName: "x/example",
+			value:     "test",
+			wantErr:   true,
+		},
+		{
+			name:      "valid id namespace",
+			inputName: "id/johndoe",
+			value:     `{"email":"john@example.com"}`,
+			wantErr:   false,
+		},
+		{
+			name:      "valid p namespace",
+			inputName: "p/alice",
+			value:     "personal data",
 			wantErr:   false,
 		},
 	}
