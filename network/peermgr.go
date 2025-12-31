@@ -429,7 +429,7 @@ func (pm *PeerManager) SyncBlocks() {
 	for _, p := range pm.peers {
 		if p.Connected() {
 			p.QueueMessage(getHeadersMsg, nil)
-			log.Printf("Requesting headers from peer %s (our best: %s)", 
+			log.Printf("Requesting headers from peer %s (our best: %s)",
 				p.Addr(), bestHash.String())
 		}
 	}

@@ -1,0 +1,225 @@
+package namedb
+
+import (
+	"bytes"
+	"encoding/binary"
+	"fmt"
+
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"go.etcd.io/bbolt"
+)
+
+// makeUTXOKey creates a key for the UTXO bucket from txhash and output index
+func makeUTXOKey(txHash *chainhash.Hash, outIndex uint32) []byte {
+	key := make([]byte, txHashSize+4)
+	copy(key[:txHashSize], txHash[:])
+	binary.BigEndian.PutUint32(key[txHashSize:], outIndex)
+	return key
+}
+
+// encodeUTXO encodes a UTXO for storage
+func encodeUTXO(utxo *UTXO) ([]byte, error) {
+	// Format: value(8) + height(4) + address_len(1) + address + script_len(2) + script
+	addrBytes := []byte(utxo.Address)
+	if len(addrBytes) > 255 {
+		return nil, fmt.Errorf("address too long: %d bytes", len(addrBytes))
+	}
+	if len(utxo.PkScript) > 65535 {
+		return nil, fmt.Errorf("script too long: %d bytes", len(utxo.PkScript))
+	}
+
+	buf := make([]byte, 8+4+1+len(addrBytes)+2+len(utxo.PkScript))
+	binary.BigEndian.PutUint64(buf[0:8], uint64(utxo.Value))
+	binary.BigEndian.PutUint32(buf[8:12], uint32(utxo.Height))
+	buf[12] = byte(len(addrBytes))
+	copy(buf[13:], addrBytes)
+	offset := 13 + len(addrBytes)
+	binary.BigEndian.PutUint16(buf[offset:offset+2], uint16(len(utxo.PkScript)))
+	copy(buf[offset+2:], utxo.PkScript)
+	return buf, nil
+}
+
+// decodeUTXO decodes a UTXO from storage
+func decodeUTXO(txHash *chainhash.Hash, outIndex uint32, data []byte) (*UTXO, error) {
+	if len(data) < 8+4+1 {
+		return nil, fmt.Errorf("invalid UTXO data: too short")
+	}
+
+	utxo := &UTXO{
+		TxHash:   *txHash,
+		OutIndex: outIndex,
+		Value:    int64(binary.BigEndian.Uint64(data[0:8])),
+		Height:   int32(binary.BigEndian.Uint32(data[8:12])),
+	}
+
+	addrLen := int(data[12])
+	if len(data) < 13+addrLen+2 {
+		return nil, fmt.Errorf("invalid UTXO data: address truncated")
+	}
+	utxo.Address = string(data[13 : 13+addrLen])
+
+	offset := 13 + addrLen
+	scriptLen := int(binary.BigEndian.Uint16(data[offset : offset+2]))
+	if len(data) < offset+2+scriptLen {
+		return nil, fmt.Errorf("invalid UTXO data: script truncated")
+	}
+	utxo.PkScript = make([]byte, scriptLen)
+	copy(utxo.PkScript, data[offset+2:offset+2+scriptLen])
+
+	return utxo, nil
+}
+
+// AddUTXO adds an unspent transaction output to the database
+func (ndb *NameDatabase) AddUTXO(utxo *UTXO) error {
+	ndb.mu.Lock()
+	defer ndb.mu.Unlock()
+
+	return ndb.db.Update(func(tx *bbolt.Tx) error {
+		utxoBkt := tx.Bucket(utxoBucket)
+		addrBkt := tx.Bucket(utxoAddrBucket)
+
+		// Encode UTXO
+		data, err := encodeUTXO(utxo)
+		if err != nil {
+			return err
+		}
+
+		// Store in main UTXO bucket
+		key := makeUTXOKey(&utxo.TxHash, utxo.OutIndex)
+		if err := utxoBkt.Put(key, data); err != nil {
+			return err
+		}
+
+		// Add to address index
+		// Key: address + txhash + outindex
+		addrKey := make([]byte, len(utxo.Address)+txHashSize+4)
+		copy(addrKey, []byte(utxo.Address))
+		copy(addrKey[len(utxo.Address):], utxo.TxHash[:])
+		binary.BigEndian.PutUint32(addrKey[len(utxo.Address)+txHashSize:], utxo.OutIndex)
+
+		return addrBkt.Put(addrKey, []byte{1}) // Value doesn't matter, just presence
+	})
+}
+
+// RemoveUTXO removes a spent transaction output from the database
+func (ndb *NameDatabase) RemoveUTXO(txHash *chainhash.Hash, outIndex uint32) error {
+	ndb.mu.Lock()
+	defer ndb.mu.Unlock()
+
+	return ndb.db.Update(func(tx *bbolt.Tx) error {
+		utxoBkt := tx.Bucket(utxoBucket)
+		addrBkt := tx.Bucket(utxoAddrBucket)
+
+		key := makeUTXOKey(txHash, outIndex)
+
+		// Get the UTXO to extract the address
+		data := utxoBkt.Get(key)
+		if data == nil {
+			// UTXO not found - may have been already spent
+			return nil
+		}
+
+		utxo, err := decodeUTXO(txHash, outIndex, data)
+		if err != nil {
+			return err
+		}
+
+		// Remove from address index
+		addrKey := make([]byte, len(utxo.Address)+txHashSize+4)
+		copy(addrKey, []byte(utxo.Address))
+		copy(addrKey[len(utxo.Address):], txHash[:])
+		binary.BigEndian.PutUint32(addrKey[len(utxo.Address)+txHashSize:], outIndex)
+		if err := addrBkt.Delete(addrKey); err != nil {
+			return err
+		}
+
+		// Remove from main UTXO bucket
+		return utxoBkt.Delete(key)
+	})
+}
+
+// GetUTXO retrieves a specific UTXO
+func (ndb *NameDatabase) GetUTXO(txHash *chainhash.Hash, outIndex uint32) (*UTXO, error) {
+	ndb.mu.RLock()
+	defer ndb.mu.RUnlock()
+
+	var utxo *UTXO
+	err := ndb.db.View(func(tx *bbolt.Tx) error {
+		utxoBkt := tx.Bucket(utxoBucket)
+		key := makeUTXOKey(txHash, outIndex)
+		data := utxoBkt.Get(key)
+		if data == nil {
+			return fmt.Errorf("UTXO not found: %s:%d", txHash, outIndex)
+		}
+
+		var err error
+		utxo, err = decodeUTXO(txHash, outIndex, data)
+		return err
+	})
+
+	return utxo, err
+}
+
+// GetUTXOsForAddress retrieves all UTXOs for a specific address
+func (ndb *NameDatabase) GetUTXOsForAddress(address string) ([]*UTXO, error) {
+	ndb.mu.RLock()
+	defer ndb.mu.RUnlock()
+
+	var utxos []*UTXO
+	err := ndb.db.View(func(tx *bbolt.Tx) error {
+		utxoBkt := tx.Bucket(utxoBucket)
+		addrBkt := tx.Bucket(utxoAddrBucket)
+
+		// Seek to the address prefix
+		prefix := []byte(address)
+		c := addrBkt.Cursor()
+
+		for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
+			// Extract txhash and outindex from the key
+			if len(k) < len(address)+txHashSize+4 {
+				continue
+			}
+
+			var txHash chainhash.Hash
+			copy(txHash[:], k[len(address):len(address)+txHashSize])
+			outIndex := binary.BigEndian.Uint32(k[len(address)+txHashSize:])
+
+			// Get the full UTXO data
+			utxoKey := makeUTXOKey(&txHash, outIndex)
+			data := utxoBkt.Get(utxoKey)
+			if data == nil {
+				continue // Inconsistency - skip
+			}
+
+			utxo, err := decodeUTXO(&txHash, outIndex, data)
+			if err != nil {
+				continue // Skip corrupted entries
+			}
+
+			utxos = append(utxos, utxo)
+		}
+
+		return nil
+	})
+
+	return utxos, err
+}
+
+// GetNameUTXO retrieves the UTXO that holds a specific name
+// This is the output from the last NAME_FIRSTUPDATE or NAME_UPDATE for this name
+func (ndb *NameDatabase) GetNameUTXO(name string) (*UTXO, error) {
+	// First get the name record to find the transaction
+	record, err := ndb.GetName(name)
+	if err != nil {
+		return nil, fmt.Errorf("name not found: %w", err)
+	}
+
+	// The name UTXO is the first output (index 0) of the name transaction
+	// NAME_FIRSTUPDATE and NAME_UPDATE always put the name in output 0
+	utxo, err := ndb.GetUTXO(&record.TxHash, 0)
+	if err != nil {
+		return nil, fmt.Errorf("name UTXO not found for %s: %w", name, err)
+	}
+
+	return utxo, nil
+}
