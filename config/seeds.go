@@ -7,12 +7,12 @@ package config
 // These seeds return IPv4/IPv6 addresses of full nodes when queried.
 // Source: https://github.com/namecoin/namecoin-core
 var MainNetDNSSeeds = []string{
-	"nmc.seed.quisquis.de",            // Peter Conrad
-	"seed.nmc.markasoftware.com",      // Mark Polyakov
-	"dnsseed1.nmc.dotbit.zone",        // Stefan Stere
-	"dnsseed2.nmc.dotbit.zone",        // Stefan Stere
-	"dnsseed.nmc.testls.space",        // mjgill89
-	"namecoin.seed.cypherstack.com",   // Dan Miller
+	"nmc.seed.quisquis.de",          // Peter Conrad
+	"seed.nmc.markasoftware.com",    // Mark Polyakov
+	"dnsseed1.nmc.dotbit.zone",      // Stefan Stere
+	"dnsseed2.nmc.dotbit.zone",      // Stefan Stere
+	"dnsseed.nmc.testls.space",      // mjgill89
+	"namecoin.seed.cypherstack.com", // Dan Miller
 }
 
 // TestNetDNSSeeds contains DNS seed hostnames for Namecoin testnet.

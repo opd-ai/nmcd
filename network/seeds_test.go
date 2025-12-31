@@ -73,7 +73,7 @@ func TestSeedResolverInvalidSeed(t *testing.T) {
 	resolver := NewSeedResolver([]string{"invalid.nonexistent.local.test"}, "8334")
 
 	addresses, err := resolver.Resolve()
-	
+
 	// Should return an error when no seeds can be resolved
 	if err == nil && len(addresses) > 0 {
 		t.Error("Expected error or empty result for invalid seed")
