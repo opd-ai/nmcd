@@ -39,8 +39,57 @@ func pushData(data []byte) []byte {
 	}
 }
 
+// makeP2PKHScript creates a standard P2PKH script for testing.
+// Returns a 25-byte P2PKH script: OP_DUP OP_HASH160 <20 bytes> OP_EQUALVERIFY OP_CHECKSIG
+func makeP2PKHScript() []byte {
+	return []byte{
+		0x76, 0xa9, 0x14, // OP_DUP OP_HASH160 OP_PUSHDATA(20)
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
+		0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, // 20 bytes of hash
+		0x88, 0xac, // OP_EQUALVERIFY OP_CHECKSIG
+	}
+}
+
+// buildNameNewScript creates a complete, valid NAME_NEW script.
+// Format: OP_NAME_NEW <hash> OP_2DROP <P2PKH>
+func buildNameNewScript(hash []byte) []byte {
+	return buildScript(
+		[]byte{opNameNew},
+		pushData(hash),
+		[]byte{op2Drop},    // Required OP_2DROP
+		makeP2PKHScript(),  // Required P2PKH suffix
+	)
+}
+
+// buildNameFirstUpdateScript creates a complete, valid NAME_FIRSTUPDATE script.
+// Format: OP_NAME_FIRSTUPDATE <name> <rand> <value> OP_2DROP OP_2DROP <P2PKH>
+func buildNameFirstUpdateScript(name, rand, value []byte) []byte {
+	return buildScript(
+		[]byte{opNameFirstUpdate},
+		pushData(name),
+		pushData(rand),
+		pushData(value),
+		[]byte{op2Drop},    // Required first OP_2DROP
+		[]byte{op2Drop},    // Required second OP_2DROP
+		makeP2PKHScript(),  // Required P2PKH suffix
+	)
+}
+
+// buildNameUpdateScript creates a complete, valid NAME_UPDATE script.
+// Format: OP_NAME_UPDATE <name> <value> OP_2DROP OP_DROP <P2PKH>
+func buildNameUpdateScript(name, value []byte) []byte {
+	return buildScript(
+		[]byte{opNameUpdate},
+		pushData(name),
+		pushData(value),
+		[]byte{op2Drop},    // Required OP_2DROP
+		[]byte{opDrop},     // Required OP_DROP
+		makeP2PKHScript(),  // Required P2PKH suffix
+	)
+}
+
 func TestParseNameScript_NameNew(t *testing.T) {
-	// NAME_NEW: OP_NAME_NEW <hash> ...
+	// NAME_NEW: OP_NAME_NEW <hash> OP_2DROP <P2PKH>
 	// The hash is typically 20 bytes
 	hash := make([]byte, 20)
 	for i := range hash {
@@ -50,6 +99,8 @@ func TestParseNameScript_NameNew(t *testing.T) {
 	script := buildScript(
 		[]byte{opNameNew},
 		pushData(hash),
+		[]byte{op2Drop},    // Required OP_2DROP
+		makeP2PKHScript(),  // Required P2PKH suffix
 	)
 
 	op, name, value, err := parseNameScript(script)
@@ -68,7 +119,7 @@ func TestParseNameScript_NameNew(t *testing.T) {
 }
 
 func TestParseNameScript_NameFirstUpdate(t *testing.T) {
-	// NAME_FIRSTUPDATE: OP_NAME_FIRSTUPDATE <name> <rand> <value> ...
+	// NAME_FIRSTUPDATE: OP_NAME_FIRSTUPDATE <name> <rand> <value> OP_2DROP OP_2DROP <P2PKH>
 	testCases := []struct {
 		name        string
 		scriptName  string
@@ -108,6 +159,9 @@ func TestParseNameScript_NameFirstUpdate(t *testing.T) {
 				pushData([]byte(tc.scriptName)),
 				pushData(tc.rand),
 				pushData([]byte(tc.scriptValue)),
+				[]byte{op2Drop},    // Required first OP_2DROP
+				[]byte{op2Drop},    // Required second OP_2DROP
+				makeP2PKHScript(),  // Required P2PKH suffix
 			)
 
 			op, name, value, err := parseNameScript(script)
@@ -128,7 +182,7 @@ func TestParseNameScript_NameFirstUpdate(t *testing.T) {
 }
 
 func TestParseNameScript_NameUpdate(t *testing.T) {
-	// NAME_UPDATE: OP_NAME_UPDATE <name> <value> ...
+	// NAME_UPDATE: OP_NAME_UPDATE <name> <value> OP_2DROP OP_DROP <P2PKH>
 	testCases := []struct {
 		name        string
 		scriptName  string
@@ -157,6 +211,9 @@ func TestParseNameScript_NameUpdate(t *testing.T) {
 				[]byte{opNameUpdate},
 				pushData([]byte(tc.scriptName)),
 				pushData([]byte(tc.scriptValue)),
+				[]byte{op2Drop},    // Required OP_2DROP
+				[]byte{opDrop},     // Required OP_DROP
+				makeP2PKHScript(),  // Required P2PKH suffix
 			)
 
 			op, name, value, err := parseNameScript(script)
@@ -270,6 +327,9 @@ func TestParseNameScript_PushDataFormats(t *testing.T) {
 			[]byte{opNameUpdate},
 			pushData([]byte(name)),
 			pushData([]byte(value)),
+			[]byte{op2Drop},    // Required OP_2DROP
+			[]byte{opDrop},     // Required OP_DROP
+			makeP2PKHScript(),  // Required P2PKH suffix
 		)
 
 		op, parsedName, parsedValue, err := parseNameScript(script)
@@ -299,6 +359,9 @@ func TestParseNameScript_PushDataFormats(t *testing.T) {
 			[]byte{opNameUpdate},
 			pushData([]byte(name)),
 			pushData([]byte(value)),
+			[]byte{op2Drop},    // Required OP_2DROP
+			[]byte{opDrop},     // Required OP_DROP
+			makeP2PKHScript(),  // Required P2PKH suffix
 		)
 
 		op, parsedName, parsedValue, err := parseNameScript(script)
@@ -328,6 +391,9 @@ func TestParseNameScript_PushDataFormats(t *testing.T) {
 			[]byte{opNameUpdate},
 			pushData([]byte(name)),
 			pushData([]byte(value)),
+			[]byte{op2Drop},    // Required OP_2DROP
+			[]byte{opDrop},     // Required OP_DROP
+			makeP2PKHScript(),  // Required P2PKH suffix
 		)
 
 		op, parsedName, parsedValue, err := parseNameScript(script)
@@ -723,12 +789,7 @@ func TestNameFirstUpdateCrossNetworkValidation(t *testing.T) {
 
 	// Create a NAME_FIRSTUPDATE transaction using the mainnet commitment
 	value := `{"ip":"1.2.3.4"}`
-	script := buildScript(
-		[]byte{opNameFirstUpdate},
-		pushData([]byte(nameStr)),
-		pushData(rand),
-		pushData([]byte(value)),
-	)
+	script := buildNameFirstUpdateScript([]byte(nameStr), rand, []byte(value))
 
 	msgBlock := wire.NewMsgBlock(&wire.BlockHeader{})
 	tx := wire.NewMsgTx(1)
@@ -757,10 +818,7 @@ func TestParseNameScriptFull_NameNew(t *testing.T) {
 		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
 		0x11, 0x12, 0x13, 0x14}
 
-	script := buildScript(
-		[]byte{opNameNew},
-		pushData(hash),
-	)
+	script := buildNameNewScript(hash)
 
 	op, name, value, extra, err := parseNameScriptFull(script)
 	if err != nil {
@@ -794,12 +852,7 @@ func TestParseNameScriptFull_NameFirstUpdate(t *testing.T) {
 		0x11, 0x12, 0x13, 0x14}
 	value := `{"ip":"1.2.3.4"}`
 
-	script := buildScript(
-		[]byte{opNameFirstUpdate},
-		pushData([]byte(name)),
-		pushData(rand),
-		pushData([]byte(value)),
-	)
+	script := buildNameFirstUpdateScript([]byte(name), rand, []byte(value))
 
 	op, parsedName, parsedValue, extra, err := parseNameScriptFull(script)
 	if err != nil {
@@ -830,11 +883,7 @@ func TestParseNameScriptFull_NameUpdate(t *testing.T) {
 	name := "d/example"
 	value := `{"ip":"5.6.7.8"}`
 
-	script := buildScript(
-		[]byte{opNameUpdate},
-		pushData([]byte(name)),
-		pushData([]byte(value)),
-	)
+	script := buildNameUpdateScript([]byte(name), []byte(value))
 
 	op, parsedName, parsedValue, extra, err := parseNameScriptFull(script)
 	if err != nil {
@@ -891,10 +940,7 @@ func TestRollbackNameNew(t *testing.T) {
 	// Create a block with the NAME_NEW
 	msgBlock := wire.NewMsgBlock(&wire.BlockHeader{})
 	tx := wire.NewMsgTx(1)
-	script := buildScript(
-		[]byte{opNameNew},
-		pushData(commitHash),
-	)
+	script := buildNameNewScript(commitHash)
 	tx.AddTxOut(wire.NewTxOut(config.DustLimit, script))
 	msgBlock.AddTransaction(tx)
 
@@ -968,12 +1014,7 @@ func TestRollbackNameFirstUpdate(t *testing.T) {
 	// Create a block with the NAME_FIRSTUPDATE
 	msgBlock := wire.NewMsgBlock(&wire.BlockHeader{})
 	tx := wire.NewMsgTx(1)
-	script := buildScript(
-		[]byte{opNameFirstUpdate},
-		pushData([]byte(nameStr)),
-		pushData(rand),
-		pushData([]byte(value)),
-	)
+	script := buildNameFirstUpdateScript([]byte(nameStr), rand, []byte(value))
 	tx.AddTxOut(wire.NewTxOut(config.DustLimit, script))
 	msgBlock.AddTransaction(tx)
 
@@ -1089,11 +1130,7 @@ func TestRollbackNameUpdate(t *testing.T) {
 	// Create a block with the NAME_UPDATE
 	msgBlock := wire.NewMsgBlock(&wire.BlockHeader{})
 	tx := wire.NewMsgTx(1)
-	script := buildScript(
-		[]byte{opNameUpdate},
-		pushData([]byte(nameStr)),
-		pushData([]byte(updatedValue)),
-	)
+	script := buildNameUpdateScript([]byte(nameStr), []byte(updatedValue))
 	tx.AddTxOut(wire.NewTxOut(config.DustLimit, script))
 	msgBlock.AddTransaction(tx)
 
@@ -1184,21 +1221,13 @@ func TestRollbackSameBlockNameNewAndFirstUpdate(t *testing.T) {
 
 	// First transaction: NAME_NEW
 	tx1 := wire.NewMsgTx(1)
-	nameNewScript := buildScript(
-		[]byte{opNameNew},
-		pushData(commitHash), // The commitment hash
-	)
+	nameNewScript := buildNameNewScript(commitHash) // The commitment hash
 	tx1.AddTxOut(wire.NewTxOut(config.DustLimit, nameNewScript))
 	msgBlock.AddTransaction(tx1)
 
 	// Second transaction: NAME_FIRSTUPDATE that consumes the NAME_NEW
 	tx2 := wire.NewMsgTx(1)
-	firstUpdateScript := buildScript(
-		[]byte{opNameFirstUpdate},
-		pushData([]byte(nameStr)),
-		pushData(rand),
-		pushData([]byte(value)),
-	)
+	firstUpdateScript := buildNameFirstUpdateScript([]byte(nameStr), rand, []byte(value))
 	tx2.AddTxOut(wire.NewTxOut(config.DustLimit, firstUpdateScript))
 	msgBlock.AddTransaction(tx2)
 
@@ -1560,23 +1589,11 @@ func TestNameOperationDustLimitValidation(t *testing.T) {
 		switch opType {
 		case namedb.NameNew:
 			commitHash := make([]byte, 20)
-			script = buildScript(
-				[]byte{opNameNew},
-				pushData(commitHash),
-			)
+			script = buildNameNewScript(commitHash)
 		case namedb.NameFirstUpdate:
-			script = buildScript(
-				[]byte{opNameFirstUpdate},
-				pushData([]byte(nameStr)),
-				pushData(rand),
-				pushData([]byte(value)),
-			)
+			script = buildNameFirstUpdateScript([]byte(nameStr), rand, []byte(value))
 		case namedb.NameUpdate:
-			script = buildScript(
-				[]byte{opNameUpdate},
-				pushData([]byte(nameStr)),
-				pushData([]byte(value)),
-			)
+			script = buildNameUpdateScript([]byte(nameStr), []byte(value))
 		}
 
 		tx := wire.NewMsgTx(1)
@@ -1796,11 +1813,7 @@ func TestNameOperationDustLimitValidation(t *testing.T) {
 				// Create NAME_UPDATE block with custom name for this test
 				updateHeight := nameHeight + 50
 
-				script := buildScript(
-					[]byte{opNameUpdate},
-					pushData([]byte(nameStr)),
-					pushData([]byte(`{"ip":"5.6.7.8"}`)),
-				)
+				script := buildNameUpdateScript([]byte(nameStr), []byte(`{"ip":"5.6.7.8"}`))
 
 				tx := wire.NewMsgTx(1)
 				// Add input that spends the current name UTXO
@@ -2690,6 +2703,9 @@ func TestNameUpdateUTXOChainValidation(t *testing.T) {
 			[]byte{opNameUpdate},
 			pushData([]byte(nameStr)),
 			pushData([]byte(updatedValue)),
+			[]byte{op2Drop},    // Required OP_2DROP
+			[]byte{opDrop},     // Required OP_DROP
+			makeP2PKHScript(),  // Required P2PKH suffix
 		)
 
 		tx := wire.NewMsgTx(1)
@@ -2734,6 +2750,9 @@ func TestNameUpdateUTXOChainValidation(t *testing.T) {
 			[]byte{opNameUpdate},
 			pushData([]byte(nameStr)),
 			pushData([]byte(updatedValue)),
+			[]byte{op2Drop},    // Required OP_2DROP
+			[]byte{opDrop},     // Required OP_DROP
+			makeP2PKHScript(),  // Required P2PKH suffix
 		)
 
 		tx := wire.NewMsgTx(1)
@@ -2776,6 +2795,9 @@ func TestNameUpdateUTXOChainValidation(t *testing.T) {
 			[]byte{opNameUpdate},
 			pushData([]byte(nameStr)),
 			pushData([]byte(updatedValue)),
+			[]byte{op2Drop},    // Required OP_2DROP
+			[]byte{opDrop},     // Required OP_DROP
+			makeP2PKHScript(),  // Required P2PKH suffix
 		)
 
 		tx := wire.NewMsgTx(1)
@@ -2812,6 +2834,9 @@ func TestNameUpdateUTXOChainValidation(t *testing.T) {
 			[]byte{opNameUpdate},
 			pushData([]byte(nameStr)),
 			pushData([]byte(updatedValue)),
+			[]byte{op2Drop},    // Required OP_2DROP
+			[]byte{opDrop},     // Required OP_DROP
+			makeP2PKHScript(),  // Required P2PKH suffix
 		)
 
 		tx := wire.NewMsgTx(1)
@@ -2852,6 +2877,349 @@ func TestNameUpdateUTXOChainValidation(t *testing.T) {
 		err := bc.validateNameOperations(utilBlock)
 		if err != nil {
 			t.Errorf("expected no error for multiple inputs with correct UTXO, got: %v", err)
+		}
+	})
+}
+
+// TestStrictScriptValidation tests strict script format validation for name operations.
+// This ensures compliance with Namecoin Core consensus rules by rejecting scripts
+// with missing, extra, or malformed drop opcodes.
+func TestStrictScriptValidation(t *testing.T) {
+	// Standard P2PKH script for testing (25 bytes)
+	// OP_DUP OP_HASH160 <20 bytes> OP_EQUALVERIFY OP_CHECKSIG
+	p2pkhScript := []byte{
+		0x76, 0xa9, 0x14, // OP_DUP OP_HASH160 OP_PUSHDATA(20)
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
+		0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, // 20 bytes of hash
+		0x88, 0xac, // OP_EQUALVERIFY OP_CHECKSIG
+	}
+
+	t.Run("NAME_NEW valid format", func(t *testing.T) {
+		hash := make([]byte, 20)
+		script := buildScript(
+			[]byte{opNameNew},
+			pushData(hash),
+			[]byte{op2Drop}, // Required OP_2DROP
+			p2pkhScript,
+		)
+
+		op, _, _, _, err := parseNameScriptFull(script)
+		if err != nil {
+			t.Errorf("valid NAME_NEW script failed: %v", err)
+		}
+		if op != namedb.NameNew {
+			t.Errorf("expected NameNew, got %v", op)
+		}
+	})
+
+	t.Run("NAME_NEW missing OP_2DROP", func(t *testing.T) {
+		hash := make([]byte, 20)
+		script := buildScript(
+			[]byte{opNameNew},
+			pushData(hash),
+			// Missing OP_2DROP
+			p2pkhScript,
+		)
+
+		_, _, _, _, err := parseNameScriptFull(script)
+		if err == nil {
+			t.Error("expected error for NAME_NEW missing OP_2DROP, got nil")
+		}
+		if !strings.Contains(err.Error(), "missing required OP_2DROP") {
+			t.Errorf("expected missing OP_2DROP error, got: %v", err)
+		}
+	})
+
+	t.Run("NAME_NEW wrong drop opcode", func(t *testing.T) {
+		hash := make([]byte, 20)
+		script := buildScript(
+			[]byte{opNameNew},
+			pushData(hash),
+			[]byte{opDrop}, // Wrong - should be OP_2DROP
+			p2pkhScript,
+		)
+
+		_, _, _, _, err := parseNameScriptFull(script)
+		if err == nil {
+			t.Error("expected error for NAME_NEW with wrong drop opcode, got nil")
+		}
+		if !strings.Contains(err.Error(), "missing required OP_2DROP") {
+			t.Errorf("expected missing OP_2DROP error, got: %v", err)
+		}
+	})
+
+	t.Run("NAME_NEW missing P2PKH suffix", func(t *testing.T) {
+		hash := make([]byte, 20)
+		script := buildScript(
+			[]byte{opNameNew},
+			pushData(hash),
+			[]byte{op2Drop},
+			// Missing or too short P2PKH
+		)
+
+		_, _, _, _, err := parseNameScriptFull(script)
+		if err == nil {
+			t.Error("expected error for NAME_NEW missing P2PKH suffix, got nil")
+		}
+		if !strings.Contains(err.Error(), "P2PKH suffix too short") {
+			t.Errorf("expected P2PKH suffix error, got: %v", err)
+		}
+	})
+
+	t.Run("NAME_FIRSTUPDATE valid format", func(t *testing.T) {
+		nameBytes := []byte("d/example")
+		rand := make([]byte, 20)
+		valueBytes := []byte(`{"ip":"1.2.3.4"}`)
+
+		script := buildScript(
+			[]byte{opNameFirstUpdate},
+			pushData(nameBytes),
+			pushData(rand),
+			pushData(valueBytes),
+			[]byte{op2Drop}, // Required first OP_2DROP
+			[]byte{op2Drop}, // Required second OP_2DROP
+			p2pkhScript,
+		)
+
+		op, name, value, _, err := parseNameScriptFull(script)
+		if err != nil {
+			t.Errorf("valid NAME_FIRSTUPDATE script failed: %v", err)
+		}
+		if op != namedb.NameFirstUpdate {
+			t.Errorf("expected NameFirstUpdate, got %v", op)
+		}
+		if name != "d/example" {
+			t.Errorf("expected name 'd/example', got %q", name)
+		}
+		if value != `{"ip":"1.2.3.4"}` {
+			t.Errorf("expected value %q, got %q", `{"ip":"1.2.3.4"}`, value)
+		}
+	})
+
+	t.Run("NAME_FIRSTUPDATE missing first OP_2DROP", func(t *testing.T) {
+		nameBytes := []byte("d/example")
+		rand := make([]byte, 20)
+		valueBytes := []byte(`{"ip":"1.2.3.4"}`)
+
+		script := buildScript(
+			[]byte{opNameFirstUpdate},
+			pushData(nameBytes),
+			pushData(rand),
+			pushData(valueBytes),
+			// Missing first OP_2DROP
+			[]byte{op2Drop}, // Only second OP_2DROP present (but in wrong position)
+			p2pkhScript,
+		)
+
+		_, _, _, _, err := parseNameScriptFull(script)
+		if err == nil {
+			t.Error("expected error for NAME_FIRSTUPDATE missing first OP_2DROP, got nil")
+		}
+		// When first OP_2DROP is missing, the second one appears where the first should be,
+		// so we detect the missing second OP_2DROP
+		if !strings.Contains(err.Error(), "OP_2DROP") {
+			t.Errorf("expected OP_2DROP error, got: %v", err)
+		}
+	})
+
+	t.Run("NAME_FIRSTUPDATE missing second OP_2DROP", func(t *testing.T) {
+		nameBytes := []byte("d/example")
+		rand := make([]byte, 20)
+		valueBytes := []byte(`{"ip":"1.2.3.4"}`)
+
+		script := buildScript(
+			[]byte{opNameFirstUpdate},
+			pushData(nameBytes),
+			pushData(rand),
+			pushData(valueBytes),
+			[]byte{op2Drop}, // First OP_2DROP present
+			// Missing second OP_2DROP
+			p2pkhScript,
+		)
+
+		_, _, _, _, err := parseNameScriptFull(script)
+		if err == nil {
+			t.Error("expected error for NAME_FIRSTUPDATE missing second OP_2DROP, got nil")
+		}
+		if !strings.Contains(err.Error(), "missing second OP_2DROP") {
+			t.Errorf("expected missing second OP_2DROP error, got: %v", err)
+		}
+	})
+
+	t.Run("NAME_FIRSTUPDATE missing both OP_2DROP opcodes", func(t *testing.T) {
+		nameBytes := []byte("d/example")
+		rand := make([]byte, 20)
+		valueBytes := []byte(`{"ip":"1.2.3.4"}`)
+
+		script := buildScript(
+			[]byte{opNameFirstUpdate},
+			pushData(nameBytes),
+			pushData(rand),
+			pushData(valueBytes),
+			// Missing both OP_2DROP opcodes
+			p2pkhScript,
+		)
+
+		_, _, _, _, err := parseNameScriptFull(script)
+		if err == nil {
+			t.Error("expected error for NAME_FIRSTUPDATE missing both OP_2DROP opcodes, got nil")
+		}
+		if !strings.Contains(err.Error(), "missing first OP_2DROP") {
+			t.Errorf("expected missing first OP_2DROP error, got: %v", err)
+		}
+	})
+
+	t.Run("NAME_UPDATE valid format", func(t *testing.T) {
+		nameBytes := []byte("d/example")
+		valueBytes := []byte(`{"ip":"5.6.7.8"}`)
+
+		script := buildScript(
+			[]byte{opNameUpdate},
+			pushData(nameBytes),
+			pushData(valueBytes),
+			[]byte{op2Drop}, // Required OP_2DROP
+			[]byte{opDrop},  // Required OP_DROP
+			p2pkhScript,
+		)
+
+		op, name, value, _, err := parseNameScriptFull(script)
+		if err != nil {
+			t.Errorf("valid NAME_UPDATE script failed: %v", err)
+		}
+		if op != namedb.NameUpdate {
+			t.Errorf("expected NameUpdate, got %v", op)
+		}
+		if name != "d/example" {
+			t.Errorf("expected name 'd/example', got %q", name)
+		}
+		if value != `{"ip":"5.6.7.8"}` {
+			t.Errorf("expected value %q, got %q", `{"ip":"5.6.7.8"}`, value)
+		}
+	})
+
+	t.Run("NAME_UPDATE missing OP_2DROP", func(t *testing.T) {
+		nameBytes := []byte("d/example")
+		valueBytes := []byte(`{"ip":"5.6.7.8"}`)
+
+		script := buildScript(
+			[]byte{opNameUpdate},
+			pushData(nameBytes),
+			pushData(valueBytes),
+			// Missing OP_2DROP
+			[]byte{opDrop}, // Only OP_DROP present
+			p2pkhScript,
+		)
+
+		_, _, _, _, err := parseNameScriptFull(script)
+		if err == nil {
+			t.Error("expected error for NAME_UPDATE missing OP_2DROP, got nil")
+		}
+		if !strings.Contains(err.Error(), "missing required OP_2DROP") {
+			t.Errorf("expected missing OP_2DROP error, got: %v", err)
+		}
+	})
+
+	t.Run("NAME_UPDATE missing OP_DROP", func(t *testing.T) {
+		nameBytes := []byte("d/example")
+		valueBytes := []byte(`{"ip":"5.6.7.8"}`)
+
+		script := buildScript(
+			[]byte{opNameUpdate},
+			pushData(nameBytes),
+			pushData(valueBytes),
+			[]byte{op2Drop}, // OP_2DROP present
+			// Missing OP_DROP
+			p2pkhScript,
+		)
+
+		_, _, _, _, err := parseNameScriptFull(script)
+		if err == nil {
+			t.Error("expected error for NAME_UPDATE missing OP_DROP, got nil")
+		}
+		if !strings.Contains(err.Error(), "missing required OP_DROP") {
+			t.Errorf("expected missing required OP_DROP error, got: %v", err)
+		}
+	})
+
+	t.Run("NAME_UPDATE missing both drop opcodes", func(t *testing.T) {
+		nameBytes := []byte("d/example")
+		valueBytes := []byte(`{"ip":"5.6.7.8"}`)
+
+		script := buildScript(
+			[]byte{opNameUpdate},
+			pushData(nameBytes),
+			pushData(valueBytes),
+			// Missing both OP_2DROP and OP_DROP
+			p2pkhScript,
+		)
+
+		_, _, _, _, err := parseNameScriptFull(script)
+		if err == nil {
+			t.Error("expected error for NAME_UPDATE missing both drop opcodes, got nil")
+		}
+		if !strings.Contains(err.Error(), "missing required OP_2DROP") {
+			t.Errorf("expected missing OP_2DROP error, got: %v", err)
+		}
+	})
+
+	t.Run("NAME_UPDATE wrong order of drop opcodes", func(t *testing.T) {
+		nameBytes := []byte("d/example")
+		valueBytes := []byte(`{"ip":"5.6.7.8"}`)
+
+		script := buildScript(
+			[]byte{opNameUpdate},
+			pushData(nameBytes),
+			pushData(valueBytes),
+			[]byte{opDrop},  // Wrong - should be OP_2DROP first
+			[]byte{op2Drop}, // Wrong - should be OP_DROP second
+			p2pkhScript,
+		)
+
+		_, _, _, _, err := parseNameScriptFull(script)
+		if err == nil {
+			t.Error("expected error for NAME_UPDATE with wrong drop opcode order, got nil")
+		}
+		if !strings.Contains(err.Error(), "missing required OP_2DROP") {
+			t.Errorf("expected missing OP_2DROP error, got: %v", err)
+		}
+	})
+
+	t.Run("script ending at drop opcodes without P2PKH", func(t *testing.T) {
+		hash := make([]byte, 20)
+		script := buildScript(
+			[]byte{opNameNew},
+			pushData(hash),
+			[]byte{op2Drop},
+			// P2PKH too short (less than 25 bytes)
+			[]byte{0x76, 0xa9}, // Just 2 bytes
+		)
+
+		_, _, _, _, err := parseNameScriptFull(script)
+		if err == nil {
+			t.Error("expected error for script with insufficient P2PKH suffix, got nil")
+		}
+		if !strings.Contains(err.Error(), "P2PKH suffix too short") {
+			t.Errorf("expected P2PKH suffix error, got: %v", err)
+		}
+	})
+
+	t.Run("extra opcodes after drop opcodes should still work if P2PKH valid", func(t *testing.T) {
+		// Extra opcodes in the P2PKH portion are allowed - we only validate minimum size
+		hash := make([]byte, 20)
+		script := buildScript(
+			[]byte{opNameNew},
+			pushData(hash),
+			[]byte{op2Drop},
+			p2pkhScript,
+			[]byte{0x00, 0x00}, // Extra bytes after P2PKH - should be allowed
+		)
+
+		op, _, _, _, err := parseNameScriptFull(script)
+		if err != nil {
+			t.Errorf("script with extra bytes after valid P2PKH should parse: %v", err)
+		}
+		if op != namedb.NameNew {
+			t.Errorf("expected NameNew, got %v", op)
 		}
 	})
 }

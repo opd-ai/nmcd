@@ -513,6 +513,12 @@ const (
 
 	// opPushData4 is the opcode for pushing up to 4GB of data (rarely used)
 	opPushData4 = 0x4e
+
+	// opDrop removes the top stack item
+	opDrop = 0x75
+
+	// op2Drop removes the top two stack items
+	op2Drop = 0x6d
 )
 
 // computeCommitHash computes the NAME_NEW commitment hash with chain ID.
@@ -553,31 +559,102 @@ func parseNameScript(script []byte) (namedb.NameOperation, string, string, error
 	return op, name, value, err
 }
 
+// validateScriptFormat validates the strict format of a Namecoin name operation script.
+// This enforces consensus rules by ensuring drop opcodes and P2PKH suffix are correctly placed.
+// Returns the offset after the drop opcodes where the P2PKH script begins, or an error if invalid.
+//
+// Expected formats per Namecoin Core:
+//   - NAME_NEW: OP_NAME_NEW <hash> OP_2DROP <P2PKH>
+//   - NAME_FIRSTUPDATE: OP_NAME_FIRSTUPDATE <name> <rand> <value> OP_2DROP OP_2DROP <P2PKH>
+//   - NAME_UPDATE: OP_NAME_UPDATE <name> <value> OP_2DROP OP_DROP <P2PKH>
+//
+// The P2PKH suffix must be at least 25 bytes (standard P2PKH script size).
+func validateScriptFormat(script []byte, opType namedb.NameOperation, dataEndOffset int) (int, error) {
+	if dataEndOffset >= len(script) {
+		return 0, fmt.Errorf("script ends after name operation data, missing drop opcodes")
+	}
+
+	offset := dataEndOffset
+
+	switch opType {
+	case namedb.NameNew:
+		// NAME_NEW requires OP_2DROP after the hash
+		if offset >= len(script) || script[offset] != op2Drop {
+			return 0, fmt.Errorf("NAME_NEW script missing required OP_2DROP (0x6d) at offset %d", offset)
+		}
+		offset++
+
+	case namedb.NameFirstUpdate:
+		// NAME_FIRSTUPDATE requires OP_2DROP OP_2DROP after name, rand, value
+		if offset >= len(script) || script[offset] != op2Drop {
+			return 0, fmt.Errorf("NAME_FIRSTUPDATE script missing first OP_2DROP (0x6d) at offset %d", offset)
+		}
+		offset++
+		if offset >= len(script) || script[offset] != op2Drop {
+			return 0, fmt.Errorf("NAME_FIRSTUPDATE script missing second OP_2DROP (0x6d) at offset %d", offset)
+		}
+		offset++
+
+	case namedb.NameUpdate:
+		// NAME_UPDATE requires OP_2DROP OP_DROP after name and value
+		if offset >= len(script) || script[offset] != op2Drop {
+			return 0, fmt.Errorf("NAME_UPDATE script missing required OP_2DROP (0x6d) at offset %d", offset)
+		}
+		offset++
+		if offset >= len(script) || script[offset] != opDrop {
+			return 0, fmt.Errorf("NAME_UPDATE script missing required OP_DROP (0x75) at offset %d", offset)
+		}
+		offset++
+
+	default:
+		return 0, fmt.Errorf("unknown name operation type: %d", opType)
+	}
+
+	// Validate P2PKH suffix exists and has minimum valid length
+	// Standard P2PKH script is 25 bytes: OP_DUP OP_HASH160 <20 bytes> OP_EQUALVERIFY OP_CHECKSIG
+	const minP2PKHSize = 25
+	remainingBytes := len(script) - offset
+	if remainingBytes < minP2PKHSize {
+		return 0, fmt.Errorf("P2PKH suffix too short: %d bytes (minimum %d bytes required)", remainingBytes, minP2PKHSize)
+	}
+
+	return offset, nil
+}
+
 // parseNameScriptFull extracts name operation from script with additional data.
 // Returns the operation type, name, value, extra data (hash for NAME_NEW, rand for
 // NAME_FIRSTUPDATE), and any parsing error.
+//
+// This function enforces strict script format validation per Namecoin Core consensus rules.
+// Scripts must include proper drop opcodes (OP_2DROP, OP_DROP) and P2PKH suffix.
 func parseNameScriptFull(script []byte) (namedb.NameOperation, string, string, []byte, error) {
 	if len(script) < 2 {
 		return 0, "", "", nil, fmt.Errorf("script too short")
 	}
 
+	var opType namedb.NameOperation
+	var name, value string
+	var extra []byte
+	var dataEndOffset int
+
 	switch script[0] {
 	case opNameNew:
-		// NAME_NEW: OP_NAME_NEW <hash> ...
+		// NAME_NEW: OP_NAME_NEW <hash> OP_2DROP <P2PKH>
 		// Extract the commitment hash (typically 20 bytes)
-		hash, _, err := readPushData(script, 1)
+		hash, newOffset, err := readPushData(script, 1)
 		if err != nil {
 			return 0, "", "", nil, fmt.Errorf("failed to read hash: %w", err)
 		}
-		return namedb.NameNew, "", "", hash, nil
+		opType = namedb.NameNew
+		extra = hash
+		dataEndOffset = newOffset
 
 	case opNameFirstUpdate:
-		// NAME_FIRSTUPDATE: OP_NAME_FIRSTUPDATE <name> <rand> <value> ...
-		// Parse: name, rand, value
+		// NAME_FIRSTUPDATE: OP_NAME_FIRSTUPDATE <name> <rand> <value> OP_2DROP OP_2DROP <P2PKH>
 		offset := 1
 
 		// Extract name
-		name, newOffset, err := readPushData(script, offset)
+		nameBytes, newOffset, err := readPushData(script, offset)
 		if err != nil {
 			return 0, "", "", nil, fmt.Errorf("failed to read name: %w", err)
 		}
@@ -591,34 +668,50 @@ func parseNameScriptFull(script []byte) (namedb.NameOperation, string, string, [
 		offset = newOffset
 
 		// Extract value
-		value, _, err := readPushData(script, offset)
+		valueBytes, newOffset, err := readPushData(script, offset)
 		if err != nil {
 			return 0, "", "", nil, fmt.Errorf("failed to read value: %w", err)
 		}
 
-		return namedb.NameFirstUpdate, string(name), string(value), rand, nil
+		opType = namedb.NameFirstUpdate
+		name = string(nameBytes)
+		value = string(valueBytes)
+		extra = rand
+		dataEndOffset = newOffset
 
 	case opNameUpdate:
-		// NAME_UPDATE: OP_NAME_UPDATE <name> <value> ...
+		// NAME_UPDATE: OP_NAME_UPDATE <name> <value> OP_2DROP OP_DROP <P2PKH>
 		offset := 1
 
 		// Extract name
-		name, newOffset, err := readPushData(script, offset)
+		nameBytes, newOffset, err := readPushData(script, offset)
 		if err != nil {
 			return 0, "", "", nil, fmt.Errorf("failed to read name: %w", err)
 		}
 		offset = newOffset
 
 		// Extract value
-		value, _, err := readPushData(script, offset)
+		valueBytes, newOffset, err := readPushData(script, offset)
 		if err != nil {
 			return 0, "", "", nil, fmt.Errorf("failed to read value: %w", err)
 		}
 
-		return namedb.NameUpdate, string(name), string(value), nil, nil
+		opType = namedb.NameUpdate
+		name = string(nameBytes)
+		value = string(valueBytes)
+		dataEndOffset = newOffset
+
+	default:
+		return 0, "", "", nil, fmt.Errorf("not a name operation")
 	}
 
-	return 0, "", "", nil, fmt.Errorf("not a name operation")
+	// Validate strict script format (drop opcodes and P2PKH suffix)
+	_, err := validateScriptFormat(script, opType, dataEndOffset)
+	if err != nil {
+		return 0, "", "", nil, fmt.Errorf("invalid script format: %w", err)
+	}
+
+	return opType, name, value, extra, nil
 }
 
 // extractAddressFromNameScript extracts the owner address from a name operation script.
@@ -627,10 +720,8 @@ func parseNameScriptFull(script []byte) (namedb.NameOperation, string, string, [
 // the address from the embedded P2PKH script.
 // Returns an empty string if the address cannot be extracted.
 //
-// Note: This function is intentionally lenient with drop opcodes. If drop opcodes
-// are missing or different than expected, it still attempts to extract an address
-// from whatever remains. This is appropriate for parsing blockchain data where
-// scripts may have minor variations.
+// Note: This function is called after script validation, so it can safely skip
+// past the drop opcodes that have already been validated by parseNameScriptFull.
 func extractAddressFromNameScript(script []byte, chainParams *chaincfg.Params) string {
 	if len(script) < 2 || chainParams == nil {
 		return ""
