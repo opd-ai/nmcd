@@ -53,6 +53,7 @@ type NameRecord struct {
 	Name      string
 	Value     string
 	TxHash    chainhash.Hash
+	OutIndex  uint32         // Output index of the UTXO that owns this name
 	Height    int32
 	ExpiresAt int32
 	Address   string
@@ -418,11 +419,11 @@ func (ndb *NameDatabase) RemoveLastHistoryEntry(name string) (*NameRecord, error
 
 // encodeNameRecord serializes a name record
 func encodeNameRecord(record *NameRecord) []byte {
-	// Version 1 encoding: version byte + value + txhash + height + expiresAt + address + timestamp
-	data := make([]byte, 0, 1+len(record.Value)+32+4+4+len(record.Address)+8)
+	// Version 2 encoding: version byte + value + txhash + outindex + height + expiresAt + address + timestamp
+	data := make([]byte, 0, 1+len(record.Value)+32+4+4+4+len(record.Address)+8)
 
-	// Version byte (v1)
-	data = append(data, byte(1))
+	// Version byte (v2)
+	data = append(data, byte(2))
 
 	// Value length + value
 	valLen := make([]byte, 4)
@@ -432,6 +433,11 @@ func encodeNameRecord(record *NameRecord) []byte {
 
 	// TxHash
 	data = append(data, record.TxHash[:]...)
+
+	// OutIndex (new in v2)
+	outIndex := make([]byte, 4)
+	binary.LittleEndian.PutUint32(outIndex, record.OutIndex)
+	data = append(data, outIndex...)
 
 	// Height
 	height := make([]byte, 4)
@@ -459,6 +465,7 @@ func encodeNameRecord(record *NameRecord) []byte {
 
 // decodeNameRecord deserializes a name record.
 // Returns an error if the data is corrupt or truncated.
+// Supports both v1 (without OutIndex) and v2 (with OutIndex) formats for backwards compatibility.
 func decodeNameRecord(data []byte) (*NameRecord, error) {
 	if len(data) < 1 {
 		return nil, fmt.Errorf("corrupt record: empty data")
@@ -470,11 +477,12 @@ func decodeNameRecord(data []byte) (*NameRecord, error) {
 	version := data[offset]
 	offset++
 
-	// Handle legacy format (no version byte) - values > 1 indicate legacy format
+	// Handle legacy format (no version byte) - values > 2 indicate legacy format
 	// where the first byte is actually part of the value length, not a version byte
-	if version > 1 {
+	if version > 2 {
 		// Likely legacy format without version byte, rewind
 		offset = 0
+		version = 0 // Mark as legacy
 	}
 
 	record := &NameRecord{}
@@ -497,6 +505,15 @@ func decodeNameRecord(data []byte) (*NameRecord, error) {
 	}
 	copy(record.TxHash[:], data[offset:offset+32])
 	offset += 32
+
+	// OutIndex (only in v2+)
+	if version >= 2 {
+		if offset+4 > len(data) {
+			return nil, fmt.Errorf("corrupt record: truncated at outindex")
+		}
+		record.OutIndex = binary.LittleEndian.Uint32(data[offset : offset+4])
+		offset += 4
+	}
 
 	// Height
 	if offset+4 > len(data) {

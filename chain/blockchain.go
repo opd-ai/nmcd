@@ -214,6 +214,28 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 				if record.ExpiresAt <= height {
 					return fmt.Errorf("name expired: %s", name)
 				}
+
+				// UTXO chain validation: Verify the transaction spends the current name UTXO
+				// This prevents name theft by ensuring only the current owner can update
+				currentUTXO := wire.OutPoint{
+					Hash:  record.TxHash,
+					Index: record.OutIndex,
+				}
+				
+				// Check if any transaction input spends the current name UTXO
+				found := false
+				for _, txIn := range msgTx.TxIn {
+					if txIn.PreviousOutPoint.Hash.IsEqual(&currentUTXO.Hash) &&
+						txIn.PreviousOutPoint.Index == currentUTXO.Index {
+						found = true
+						break
+					}
+				}
+				
+				if !found {
+					return fmt.Errorf("name_update does not spend current name UTXO (tx=%s, out=%d): name theft attempt for %s",
+						currentUTXO.Hash.String(), currentUTXO.Index, name)
+				}
 			}
 
 			// Validate name format and value size (not applicable to NAME_NEW which has no name field)
@@ -385,6 +407,7 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 					Name:      name,
 					Value:     value,
 					TxHash:    *txHash,
+					OutIndex:  uint32(outIdx),
 					Height:    height,
 					ExpiresAt: height + config.NameExpirationBlocks,
 					Address:   address,
@@ -409,6 +432,7 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 					Name:      name,
 					Value:     value,
 					TxHash:    *txHash,
+					OutIndex:  uint32(outIdx),
 					Height:    height,
 					ExpiresAt: height + config.NameExpirationBlocks,
 					Address:   address,
