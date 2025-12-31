@@ -782,10 +782,10 @@ func validateNameFormat(name, value string) error {
 }
 
 // validateValueEncoding validates the encoding of a name value based on its namespace.
-// Per Namecoin protocol:
-// - d/ (domain) namespace: values must be valid UTF-8 and should be valid JSON for DNS records
-// - id/ (identity) namespace: values must be valid UTF-8 and should be valid JSON
-// - p/ (personal) namespace: values must be valid UTF-8, JSON recommended but not required
+// Per this implementation:
+// - d/ (domain) namespace: values must be valid UTF-8 and must be valid JSON for DNS records
+// - id/ (identity) namespace: values must be valid UTF-8 and must be valid JSON
+// - p/ (personal) namespace: values must be valid UTF-8; JSON is optional and not enforced
 func validateValueEncoding(name, value string) error {
 	// Empty values are allowed (deletion/reservation pattern)
 	if len(value) == 0 {
@@ -799,11 +799,17 @@ func validateValueEncoding(name, value string) error {
 
 	// For d/ (domain) and id/ (identity) namespaces, validate JSON encoding
 	// These namespaces store structured data (DNS records, identity records)
-	if len(name) >= 2 && (name[:2] == "d/" || name[:3] == "id/") {
+	if (len(name) >= 2 && name[:2] == "d/") || (len(name) >= 3 && name[:3] == "id/") {
 		// Attempt to parse as JSON
 		var jsonData interface{}
 		if err := json.Unmarshal([]byte(value), &jsonData); err != nil {
-			return fmt.Errorf("value must be valid JSON for %s namespace: %w", name[:2], err)
+			ns := "specified"
+			if len(name) >= 2 && name[:2] == "d/" {
+				ns = "d/"
+			} else if len(name) >= 3 && name[:3] == "id/" {
+				ns = "id/"
+			}
+			return fmt.Errorf("value must be valid JSON for %s namespace: %w", ns, err)
 		}
 	}
 

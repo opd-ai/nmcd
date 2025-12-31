@@ -447,7 +447,7 @@ Implemented comprehensive value encoding validation with the following changes:
 
 **Implementation:**
 ```go
-// chain/blockchain.go:775-818
+// chain/blockchain.go:784-818
 func validateValueEncoding(name, value string) error {
     // Empty values are allowed (deletion/reservation pattern)
     if len(value) == 0 {
@@ -461,11 +461,17 @@ func validateValueEncoding(name, value string) error {
 
     // For d/ (domain) and id/ (identity) namespaces, validate JSON encoding
     // These namespaces store structured data (DNS records, identity records)
-    if len(name) >= 2 && (name[:2] == "d/" || name[:3] == "id/") {
+    if (len(name) >= 2 && name[:2] == "d/") || (len(name) >= 3 && name[:3] == "id/") {
         // Attempt to parse as JSON
         var jsonData interface{}
         if err := json.Unmarshal([]byte(value), &jsonData); err != nil {
-            return fmt.Errorf("value must be valid JSON for %s namespace: %w", name[:2], err)
+            ns := "specified"
+            if len(name) >= 2 && name[:2] == "d/" {
+                ns = "d/"
+            } else if len(name) >= 3 && name[:3] == "id/" {
+                ns = "id/"
+            }
+            return fmt.Errorf("value must be valid JSON for %s namespace: %w", ns, err)
         }
     }
 
