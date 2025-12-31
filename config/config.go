@@ -32,6 +32,18 @@ const (
 	// this limit are considered dust and will be rejected to prevent spam and
 	// uneconomical UTXO creation.
 	DustLimit = 546
+
+	// MinNameOperationFee is the minimum transaction fee for NAME_FIRSTUPDATE
+	// and NAME_UPDATE operations (in satoshis).
+	// Per Namecoin protocol, these operations require a 0.01 NMC fee to prevent spam.
+	// This fee is destroyed (burned) as the difference between inputs and outputs,
+	// not paid to miners. 0.01 NMC = 1,000,000 satoshis (1 NMC = 100,000,000 satoshis)
+	MinNameOperationFee = 1000000 // 0.01 NMC in satoshis
+
+	// MinRelayTxFee is the minimum transaction fee for NAME_NEW and standard
+	// transactions (in satoshis). This follows Bitcoin's minimum relay fee.
+	// NAME_NEW operations only need to pay standard transaction fees to miners.
+	MinRelayTxFee = 1000 // Standard minimum relay fee
 )
 
 // ValidNamespaces defines the allowed namespace prefixes for Namecoin names

@@ -108,8 +108,29 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 	// Using string conversion of byte slice as map key is idiomatic in Go.
 	seenNameNewCommits := make(map[string]bool)
 
-	for _, tx := range block.Transactions() {
+	for txIdx, tx := range block.Transactions() {
 		msgTx := tx.MsgTx()
+
+		// Detect and validate name operations in transaction outputs
+		var hasNameOperation bool
+		var nameOpType namedb.NameOperation
+		for _, txOut := range msgTx.TxOut {
+			op, _, _, _, err := parseNameScriptFull(txOut.PkScript)
+			if err != nil {
+				continue // Not a name operation
+			}
+			hasNameOperation = true
+			nameOpType = op
+			break // Only need to know if transaction has a name operation
+		}
+
+		// Validate transaction fee for name operations
+		// Skip coinbase transaction (no inputs to validate)
+		if hasNameOperation && txIdx > 0 {
+			if err := bc.validateTransactionFee(msgTx, nameOpType, height); err != nil {
+				return fmt.Errorf("invalid transaction fee for %s: %w", nameOpType, err)
+			}
+		}
 
 		// Check for name operations in transaction outputs
 		for _, txOut := range msgTx.TxOut {
@@ -201,6 +222,73 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 				}
 			}
 		}
+	}
+
+	return nil
+}
+
+// validateTransactionFee validates that a transaction with name operations
+// pays the required minimum fee. Transaction fee is calculated as:
+// fee = total_input_value - total_output_value
+//
+// Fee requirements per Namecoin protocol:
+// - NAME_NEW: Standard minimum relay fee (1000 satoshis)
+// - NAME_FIRSTUPDATE: 0.01 NMC (1,000,000 satoshis) network fee (destroyed/burned)
+// - NAME_UPDATE: 0.01 NMC (1,000,000 satoshis) network fee (destroyed/burned)
+//
+// The network fee for NAME_FIRSTUPDATE and NAME_UPDATE is "destroyed" by making
+// it part of the transaction fee, which reduces the total coin supply.
+func (bc *BlockChain) validateTransactionFee(tx *wire.MsgTx, opType namedb.NameOperation, height int32) error {
+	// Calculate total input value by looking up previous outputs
+	var totalInputValue int64
+	for _, txIn := range tx.TxIn {
+		// Look up the UTXO being spent
+		utxo, err := bc.nameDB.GetUTXO(&txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index)
+		if err != nil {
+			// UTXO not found in our database. This could happen for:
+			// 1. Transactions from before we started tracking UTXOs
+			// 2. Blocks being validated before they're added to our UTXO set
+			// 3. Coinbase transactions (which have no previous output)
+			//
+			// For now, we skip fee validation if we can't find all inputs.
+			// A production implementation would query the full blockchain UTXO set.
+			// This is a known limitation documented in the audit.
+			log.Printf("Warning: Cannot validate transaction fee - UTXO not found: %s:%d",
+				txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index)
+			return nil
+		}
+		totalInputValue += utxo.Value
+	}
+
+	// Calculate total output value
+	var totalOutputValue int64
+	for _, txOut := range tx.TxOut {
+		totalOutputValue += txOut.Value
+	}
+
+	// Calculate fee (inputs - outputs)
+	fee := totalInputValue - totalOutputValue
+	if fee < 0 {
+		return fmt.Errorf("transaction fee cannot be negative: %d satoshis", fee)
+	}
+
+	// Validate minimum fee based on operation type
+	var minFee int64
+	switch opType {
+	case namedb.NameNew:
+		// NAME_NEW requires standard minimum relay fee
+		minFee = config.MinRelayTxFee
+	case namedb.NameFirstUpdate, namedb.NameUpdate:
+		// NAME_FIRSTUPDATE and NAME_UPDATE require 0.01 NMC network fee
+		minFee = config.MinNameOperationFee
+	default:
+		// Unknown operation type - should not happen
+		return fmt.Errorf("unknown name operation type: %d", opType)
+	}
+
+	if fee < minFee {
+		return fmt.Errorf("transaction fee %d satoshis below minimum %d satoshis for %s",
+			fee, minFee, opType)
 	}
 
 	return nil

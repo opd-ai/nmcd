@@ -832,3 +832,24 @@ func TestRemoveLastHistoryEntryNoHistory(t *testing.T) {
 		t.Errorf("Expected nil for non-existent name history, got %+v", prevRecord)
 	}
 }
+
+func TestNameOperationString(t *testing.T) {
+	tests := []struct {
+		op   NameOperation
+		want string
+	}{
+		{NameNew, "NAME_NEW"},
+		{NameFirstUpdate, "NAME_FIRSTUPDATE"},
+		{NameUpdate, "NAME_UPDATE"},
+		{NameOperation(99), "UnknownOperation(99)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			if got := tt.op.String(); got != tt.want {
+				t.Errorf("NameOperation.String() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
