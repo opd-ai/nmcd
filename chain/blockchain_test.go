@@ -789,12 +789,7 @@ func TestNameFirstUpdateCrossNetworkValidation(t *testing.T) {
 
 	// Create a NAME_FIRSTUPDATE transaction using the mainnet commitment
 	value := `{"ip":"1.2.3.4"}`
-	script := buildScript(
-		[]byte{opNameFirstUpdate},
-		pushData([]byte(nameStr)),
-		pushData(rand),
-		pushData([]byte(value)),
-	)
+	script := buildNameFirstUpdateScript([]byte(nameStr), rand, []byte(value))
 
 	msgBlock := wire.NewMsgBlock(&wire.BlockHeader{})
 	tx := wire.NewMsgTx(1)
@@ -889,9 +884,6 @@ func TestParseNameScriptFull_NameUpdate(t *testing.T) {
 	value := `{"ip":"5.6.7.8"}`
 
 	script := buildNameUpdateScript([]byte(name), []byte(value))
-		pushData([]byte(name)),
-		pushData([]byte(value)),
-	)
 
 	op, parsedName, parsedValue, extra, err := parseNameScriptFull(script)
 	if err != nil {
@@ -948,10 +940,7 @@ func TestRollbackNameNew(t *testing.T) {
 	// Create a block with the NAME_NEW
 	msgBlock := wire.NewMsgBlock(&wire.BlockHeader{})
 	tx := wire.NewMsgTx(1)
-	script := buildScript(
-		[]byte{opNameNew},
-		pushData(commitHash),
-	)
+	script := buildNameNewScript(commitHash)
 	tx.AddTxOut(wire.NewTxOut(config.DustLimit, script))
 	msgBlock.AddTransaction(tx)
 
@@ -1025,12 +1014,7 @@ func TestRollbackNameFirstUpdate(t *testing.T) {
 	// Create a block with the NAME_FIRSTUPDATE
 	msgBlock := wire.NewMsgBlock(&wire.BlockHeader{})
 	tx := wire.NewMsgTx(1)
-	script := buildScript(
-		[]byte{opNameFirstUpdate},
-		pushData([]byte(nameStr)),
-		pushData(rand),
-		pushData([]byte(value)),
-	)
+	script := buildNameFirstUpdateScript([]byte(nameStr), rand, []byte(value))
 	tx.AddTxOut(wire.NewTxOut(config.DustLimit, script))
 	msgBlock.AddTransaction(tx)
 
@@ -1146,11 +1130,7 @@ func TestRollbackNameUpdate(t *testing.T) {
 	// Create a block with the NAME_UPDATE
 	msgBlock := wire.NewMsgBlock(&wire.BlockHeader{})
 	tx := wire.NewMsgTx(1)
-	script := buildScript(
-		[]byte{opNameUpdate},
-		pushData([]byte(nameStr)),
-		pushData([]byte(updatedValue)),
-	)
+	script := buildNameUpdateScript([]byte(nameStr), []byte(updatedValue))
 	tx.AddTxOut(wire.NewTxOut(config.DustLimit, script))
 	msgBlock.AddTransaction(tx)
 
@@ -1241,21 +1221,13 @@ func TestRollbackSameBlockNameNewAndFirstUpdate(t *testing.T) {
 
 	// First transaction: NAME_NEW
 	tx1 := wire.NewMsgTx(1)
-	nameNewScript := buildScript(
-		[]byte{opNameNew},
-		pushData(commitHash), // The commitment hash
-	)
+	nameNewScript := buildNameNewScript(commitHash) // The commitment hash
 	tx1.AddTxOut(wire.NewTxOut(config.DustLimit, nameNewScript))
 	msgBlock.AddTransaction(tx1)
 
 	// Second transaction: NAME_FIRSTUPDATE that consumes the NAME_NEW
 	tx2 := wire.NewMsgTx(1)
-	firstUpdateScript := buildScript(
-		[]byte{opNameFirstUpdate},
-		pushData([]byte(nameStr)),
-		pushData(rand),
-		pushData([]byte(value)),
-	)
+	firstUpdateScript := buildNameFirstUpdateScript([]byte(nameStr), rand, []byte(value))
 	tx2.AddTxOut(wire.NewTxOut(config.DustLimit, firstUpdateScript))
 	msgBlock.AddTransaction(tx2)
 
@@ -1617,23 +1589,11 @@ func TestNameOperationDustLimitValidation(t *testing.T) {
 		switch opType {
 		case namedb.NameNew:
 			commitHash := make([]byte, 20)
-			script = buildScript(
-				[]byte{opNameNew},
-				pushData(commitHash),
-			)
+			script = buildNameNewScript(commitHash)
 		case namedb.NameFirstUpdate:
-			script = buildScript(
-				[]byte{opNameFirstUpdate},
-				pushData([]byte(nameStr)),
-				pushData(rand),
-				pushData([]byte(value)),
-			)
+			script = buildNameFirstUpdateScript([]byte(nameStr), rand, []byte(value))
 		case namedb.NameUpdate:
-			script = buildScript(
-				[]byte{opNameUpdate},
-				pushData([]byte(nameStr)),
-				pushData([]byte(value)),
-			)
+			script = buildNameUpdateScript([]byte(nameStr), []byte(value))
 		}
 
 		tx := wire.NewMsgTx(1)
@@ -1853,11 +1813,7 @@ func TestNameOperationDustLimitValidation(t *testing.T) {
 				// Create NAME_UPDATE block with custom name for this test
 				updateHeight := nameHeight + 50
 
-				script := buildScript(
-					[]byte{opNameUpdate},
-					pushData([]byte(nameStr)),
-					pushData([]byte(`{"ip":"5.6.7.8"}`)),
-				)
+				script := buildNameUpdateScript([]byte(nameStr), []byte(`{"ip":"5.6.7.8"}`))
 
 				tx := wire.NewMsgTx(1)
 				// Add input that spends the current name UTXO
