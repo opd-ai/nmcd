@@ -121,9 +121,9 @@ func TestIsValidNamespace(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "invalid namespace - only prefix",
+			name:     "namespace prefix only - no content after slash",
 			input:    "d/",
-			expected: true, // technically valid prefix, but would fail length check elsewhere
+			expected: true, // IsValidNamespace only checks prefix; full validation in validateNameFormat
 		},
 		{
 			name:     "invalid namespace - empty string",

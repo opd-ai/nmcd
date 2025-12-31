@@ -481,7 +481,7 @@ func TestValidateNameFormat(t *testing.T) {
 		},
 		{
 			name:      "max valid name length with namespace",
-			inputName: "d/" + string(make([]byte, 252)), // d/ (2 bytes) + 252 bytes = 254 total
+			inputName: "d/" + string(make([]byte, 253)), // d/ (2 bytes) + 253 bytes = 255 total (MaxNameLength)
 			value:     "test",
 			wantErr:   false,
 		},
