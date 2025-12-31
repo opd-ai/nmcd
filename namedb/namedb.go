@@ -34,6 +34,20 @@ const (
 	NameUpdate
 )
 
+// String returns the string representation of the NameOperation
+func (op NameOperation) String() string {
+	switch op {
+	case NameNew:
+		return "NAME_NEW"
+	case NameFirstUpdate:
+		return "NAME_FIRSTUPDATE"
+	case NameUpdate:
+		return "NAME_UPDATE"
+	default:
+		return fmt.Sprintf("UnknownOperation(%d)", op)
+	}
+}
+
 // NameRecord represents a name in the database
 type NameRecord struct {
 	Name      string

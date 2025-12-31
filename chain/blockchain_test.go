@@ -1690,3 +1690,413 @@ func TestNameOperationDustLimitValidation(t *testing.T) {
 		}
 	})
 }
+
+// TestTransactionFeeValidation tests that name operations pay required minimum fees
+func TestTransactionFeeValidation(t *testing.T) {
+	// Create temporary database
+	dbPath := filepath.Join(os.TempDir(), "test-fee-validation.db")
+	defer os.Remove(dbPath)
+
+	ndb, err := namedb.NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer ndb.Close()
+
+	// Create a BlockChain wrapper with just the nameDB
+	bc := &BlockChain{
+		nameDB: ndb,
+	}
+
+	// Helper function to create a UTXO for spending
+	createUTXO := func(value int64, height int32) (chainhash.Hash, uint32) {
+		tx := wire.NewMsgTx(1)
+		// Create a simple output script (P2PKH-like)
+		script := []byte{0x76, 0xa9, 0x14}           // OP_DUP OP_HASH160 OP_PUSH(20)
+		script = append(script, make([]byte, 20)...) // 20-byte pubkey hash
+		script = append(script, 0x88, 0xac)          // OP_EQUALVERIFY OP_CHECKSIG
+		tx.AddTxOut(&wire.TxOut{
+			Value:    value,
+			PkScript: script,
+		})
+
+		txHash := tx.TxHash()
+		utxo := &namedb.UTXO{
+			TxHash:   txHash,
+			OutIndex: 0,
+			Value:    value,
+			Address:  "N1234567890",
+			PkScript: script,
+			Height:   height,
+		}
+		if err := bc.nameDB.AddUTXO(utxo); err != nil {
+			t.Fatalf("Failed to add UTXO: %v", err)
+		}
+		return txHash, 0
+	}
+
+	t.Run("NAME_NEW fee validation", func(t *testing.T) {
+		testCases := []struct {
+			name        string
+			inputValue  int64
+			outputValue int64
+			wantErr     bool
+			errContains string
+		}{
+			{
+				name:        "fee below minimum relay fee",
+				inputValue:  1000,
+				outputValue: 100, // Fee = 1000 - 100 = 900 (below MinRelayTxFee of 1000)
+				wantErr:     true,
+				errContains: "below minimum",
+			},
+			{
+				name:        "fee exactly at minimum relay fee",
+				inputValue:  2000,
+				outputValue: 1000, // Fee = 2000 - 1000 = 1000 (exactly MinRelayTxFee)
+				wantErr:     false,
+			},
+			{
+				name:        "fee above minimum relay fee",
+				inputValue:  5000,
+				outputValue: 1000, // Fee = 5000 - 1000 = 4000 (above MinRelayTxFee)
+				wantErr:     false,
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				// Create input UTXO
+				txHashIn, outIdx := createUTXO(tc.inputValue, 100)
+
+				// Create NAME_NEW transaction
+				commitHash := make([]byte, 20)
+				script := buildScript(
+					[]byte{opNameNew},
+					pushData(commitHash),
+				)
+
+				tx := wire.NewMsgTx(1)
+				// Add input
+				tx.AddTxIn(wire.NewTxIn(
+					wire.NewOutPoint(&txHashIn, outIdx),
+					nil,
+					nil,
+				))
+				// Add NAME_NEW output
+				tx.AddTxOut(&wire.TxOut{
+					Value:    tc.outputValue,
+					PkScript: script,
+				})
+
+				// Validate the transaction fee
+				err := bc.validateTransactionFee(tx, namedb.NameNew, 150)
+
+				if tc.wantErr {
+					if err == nil {
+						t.Errorf("expected error containing %q, got nil", tc.errContains)
+					} else if !strings.Contains(err.Error(), tc.errContains) {
+						t.Errorf("expected error containing %q, got %q", tc.errContains, err.Error())
+					}
+				} else {
+					if err != nil {
+						t.Errorf("unexpected error: %v", err)
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("NAME_FIRSTUPDATE fee validation", func(t *testing.T) {
+		// First, create a NAME_NEW commitment
+		commitHash := make([]byte, 20)
+		if err := bc.nameDB.PutNameNew(commitHash, 100); err != nil {
+			t.Fatalf("Failed to create NAME_NEW: %v", err)
+		}
+
+		testCases := []struct {
+			name        string
+			inputValue  int64
+			outputValue int64
+			wantErr     bool
+			errContains string
+		}{
+			{
+				name:        "fee well below minimum name operation fee",
+				inputValue:  10000,
+				outputValue: 9500, // Fee = 10000 - 9500 = 500 (well below 1,000,000)
+				wantErr:     true,
+				errContains: "below minimum",
+			},
+			{
+				name:        "fee below minimum name operation fee",
+				inputValue:  1500000,
+				outputValue: 600000, // Fee = 1500000 - 600000 = 900,000 (below 1,000,000)
+				wantErr:     true,
+				errContains: "below minimum",
+			},
+			{
+				name:        "fee exactly at minimum name operation fee",
+				inputValue:  2000000,
+				outputValue: 1000000, // Fee = 2000000 - 1000000 = 1,000,000 (exactly MinNameOperationFee)
+				wantErr:     false,
+			},
+			{
+				name:        "fee above minimum name operation fee",
+				inputValue:  3000000,
+				outputValue: 1000000, // Fee = 3000000 - 1000000 = 2,000,000 (above MinNameOperationFee)
+				wantErr:     false,
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				// Create input UTXO
+				txHashIn, outIdx := createUTXO(tc.inputValue, 100)
+
+				// Create NAME_FIRSTUPDATE transaction
+				nameBytes := []byte("d/testfee")
+				rand := make([]byte, 20)
+				value := []byte(`{"ip":"1.2.3.4"}`)
+
+				script := buildScript(
+					[]byte{opNameFirstUpdate},
+					pushData(nameBytes),
+					pushData(rand),
+					pushData(value),
+				)
+
+				tx := wire.NewMsgTx(1)
+				// Add input
+				tx.AddTxIn(wire.NewTxIn(
+					wire.NewOutPoint(&txHashIn, outIdx),
+					nil,
+					nil,
+				))
+				// Add NAME_FIRSTUPDATE output
+				tx.AddTxOut(&wire.TxOut{
+					Value:    tc.outputValue,
+					PkScript: script,
+				})
+
+				// Validate the transaction fee
+				err := bc.validateTransactionFee(tx, namedb.NameFirstUpdate, 150)
+
+				if tc.wantErr {
+					if err == nil {
+						t.Errorf("expected error containing %q, got nil", tc.errContains)
+					} else if !strings.Contains(err.Error(), tc.errContains) {
+						t.Errorf("expected error containing %q, got %q", tc.errContains, err.Error())
+					}
+				} else {
+					if err != nil {
+						t.Errorf("unexpected error: %v", err)
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("NAME_UPDATE fee validation", func(t *testing.T) {
+		// First, create a name in the database
+		nameStr := "d/testupdate"
+		txHash := chainhash.Hash{}
+		nameHeight := int32(100)
+
+		record := &namedb.NameRecord{
+			Name:      nameStr,
+			Value:     `{"ip":"1.2.3.4"}`,
+			TxHash:    txHash,
+			Height:    nameHeight,
+			ExpiresAt: nameHeight + config.NameExpirationBlocks,
+			Address:   "N1234567890",
+			UpdatedAt: time.Now(),
+		}
+		if err := bc.nameDB.PutName(nameStr, record); err != nil {
+			t.Fatalf("Failed to create name for update test: %v", err)
+		}
+
+		testCases := []struct {
+			name        string
+			inputValue  int64
+			outputValue int64
+			wantErr     bool
+			errContains string
+		}{
+			{
+				name:        "fee well below minimum name operation fee",
+				inputValue:  10000,
+				outputValue: 9500, // Fee = 10000 - 9500 = 500 (well below 1,000,000)
+				wantErr:     true,
+				errContains: "below minimum",
+			},
+			{
+				name:        "fee below minimum name operation fee",
+				inputValue:  1500000,
+				outputValue: 600000, // Fee = 1500000 - 600000 = 900,000 (below 1,000,000)
+				wantErr:     true,
+				errContains: "below minimum",
+			},
+			{
+				name:        "fee exactly at minimum name operation fee",
+				inputValue:  2000000,
+				outputValue: 1000000, // Fee = 2000000 - 1000000 = 1,000,000 (exactly MinNameOperationFee)
+				wantErr:     false,
+			},
+			{
+				name:        "fee above minimum name operation fee",
+				inputValue:  3000000,
+				outputValue: 1000000, // Fee = 3000000 - 1000000 = 2,000,000 (above MinNameOperationFee)
+				wantErr:     false,
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				// Create input UTXO
+				txHashIn, outIdx := createUTXO(tc.inputValue, 100)
+
+				// Create NAME_UPDATE transaction
+				script := buildScript(
+					[]byte{opNameUpdate},
+					pushData([]byte(nameStr)),
+					pushData([]byte(`{"ip":"5.6.7.8"}`)),
+				)
+
+				tx := wire.NewMsgTx(1)
+				// Add input
+				tx.AddTxIn(wire.NewTxIn(
+					wire.NewOutPoint(&txHashIn, outIdx),
+					nil,
+					nil,
+				))
+				// Add NAME_UPDATE output
+				tx.AddTxOut(&wire.TxOut{
+					Value:    tc.outputValue,
+					PkScript: script,
+				})
+
+				// Validate the transaction fee
+				err := bc.validateTransactionFee(tx, namedb.NameUpdate, 150)
+
+				if tc.wantErr {
+					if err == nil {
+						t.Errorf("expected error containing %q, got nil", tc.errContains)
+					} else if !strings.Contains(err.Error(), tc.errContains) {
+						t.Errorf("expected error containing %q, got %q", tc.errContains, err.Error())
+					}
+				} else {
+					if err != nil {
+						t.Errorf("unexpected error: %v", err)
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("negative fee validation", func(t *testing.T) {
+		// Create input UTXO with low value
+		txHashIn, outIdx := createUTXO(1000, 100)
+
+		// Create transaction with output value greater than input (invalid)
+		script := buildScript(
+			[]byte{opNameNew},
+			pushData(make([]byte, 20)),
+		)
+
+		tx := wire.NewMsgTx(1)
+		tx.AddTxIn(wire.NewTxIn(
+			wire.NewOutPoint(&txHashIn, outIdx),
+			nil,
+			nil,
+		))
+		tx.AddTxOut(&wire.TxOut{
+			Value:    2000, // Greater than input
+			PkScript: script,
+		})
+
+		err := bc.validateTransactionFee(tx, namedb.NameNew, 150)
+		if err == nil {
+			t.Error("expected error for negative fee, got nil")
+		} else if !strings.Contains(err.Error(), "cannot be negative") {
+			t.Errorf("expected error about negative fee, got: %v", err)
+		}
+	})
+
+	t.Run("multiple inputs fee calculation", func(t *testing.T) {
+		// Create multiple input UTXOs
+		txHashIn1, outIdx1 := createUTXO(500000, 100)
+		txHashIn2, outIdx2 := createUTXO(700000, 101)
+		txHashIn3, outIdx3 := createUTXO(300000, 102)
+		// Total inputs: 1,500,000 satoshis
+
+		// Create NAME_FIRSTUPDATE transaction with multiple inputs
+		nameBytes := []byte("d/multiinput")
+		rand := make([]byte, 20)
+		value := []byte(`{"ip":"1.2.3.4"}`)
+
+		script := buildScript(
+			[]byte{opNameFirstUpdate},
+			pushData(nameBytes),
+			pushData(rand),
+			pushData(value),
+		)
+
+		tx := wire.NewMsgTx(1)
+		// Add three inputs
+		tx.AddTxIn(wire.NewTxIn(
+			wire.NewOutPoint(&txHashIn1, outIdx1),
+			nil,
+			nil,
+		))
+		tx.AddTxIn(wire.NewTxIn(
+			wire.NewOutPoint(&txHashIn2, outIdx2),
+			nil,
+			nil,
+		))
+		tx.AddTxIn(wire.NewTxIn(
+			wire.NewOutPoint(&txHashIn3, outIdx3),
+			nil,
+			nil,
+		))
+		// Add NAME_FIRSTUPDATE output
+		// Total inputs: 1,500,000
+		// Output: 400,000
+		// Fee: 1,100,000 (above minimum of 1,000,000)
+		tx.AddTxOut(&wire.TxOut{
+			Value:    400000,
+			PkScript: script,
+		})
+
+		// First create NAME_NEW commitment
+		commitHash := computeCommitHash(rand, string(nameBytes))
+		if err := bc.nameDB.PutNameNew(commitHash, 100); err != nil {
+			t.Fatalf("Failed to create NAME_NEW: %v", err)
+		}
+
+		// Validate the transaction fee - should pass with fee of 1,100,000
+		err := bc.validateTransactionFee(tx, namedb.NameFirstUpdate, 150)
+		if err != nil {
+			t.Errorf("unexpected error with multiple inputs: %v", err)
+		}
+
+		// Now test with insufficient fee
+		tx2 := wire.NewMsgTx(1)
+		tx2.AddTxIn(wire.NewTxIn(wire.NewOutPoint(&txHashIn1, outIdx1), nil, nil))
+		tx2.AddTxIn(wire.NewTxIn(wire.NewOutPoint(&txHashIn2, outIdx2), nil, nil))
+		tx2.AddTxIn(wire.NewTxIn(wire.NewOutPoint(&txHashIn3, outIdx3), nil, nil))
+		// Output: 1,400,000 -> Fee: 100,000 (below minimum of 1,000,000)
+		tx2.AddTxOut(&wire.TxOut{
+			Value:    1400000,
+			PkScript: script,
+		})
+
+		err = bc.validateTransactionFee(tx2, namedb.NameFirstUpdate, 150)
+		if err == nil {
+			t.Error("expected error for insufficient fee with multiple inputs, got nil")
+		} else if !strings.Contains(err.Error(), "below minimum") {
+			t.Errorf("expected error about insufficient fee, got: %v", err)
+		}
+	})
+}
+
