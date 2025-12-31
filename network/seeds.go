@@ -25,7 +25,7 @@ func NewSeedResolver(seeds []string, defaultPort string) *SeedResolver {
 }
 
 // Resolve queries DNS seed nodes and returns a list of peer addresses.
-// It attempts to resolve each seed and collects all returned IP addresses.
+// It attempts to resolve each seed and collects all returned addresses.
 // Returns addresses in "host:port" format ready for connection.
 func (sr *SeedResolver) Resolve() ([]string, error) {
 	if len(sr.seeds) == 0 {
@@ -36,19 +36,19 @@ func (sr *SeedResolver) Resolve() ([]string, error) {
 	var lastErr error
 
 	for _, seed := range sr.seeds {
-		ips, err := sr.resolveSeed(seed)
+		hosts, err := sr.resolveSeed(seed)
 		if err != nil {
 			log.Printf("Failed to resolve seed %s: %v", seed, err)
 			lastErr = err
 			continue
 		}
 
-		for _, ip := range ips {
-			addr := net.JoinHostPort(ip.String(), sr.defaultPort)
+		for _, host := range hosts {
+			addr := net.JoinHostPort(host, sr.defaultPort)
 			addresses = append(addresses, addr)
 		}
 
-		log.Printf("Resolved %d addresses from seed %s", len(ips), seed)
+		log.Printf("Resolved %d addresses from seed %s", len(hosts), seed)
 	}
 
 	if len(addresses) == 0 && lastErr != nil {
@@ -58,17 +58,17 @@ func (sr *SeedResolver) Resolve() ([]string, error) {
 	return addresses, nil
 }
 
-// resolveSeed resolves a single DNS seed and returns the IP addresses.
-func (sr *SeedResolver) resolveSeed(seed string) ([]net.IP, error) {
+// resolveSeed resolves a single DNS seed and returns the host addresses.
+func (sr *SeedResolver) resolveSeed(seed string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), sr.timeout)
 	defer cancel()
 
-	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", seed)
+	hosts, err := net.DefaultResolver.LookupHost(ctx, seed)
 	if err != nil {
 		return nil, fmt.Errorf("DNS lookup failed for %s: %w", seed, err)
 	}
 
-	return ips, nil
+	return hosts, nil
 }
 
 // ResolveSeedNodes is a convenience function that resolves DNS seeds
