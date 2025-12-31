@@ -12,16 +12,17 @@
 
 - **Protocol version implemented:** Partial (Base protocol only, no AuxPow)
 - **Critical issues:** 3
-- **High priority issues:** 5 (1 resolved: namespace validation ✅)
+- **High priority issues:** 4 (2 resolved: namespace validation ✅, NAME_FIRSTUPDATE timing window ✅)
 - **Medium priority issues:** 8
 - **Low priority issues:** 4
 - **Missing features:** 12
-- **Overall compatibility:** ~37% (Core name operations work with namespace validation, but consensus/mining features missing)
+- **Overall compatibility:** ~39% (Core name operations work with namespace validation and timing window enforcement, but consensus/mining features missing)
 
 **Status:** ⚠️ **NOT PRODUCTION READY** - Critical consensus-breaking features missing
 
 **Recent Progress:**
 - ✅ 2025-12-31: Implemented namespace validation (Issue #8) - Names now require valid namespace prefixes (d/, id/, p/)
+- ✅ 2025-12-31: Implemented NAME_FIRSTUPDATE timing window validation (Issue #5) - NAME_FIRSTUPDATE must occur within 12-36,000 blocks after NAME_NEW
 
 ---
 
@@ -127,29 +128,49 @@ Namecoin Core enforces minimum fees for NAME_NEW to prevent commitment spam. No 
 
 ---
 
-### 5. Missing NAME_FIRSTUPDATE Timing Window
-**Location:** config/config.go:16 - MinBlocksBeforeFirstUpdate  
+### 5. Missing NAME_FIRSTUPDATE Timing Window ✅ RESOLVED
+**Location:** config/config.go:16-21 - MinBlocksBeforeFirstUpdate and MaxBlocksBeforeFirstUpdate  
 **Severity:** HIGH  
+**Status:** ✅ **RESOLVED** (2025-12-31)  
 **Expected:** NAME_FIRSTUPDATE must occur within 12-36000 blocks after NAME_NEW  
-**Actual:** Only validates minimum (12 blocks), no maximum enforcement
+**Actual:** ✅ Now validates both minimum and maximum timing windows
 
-**Description:**
+**Resolution:**
+Implemented maximum timing window validation with the following changes:
+1. Added `MaxBlocksBeforeFirstUpdate` constant in `config/config.go` (value: 36000)
+2. Updated `validateNameOperations()` in `chain/blockchain.go` to validate maximum timing window
+3. Added comprehensive unit tests in `chain/blockchain_test.go` covering edge cases
+
+**Implementation:**
 ```go
-// config/config.go:16
-MinBlocksBeforeFirstUpdate = 12  // Minimum only, no maximum
-```
+// config/config.go:16-21
+MinBlocksBeforeFirstUpdate = 12
 
-Per Namecoin protocol, NAME_FIRSTUPDATE must occur before the NAME_NEW commitment expires (~36000 blocks). Otherwise the name becomes available for others to register.
+// MaxBlocksBeforeFirstUpdate is the maximum blocks between name_new and name_firstupdate
+// After this period, the NAME_NEW commitment expires and the name becomes available
+MaxBlocksBeforeFirstUpdate = 36000
 
-**Code reference:**
-```go
-// chain/blockchain.go:155-159 - Only checks minimum
+// chain/blockchain.go:156-165
+blocksSinceNew := height - nameNewRecord.Height
 if blocksSinceNew < config.MinBlocksBeforeFirstUpdate {
     return fmt.Errorf("name_firstupdate too early: %d blocks since name_new, minimum %d required",
         blocksSinceNew, config.MinBlocksBeforeFirstUpdate)
 }
-// Missing: maximum time window check
+// Validate maximum timing window - NAME_NEW commitment expires after MaxBlocksBeforeFirstUpdate
+if blocksSinceNew > config.MaxBlocksBeforeFirstUpdate {
+    return fmt.Errorf("name_firstupdate too late: %d blocks since name_new, maximum %d allowed (commitment expired)",
+        blocksSinceNew, config.MaxBlocksBeforeFirstUpdate)
+}
 ```
+
+Per Namecoin protocol, NAME_FIRSTUPDATE must occur before the NAME_NEW commitment expires (36,000 blocks ≈ 250 days). Otherwise the name becomes available for others to register.
+
+**Test Coverage:**
+- ✅ Too early cases (0, 1, 11 blocks after NAME_NEW)
+- ✅ Valid range (12, 100, 1000, 36000 blocks)
+- ✅ Too late cases (36001, 50000, 100000 blocks)
+- ✅ Edge cases (exactly at minimum and maximum boundaries)
+- ✅ All existing tests updated and passing
 
 ---
 
@@ -593,9 +614,10 @@ Should import test vectors from Namecoin Core to ensure identical validation log
 ### Short-term (Required for Basic Functionality):
 
 1. ~~**Add namespace validation** - Enforce d/, id/ prefixes~~ ✅ **COMPLETED** (2025-12-31)
-2. **Implement UTXO chain validation** - Prevent name theft
-3. **Add checkpoints** - Import from Namecoin Core
-4. **Verify network magic bytes** - Ensure exact match with Core
+2. ~~**Implement NAME_FIRSTUPDATE timing window** - Enforce 12-36000 block constraint~~ ✅ **COMPLETED** (2025-12-31)
+3. **Implement UTXO chain validation** - Prevent name theft
+4. **Add checkpoints** - Import from Namecoin Core
+5. **Verify network magic bytes** - Ensure exact match with Core
 
 ### Medium-term (Production Readiness):
 
@@ -622,11 +644,12 @@ Should import test vectors from Namecoin Core to ensure identical validation log
 | Subsidy calculation | ❌ Missing | 0% | Uses Bitcoin calculation |
 | Checkpoint validation | ❌ Missing | 0% | No checkpoints |
 | **Name Operations** | | | |
-| NAME_NEW | ✅ Working | 70% | Missing fee validation, max timing |
-| NAME_FIRSTUPDATE | ✅ Working | 75% | Missing UTXO validation |
+| NAME_NEW | ✅ Working | 70% | Missing fee validation |
+| NAME_FIRSTUPDATE | ✅ Working | 85% | Missing UTXO validation, timing window ✅ |
 | NAME_UPDATE | ✅ Working | 70% | Missing UTXO validation |
 | Name expiration | ✅ Working | 90% | Works correctly |
 | Namespace validation | ✅ Working | 100% | ✅ Implemented (2025-12-31) |
+| Timing window validation | ✅ Working | 100% | ✅ Implemented (2025-12-31) |
 | **Transaction Validation** | | | |
 | Script parsing | ⚠️ Partial | 60% | Too lenient |
 | Fee validation | ❌ Missing | 0% | No fee checks |

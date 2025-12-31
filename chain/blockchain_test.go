@@ -1222,3 +1222,179 @@ func TestExtractAddressFromNameScript(t *testing.T) {
 		}
 	})
 }
+
+// TestNameFirstUpdateTimingWindow tests the validation of NAME_FIRSTUPDATE timing window.
+// Per Namecoin protocol, NAME_FIRSTUPDATE must occur between 12 and 36,000 blocks
+// after NAME_NEW, otherwise the commitment is either too early or expired.
+func TestNameFirstUpdateTimingWindow(t *testing.T) {
+	// Create temporary database
+	dbPath := filepath.Join(t.TempDir(), "test-timing-window.db")
+	ndb, err := namedb.NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer ndb.Close()
+
+	// Create a BlockChain wrapper with just the nameDB for testing
+	bc := &BlockChain{
+		nameDB:      ndb,
+		chainParams: &config.NamecoinRegTestParams,
+	}
+
+	// Setup: Create a NAME_NEW commitment in the database
+	nameStr := "d/example"
+	rand := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+		0x11, 0x12, 0x13, 0x14}
+	commitHash := computeCommitHash(rand, nameStr)
+	nameNewHeight := int32(100)
+
+	// Store NAME_NEW commitment
+	if err := ndb.PutNameNew(commitHash, nameNewHeight); err != nil {
+		t.Fatalf("Failed to store NAME_NEW: %v", err)
+	}
+
+	// Test cases for timing window validation
+	testCases := []struct {
+		name              string
+		firstUpdateHeight int32
+		wantErr           bool
+		errContains       string
+	}{
+		{
+			name:              "too early - 0 blocks after NAME_NEW",
+			firstUpdateHeight: nameNewHeight, // Same block
+			wantErr:           true,
+			errContains:       "name_firstupdate too early",
+		},
+		{
+			name:              "too early - 1 block after NAME_NEW",
+			firstUpdateHeight: nameNewHeight + 1,
+			wantErr:           true,
+			errContains:       "name_firstupdate too early",
+		},
+		{
+			name:              "too early - 11 blocks after NAME_NEW (just below minimum)",
+			firstUpdateHeight: nameNewHeight + 11,
+			wantErr:           true,
+			errContains:       "name_firstupdate too early",
+		},
+		{
+			name:              "valid - exactly at minimum (12 blocks)",
+			firstUpdateHeight: nameNewHeight + config.MinBlocksBeforeFirstUpdate,
+			wantErr:           false,
+		},
+		{
+			name:              "valid - 100 blocks after NAME_NEW",
+			firstUpdateHeight: nameNewHeight + 100,
+			wantErr:           false,
+		},
+		{
+			name:              "valid - 1000 blocks after NAME_NEW",
+			firstUpdateHeight: nameNewHeight + 1000,
+			wantErr:           false,
+		},
+		{
+			name:              "valid - exactly at maximum (36,000 blocks)",
+			firstUpdateHeight: nameNewHeight + config.MaxBlocksBeforeFirstUpdate,
+			wantErr:           false,
+		},
+		{
+			name:              "too late - 36,001 blocks (just above maximum)",
+			firstUpdateHeight: nameNewHeight + config.MaxBlocksBeforeFirstUpdate + 1,
+			wantErr:           true,
+			errContains:       "name_firstupdate too late",
+		},
+		{
+			name:              "too late - 50,000 blocks after NAME_NEW",
+			firstUpdateHeight: nameNewHeight + 50000,
+			wantErr:           true,
+			errContains:       "name_firstupdate too late",
+		},
+		{
+			name:              "too late - 100,000 blocks after NAME_NEW",
+			firstUpdateHeight: nameNewHeight + 100000,
+			wantErr:           true,
+			errContains:       "name_firstupdate too late",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create a block with NAME_FIRSTUPDATE at the specified height
+			block := createBlockWithNameFirstUpdate(t, nameStr, rand, tc.firstUpdateHeight)
+
+			// Validate name operations
+			err := bc.validateNameOperations(block)
+
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("expected error containing %q, got nil", tc.errContains)
+				} else if tc.errContains != "" && !contains(err.Error(), tc.errContains) {
+					t.Errorf("expected error containing %q, got %q", tc.errContains, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// createBlockWithNameFirstUpdate creates a test block containing a NAME_FIRSTUPDATE operation
+func createBlockWithNameFirstUpdate(t *testing.T, name string, rand []byte, height int32) *btcutil.Block {
+	t.Helper()
+
+	value := `{"ip":"1.2.3.4"}`
+
+	// Build NAME_FIRSTUPDATE script
+	script := buildScript(
+		[]byte{opNameFirstUpdate},
+		pushData([]byte(name)),
+		pushData(rand),
+		pushData([]byte(value)),
+		[]byte{0x6d, 0x6d}, // OP_2DROP OP_2DROP (for NAME_FIRSTUPDATE: name, rand, value)
+		// Add minimal P2PKH suffix for valid script
+		[]byte{0x76, 0xa9, 0x14}, // OP_DUP OP_HASH160 OP_PUSHDATA(20)
+		make([]byte, 20),         // 20-byte pubkey hash
+		[]byte{0x88, 0xac},       // OP_EQUALVERIFY OP_CHECKSIG
+	)
+
+	// Create transaction with NAME_FIRSTUPDATE
+	tx := wire.NewMsgTx(1)
+	tx.AddTxOut(&wire.TxOut{
+		Value:    0,
+		PkScript: script,
+	})
+
+	// Create block
+	block := wire.NewMsgBlock(&wire.BlockHeader{
+		Version:   1,
+		Timestamp: time.Now(),
+		Bits:      0x207fffff, // Regtest difficulty
+	})
+	block.AddTransaction(tx)
+
+	utilBlock := btcutil.NewBlock(block)
+	utilBlock.SetHeight(height)
+
+	return utilBlock
+}
+
+// contains checks if a string contains a substring
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) &&
+		(s[:len(substr)] == substr || s[len(s)-len(substr):] == substr ||
+			findSubstring(s, substr)))
+}
+
+// findSubstring is a helper to check if substr exists in s
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
