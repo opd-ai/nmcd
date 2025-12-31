@@ -228,3 +228,187 @@ Lines of code estimate:
     - mail/: ~300 LOC
     - cmd/: ~150 LOC
     - Total: ~550 LOC
+
+PERMAMAIL LIBRARY RECOMMENDATIONS
+=================================
+Goal: Minimize custom code, maximize reliability
+
+================================================================================
+SMTP SERVER
+================================================================================
+
+github.com/emersion/go-smtp
+    
+    Why: De facto standard for Go SMTP servers
+    Maturity: 1.5k+ stars, actively maintained, used in production
+    What it handles:
+        - SMTP protocol parsing
+        - Connection management
+        - TLS/STARTTLS
+        - Authentication hooks
+    Code saved: ~400 LOC
+    
+    Usage:
+        type Backend struct{ router *mail.Router }
+        func (b *Backend) NewSession(c *smtp.Conn) (smtp.Session, error)
+        // Implement 3 methods: Mail, Rcpt, Data
+
+================================================================================
+SMTP CLIENT (FORWARDING)
+================================================================================
+
+github.com/wneessen/go-mail
+
+    Why: Modern, well-tested, cleaner API than net/smtp
+    What it handles:
+        - Outbound SMTP with auth
+        - TLS configuration
+        - Connection pooling
+        - Attachments and MIME
+    Code saved: ~150 LOC
+    
+    Alternative: net/smtp (stdlib)
+        Pro: No dependency
+        Con: More verbose, less ergonomic
+
+================================================================================
+CLI FRAMEWORK
+================================================================================
+
+stdlib flag package
+
+    Why: Permamail CLI is simple; no framework needed
+    Commands are few: register, update, lookup, serve
+    Code saved: None, but avoids dependency bloat
+    
+    Pattern:
+        switch os.Args[1] {
+        case "register": handleRegister(os.Args[2:])
+        case "serve":    handleServe(os.Args[2:])
+        }
+
+    Alternative if CLI grows: github.com/spf13/cobra
+        Only if subcommands exceed 6-8
+
+================================================================================
+JSON HANDLING
+================================================================================
+
+stdlib encoding/json
+
+    Why: Mail config records are simple structs
+    No need for jsoniter or easyjson at this scale
+    
+    type MailRecord struct {
+        Email   string   `json:"email"`
+        Backup  []string `json:"backup,omitempty"`
+        PubKey  string   `json:"pubkey,omitempty"`
+    }
+
+================================================================================
+CACHING
+================================================================================
+
+github.com/hashicorp/golang-lru/v2
+
+    Why: Battle-tested LRU cache with generics
+    What it handles:
+        - TTL expiration
+        - Thread safety
+        - Size limits
+    Code saved: ~80 LOC
+    
+    Usage:
+        cache, _ := expirable.NewLRU[string, ForwardingRule](1000, nil, time.Hour)
+
+    Alternative: github.com/patrickmn/go-cache
+        Simpler API, also solid choice
+
+================================================================================
+LOGGING
+================================================================================
+
+stdlib log/slog (Go 1.21+)
+
+    Why: Structured logging in stdlib, no external dep
+    What it handles:
+        - JSON or text output
+        - Log levels
+        - Context propagation
+    
+    Usage:
+        slog.Info("forwarding mail", "from", from, "to", resolved)
+
+================================================================================
+CONFIGURATION
+================================================================================
+
+github.com/caarlos0/env/v10
+
+    Why: Parse config from environment variables
+    What it handles:
+        - Struct tag parsing
+        - Type conversion
+        - Defaults
+    Code saved: ~50 LOC
+    
+    type Config struct {
+        ListenAddr   string `env:"LISTEN_ADDR" envDefault:":2525"`
+        UpstreamSMTP string `env:"UPSTREAM_SMTP,required"`
+        CacheTTL     time.Duration `env:"CACHE_TTL" envDefault:"1h"`
+    }
+
+    Alternative: Config file with gopkg.in/yaml.v3
+        Use if operators prefer files over env vars
+
+================================================================================
+TESTING
+================================================================================
+
+stdlib testing + github.com/stretchr/testify/assert
+
+    Why: Testify reduces assertion boilerplate
+    
+    assert.Equal(t, "user@gmail.com", resolved.Target)
+    assert.NoError(t, err)
+
+For SMTP integration tests:
+
+github.com/foxcpp/go-mockdns (if mocking DNS)
+    - Not needed if using Namecoin directly
+
+================================================================================
+SUMMARY
+================================================================================
+
+Required dependencies (3):
+    github.com/emersion/go-smtp       # SMTP server
+    github.com/wneessen/go-mail       # SMTP client
+    github.com/hashicorp/golang-lru/v2 # Caching
+
+Optional dependencies (2):
+    github.com/caarlos0/env/v10       # Config from env
+    github.com/stretchr/testify       # Test assertions
+
+Total: 3-5 external packages
+
+Estimated code with libraries: ~400 LOC
+Estimated code without libraries: ~1200 LOC
+
+================================================================================
+GO.MOD
+================================================================================
+
+module permamail
+
+go 1.22
+
+require (
+    github.com/emersion/go-smtp v0.21.0
+    github.com/wneessen/go-mail v0.4.0
+    github.com/hashicorp/golang-lru/v2 v2.0.7
+    github.com/caarlos0/env/v10 v10.0.0
+)
+
+// namecoin module is local or internal
+require your-org/namecoin v0.0.0
