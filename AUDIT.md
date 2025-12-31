@@ -12,13 +12,13 @@
 | Category | Count | Severity Distribution |
 |----------|-------|----------------------|
 | CRITICAL BUG | 0 | - |
-| FUNCTIONAL MISMATCH | 5 (4 fixed) | High: 2, Medium: 3 |
+| FUNCTIONAL MISMATCH | 5 (4 fixed, 1 blocked) | High: 2, Medium: 3 |
 | MISSING FEATURE | 5 (5 fixed) | High: 1, Medium: 3, Low: 1 |
 | EDGE CASE BUG | 1 (1 fixed) | Medium: 1 |
 | PERFORMANCE ISSUE | 0 | - |
 | DOCUMENTATION DISCREPANCY | 1 (1 fixed) | Low: 1 |
 
-**Total Findings: 12 (11 fixed, 1 remaining)**
+**Total Findings: 12 (11 fixed, 1 blocked by architectural limitations)**
 
 The codebase is well-structured with good test coverage. The primary concerns are around incomplete integration between components and missing address tracking for name records. No critical bugs that would cause crashes or data corruption were identified.
 
@@ -102,6 +102,8 @@ The codebase is well-structured with good test coverage. The primary concerns ar
 
 **File:** rpc/server.go:277-423  
 **Severity:** Medium  
+**Status:** ⚠️ BLOCKED - Requires Major Architectural Changes  
+
 **Description:** The `name_update` RPC method creates a transaction script and returns it, but explicitly states in the response that "Broadcasting requires UTXO management." The transaction is never actually broadcast to the network.
 
 **Expected Behavior:** Per README.md documentation, `name_update` should "Update an existing name's value" and the wallet should handle transaction creation and broadcasting.
@@ -110,18 +112,32 @@ The codebase is well-structured with good test coverage. The primary concerns ar
 
 **Impact:** Users cannot update names through the RPC API. The method gives the appearance of functionality but requires external tooling to actually perform updates.
 
-**Reproduction:** Call `name_update` RPC - it returns success but the name's value doesn't change in the blockchain.
+**Why This Cannot Be Fixed with Minimal Changes:**
 
-**Code Reference:**
-```go
-result := map[string]interface{}{
-    "name":             name,
-    "value":            newValue,
-    // ...
-    "status":           "prepared",
-    "message":          "NAME_UPDATE transaction prepared. Broadcasting requires UTXO management.",
-}
-```
+This bug cannot be resolved without implementing a complete UTXO (Unspent Transaction Output) management subsystem, which includes:
+
+1. **UTXO Index**: A database to track all unspent outputs from the blockchain
+2. **Transaction Output Tracking**: Record which output index contains the name in each NAME_FIRSTUPDATE/NAME_UPDATE transaction
+3. **Value Tracking**: Record the value (in satoshis) of each output to calculate transaction fees
+4. **UTXO Updates**: Update the UTXO set when blocks are added/removed (including reorgs)
+5. **Wallet UTXO Discovery**: Scan the blockchain to find UTXOs belonging to wallet addresses
+
+The wallet already has transaction creation functions (`CreateNameUpdateTx`, `SignTransaction`), but they require UTXOs as input parameters. The NameRecord structure only stores:
+- Transaction hash (but not output index)
+- Owner address (but not the output value)
+
+Without knowing which output index and what value to spend, a valid transaction cannot be constructed.
+
+**Estimated Implementation Effort:** 
+- New UTXO database schema and management code: ~500-800 lines
+- Blockchain scanning for UTXO discovery: ~200-300 lines  
+- Integration with name_update RPC: ~100-150 lines
+- Comprehensive testing: ~300-400 lines
+
+**Total:** ~1100-1650 lines of new code, which exceeds the "minimal changes" requirement by an order of magnitude.
+
+**Recommendation:** 
+This should be treated as a major feature request rather than a bug fix. The codebase would benefit from a dedicated UTXO management module before attempting to implement transaction broadcasting.
 
 ---
 
