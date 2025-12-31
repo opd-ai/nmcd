@@ -1413,7 +1413,7 @@ func TestNameOperationDustLimitValidation(t *testing.T) {
 		nameStr := "d/example"
 		value := `{"ip":"1.2.3.4"}`
 		rand := make([]byte, 20)
-		
+
 		switch opType {
 		case namedb.NameNew:
 			commitHash := make([]byte, 20)
@@ -1586,9 +1586,12 @@ func TestNameOperationDustLimitValidation(t *testing.T) {
 	t.Run("NAME_UPDATE with dust limit validation", func(t *testing.T) {
 		// Setup: Create existing name for NAME_UPDATE to reference
 		nameStr := "d/updatetest"
-		txHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+		txHash, err := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+		if err != nil {
+			t.Fatalf("Failed to create test hash: %v", err)
+		}
 		nameHeight := int32(100)
-		
+
 		record := &namedb.NameRecord{
 			Name:      nameStr,
 			Value:     `{"ip":"1.2.3.4"}`,
@@ -1647,7 +1650,7 @@ func TestNameOperationDustLimitValidation(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				// Create NAME_UPDATE block with custom name for this test
 				updateHeight := nameHeight + 50
-				
+
 				script := buildScript(
 					[]byte{opNameUpdate},
 					pushData([]byte(nameStr)),

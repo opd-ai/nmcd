@@ -123,7 +123,7 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 				// Validate NAME_NEW output value meets dust limit
 				// This prevents spam and uneconomical UTXO creation
 				if txOut.Value < config.DustLimit {
-					return fmt.Errorf("name_new output value %d below dust limit %d", 
+					return fmt.Errorf("name_new output value %d below dust limit %d",
 						txOut.Value, config.DustLimit)
 				}
 
@@ -142,7 +142,7 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 			case namedb.NameFirstUpdate:
 				// Validate NAME_FIRSTUPDATE output value meets dust limit
 				if txOut.Value < config.DustLimit {
-					return fmt.Errorf("name_firstupdate output value %d below dust limit %d", 
+					return fmt.Errorf("name_firstupdate output value %d below dust limit %d",
 						txOut.Value, config.DustLimit)
 				}
 
@@ -180,7 +180,7 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 			case namedb.NameUpdate:
 				// Validate NAME_UPDATE output value meets dust limit
 				if txOut.Value < config.DustLimit {
-					return fmt.Errorf("name_update output value %d below dust limit %d", 
+					return fmt.Errorf("name_update output value %d below dust limit %d",
 						txOut.Value, config.DustLimit)
 				}
 
