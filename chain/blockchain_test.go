@@ -689,7 +689,7 @@ func TestNameFirstUpdateCrossNetworkValidation(t *testing.T) {
 		0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf, 0xb0,
 		0xb1, 0xb2, 0xb3, 0xb4}
 	mainnetCommitHash := computeCommitHash(rand, nameStr, mainnetBC.chainParams)
-	
+
 	if err := mainnetDB.PutNameNew(mainnetCommitHash, 100); err != nil {
 		t.Fatalf("Failed to store NAME_NEW on mainnet: %v", err)
 	}
@@ -710,7 +710,7 @@ func TestNameFirstUpdateCrossNetworkValidation(t *testing.T) {
 	// Try to use the same NAME_NEW commitment on testnet
 	// This simulates a replay attack attempt
 	testnetCommitHash := computeCommitHash(rand, nameStr, testnetBC.chainParams)
-	
+
 	// The commitment hashes should be different due to chain ID
 	if equalBytes(mainnetCommitHash, testnetCommitHash) {
 		t.Fatal("Commitment hashes should differ between mainnet and testnet")
@@ -741,11 +741,11 @@ func TestNameFirstUpdateCrossNetworkValidation(t *testing.T) {
 	// Validate on testnet - should FAIL because commitment hash doesn't match
 	// The blockchain computes testnetCommitHash but database has mainnetCommitHash
 	err = testnetBC.validateNameOperations(block)
-	
+
 	if err == nil {
 		t.Error("Expected validation to fail for cross-network replay attempt, but it succeeded")
 	}
-	
+
 	if err != nil && !strings.Contains(err.Error(), "no matching name_new found") {
 		t.Logf("Got expected error (may vary): %v", err)
 	}

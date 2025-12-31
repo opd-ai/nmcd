@@ -511,13 +511,13 @@ func computeCommitHash(rand []byte, name string, chainParams *chaincfg.Params) [
 	chainID[1] = byte(chainParams.Net >> 8)
 	chainID[2] = byte(chainParams.Net >> 16)
 	chainID[3] = byte(chainParams.Net >> 24)
-	
+
 	// Concatenate: rand || name || chainID
 	data := make([]byte, len(rand)+len(nameBytes)+len(chainID))
 	copy(data, rand)
 	copy(data[len(rand):], nameBytes)
 	copy(data[len(rand)+len(nameBytes):], chainID)
-	
+
 	return btcutil.Hash160(data)
 }
 
