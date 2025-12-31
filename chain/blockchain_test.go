@@ -1712,9 +1712,9 @@ func TestTransactionFeeValidation(t *testing.T) {
 	createUTXO := func(value int64, height int32) (chainhash.Hash, uint32) {
 		tx := wire.NewMsgTx(1)
 		// Create a simple output script (P2PKH-like)
-		script := []byte{0x76, 0xa9, 0x14} // OP_DUP OP_HASH160 OP_PUSH(20)
+		script := []byte{0x76, 0xa9, 0x14}           // OP_DUP OP_HASH160 OP_PUSH(20)
 		script = append(script, make([]byte, 20)...) // 20-byte pubkey hash
-		script = append(script, 0x88, 0xac)           // OP_EQUALVERIFY OP_CHECKSIG
+		script = append(script, 0x88, 0xac)          // OP_EQUALVERIFY OP_CHECKSIG
 		tx.AddTxOut(&wire.TxOut{
 			Value:    value,
 			PkScript: script,
@@ -2023,4 +2023,3 @@ func TestTransactionFeeValidation(t *testing.T) {
 		}
 	})
 }
-

@@ -852,4 +852,3 @@ func TestNameOperationString(t *testing.T) {
 		})
 	}
 }
-
