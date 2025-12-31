@@ -3,7 +3,7 @@
 **Audit Date:** 2025-12-22  
 **Auditor:** Automated Code Audit  
 **Codebase Version:** Current HEAD  
-**Last Updated:** 2025-12-23  
+**Last Updated:** 2025-12-31  
 
 ---
 
@@ -14,11 +14,11 @@
 | CRITICAL BUG | 0 | - |
 | FUNCTIONAL MISMATCH | 5 (4 fixed) | High: 2, Medium: 3 |
 | MISSING FEATURE | 5 (3 fixed) | High: 1, Medium: 3, Low: 1 |
-| EDGE CASE BUG | 1 | Medium: 1 |
+| EDGE CASE BUG | 1 (1 fixed) | Medium: 1 |
 | PERFORMANCE ISSUE | 0 | - |
 | DOCUMENTATION DISCREPANCY | 1 | Low: 1 |
 
-**Total Findings: 12 (7 fixed, 5 remaining)**
+**Total Findings: 12 (8 fixed, 4 remaining)**
 
 The codebase is well-structured with good test coverage. The primary concerns are around incomplete integration between components and missing address tracking for name records. No critical bugs that would cause crashes or data corruption were identified.
 
@@ -240,10 +240,13 @@ func (pm *PeerManager) onInv(p *peer.Peer, msg *wire.MsgInv) {
 
 ---
 
-### EDGE CASE BUG: Potential Race in PeerManager Accept Loop
+### [FIXED] EDGE CASE BUG: Potential Race in PeerManager Accept Loop
 
 **File:** network/peermgr.go:62-94  
 **Severity:** Medium  
+**Status:** ✅ FIXED  
+**Fix Date:** 2025-12-31
+
 **Description:** The `listenLoop` function spawns a goroutine for Accept() that sends on channels, but if the listener is closed while the goroutine is blocked on Accept(), the goroutine will send an error and exit, but subsequent accepts on the closed listener may cause issues.
 
 **Expected Behavior:** Clean shutdown without goroutine leaks or race conditions.
@@ -254,19 +257,12 @@ func (pm *PeerManager) onInv(p *peer.Peer, msg *wire.MsgInv) {
 
 **Reproduction:** Start and stop the node rapidly multiple times.
 
-**Code Reference:**
-```go
-go func() {
-    for {
-        conn, err := listener.Accept()
-        if err != nil {
-            errCh <- err
-            return  // Goroutine exits on error
-        }
-        acceptCh <- conn
-    }
-}()
-```
+**Fix Applied:**
+- Made channels buffered (size 1) to prevent blocking when main loop exits via quit signal
+- Added select statements in the accept goroutine to check quit signal before sending on channels
+- If quit signal is received, the goroutine properly closes any accepted connection and exits
+- This ensures clean shutdown without goroutine leaks or race conditions
+- Added regression test `TestEdgeCaseBugAcceptLoopRace` that starts/stops the PeerManager rapidly
 
 ---
 

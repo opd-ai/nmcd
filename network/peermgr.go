@@ -65,18 +65,29 @@ func NewPeerManager(cfg *Config) (*PeerManager, error) {
 func (pm *PeerManager) listenLoop(listener net.Listener) {
 	defer pm.wg.Done()
 
-	// Use a goroutine to handle Accept() calls that can be interrupted
-	acceptCh := make(chan net.Conn)
-	errCh := make(chan error)
+	// Use buffered channels to prevent goroutine leaks when the main loop exits
+	// via the quit signal before the accept goroutine sends.
+	acceptCh := make(chan net.Conn, 1)
+	errCh := make(chan error, 1)
 
 	go func() {
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
-				errCh <- err
+				select {
+				case errCh <- err:
+				case <-pm.quit:
+					// Main loop has exited, stop sending
+				}
 				return
 			}
-			acceptCh <- conn
+			select {
+			case acceptCh <- conn:
+			case <-pm.quit:
+				// Main loop has exited, close the connection
+				conn.Close()
+				return
+			}
 		}
 	}()
 
