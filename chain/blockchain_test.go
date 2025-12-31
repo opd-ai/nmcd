@@ -1355,7 +1355,13 @@ func createBlockWithNameFirstUpdate(t *testing.T, name string, rand []byte, heig
 		pushData([]byte(name)),
 		pushData(rand),
 		pushData([]byte(value)),
-		[]byte{0x6d, 0x6d}, // OP_2DROP OP_2DROP (for NAME_FIRSTUPDATE: name, rand, value)
+		// NAME_FIRSTUPDATE pushes 4 items onto the stack:
+		// 1. The opcode result/status (from OP_NAME_FIRSTUPDATE itself)
+		// 2. name
+		// 3. rand
+		// 4. value
+		// OP_2DROP OP_2DROP removes all 4 items, leaving a clean stack for P2PKH
+		[]byte{0x6d, 0x6d}, // OP_2DROP OP_2DROP
 		// Add minimal P2PKH suffix for valid script
 		[]byte{0x76, 0xa9, 0x14}, // OP_DUP OP_HASH160 OP_PUSHDATA(20)
 		make([]byte, 20),         // 20-byte pubkey hash
