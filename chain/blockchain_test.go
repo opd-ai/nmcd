@@ -3223,3 +3223,478 @@ func TestStrictScriptValidation(t *testing.T) {
 		}
 	})
 }
+
+// TestDoubleSpendDetection tests that duplicate name operations within the same block are rejected.
+// This prevents consensus violations where multiple transactions could operate on the same name
+// in a single block.
+func TestDoubleSpendDetection(t *testing.T) {
+	// Setup test environment
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	nameDB, err := namedb.NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create name database: %v", err)
+	}
+	defer nameDB.Close()
+
+	bc := &BlockChain{
+		nameDB:      nameDB,
+		chainParams: &config.NamecoinRegTestParams,
+	}
+
+	t.Run("duplicate NAME_NEW commitment in same block", func(t *testing.T) {
+		// Create a commitment hash
+		hash := make([]byte, 20)
+		for i := range hash {
+			hash[i] = byte(i)
+		}
+
+		// Create two NAME_NEW transactions with the same commitment hash
+		script := buildNameNewScript(hash)
+
+		// Create UTXOs for the inputs
+		prevHash1 := chainhash.Hash{}
+		prevHash2 := chainhash.Hash{1}
+		
+		utxo1 := &namedb.UTXO{
+			TxHash:   prevHash1,
+			OutIndex: 0,
+			Value:    config.DustLimit + config.MinRelayTxFee, // Enough for output + fee
+			Address:  "test_address1",
+			PkScript: []byte{0x76, 0xa9},
+			Height:   99,
+		}
+		utxo2 := &namedb.UTXO{
+			TxHash:   prevHash2,
+			OutIndex: 0,
+			Value:    config.DustLimit + config.MinRelayTxFee,
+			Address:  "test_address2",
+			PkScript: []byte{0x76, 0xa9},
+			Height:   99,
+		}
+		
+		if err := nameDB.AddUTXO(utxo1); err != nil {
+			t.Fatalf("failed to add UTXO1: %v", err)
+		}
+		if err := nameDB.AddUTXO(utxo2); err != nil {
+			t.Fatalf("failed to add UTXO2: %v", err)
+		}
+
+		tx1 := wire.NewMsgTx(1)
+		tx1.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: wire.OutPoint{Hash: prevHash1, Index: 0},
+			SignatureScript:  []byte{},
+			Sequence:         0xffffffff,
+		})
+		tx1.AddTxOut(&wire.TxOut{
+			Value:    config.DustLimit,
+			PkScript: script,
+		})
+
+		tx2 := wire.NewMsgTx(1)
+		tx2.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: wire.OutPoint{Hash: prevHash2, Index: 0},
+			SignatureScript:  []byte{},
+			Sequence:         0xffffffff,
+		})
+		tx2.AddTxOut(&wire.TxOut{
+			Value:    config.DustLimit,
+			PkScript: script, // Same commitment hash
+		})
+
+		// Create block with both transactions
+		block := wire.NewMsgBlock(&wire.BlockHeader{
+			Version:   1,
+			Timestamp: time.Now(),
+			Bits:      0x207fffff,
+		})
+		block.AddTransaction(tx1)
+		block.AddTransaction(tx2)
+
+		utilBlock := btcutil.NewBlock(block)
+		utilBlock.SetHeight(100)
+
+		// Should reject duplicate NAME_NEW commitment
+		err := bc.validateNameOperations(utilBlock)
+		if err == nil {
+			t.Fatal("expected error for duplicate NAME_NEW commitment, got nil")
+		}
+		if !strings.Contains(err.Error(), "duplicate name_new commitment") {
+			t.Errorf("expected duplicate commitment error, got: %v", err)
+		}
+	})
+
+	t.Run("duplicate NAME_FIRSTUPDATE in same block", func(t *testing.T) {
+		// First, create and store a NAME_NEW commitment
+		name := "d/testname"
+		rand := make([]byte, 20)
+		for i := range rand {
+			rand[i] = byte(i + 1)
+		}
+		commitHash := computeCommitHash(rand, name, bc.chainParams)
+
+		// Store NAME_NEW in database
+		err := nameDB.PutNameNew(commitHash, 100)
+		if err != nil {
+			t.Fatalf("failed to store NAME_NEW: %v", err)
+		}
+
+		// Create two NAME_FIRSTUPDATE transactions for the same name
+		value := []byte(`{"ip":"1.2.3.4"}`)
+		script := buildNameFirstUpdateScript([]byte(name), rand, value)
+
+		// Create UTXOs for the inputs
+		prevHash1 := chainhash.Hash{10}
+		prevHash2 := chainhash.Hash{11}
+		
+		utxo1 := &namedb.UTXO{
+			TxHash:   prevHash1,
+			OutIndex: 0,
+			Value:    config.DustLimit + config.MinNameOperationFee,
+			Address:  "test_address1",
+			PkScript: []byte{0x76, 0xa9},
+			Height:   99,
+		}
+		utxo2 := &namedb.UTXO{
+			TxHash:   prevHash2,
+			OutIndex: 0,
+			Value:    config.DustLimit + config.MinNameOperationFee,
+			Address:  "test_address2",
+			PkScript: []byte{0x76, 0xa9},
+			Height:   99,
+		}
+		
+		if err := nameDB.AddUTXO(utxo1); err != nil {
+			t.Fatalf("failed to add UTXO1: %v", err)
+		}
+		if err := nameDB.AddUTXO(utxo2); err != nil {
+			t.Fatalf("failed to add UTXO2: %v", err)
+		}
+
+		tx1 := wire.NewMsgTx(1)
+		tx1.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: wire.OutPoint{Hash: prevHash1, Index: 0},
+			SignatureScript:  []byte{},
+			Sequence:         0xffffffff,
+		})
+		tx1.AddTxOut(&wire.TxOut{
+			Value:    config.DustLimit,
+			PkScript: script,
+		})
+
+		tx2 := wire.NewMsgTx(1)
+		tx2.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: wire.OutPoint{Hash: prevHash2, Index: 0},
+			SignatureScript:  []byte{},
+			Sequence:         0xffffffff,
+		})
+		tx2.AddTxOut(&wire.TxOut{
+			Value:    config.DustLimit,
+			PkScript: script, // Same name
+		})
+
+		// Create block with both transactions
+		block := wire.NewMsgBlock(&wire.BlockHeader{
+			Version:   1,
+			Timestamp: time.Now(),
+			Bits:      0x207fffff,
+		})
+		block.AddTransaction(tx1)
+		block.AddTransaction(tx2)
+
+		utilBlock := btcutil.NewBlock(block)
+		utilBlock.SetHeight(113) // 13 blocks after NAME_NEW (meets minimum requirement)
+
+		// Should reject duplicate NAME_FIRSTUPDATE
+		err = bc.validateNameOperations(utilBlock)
+		if err == nil {
+			t.Fatal("expected error for duplicate NAME_FIRSTUPDATE, got nil")
+		}
+		if !strings.Contains(err.Error(), "duplicate name operation") {
+			t.Errorf("expected duplicate name operation error, got: %v", err)
+		}
+	})
+
+	t.Run("duplicate NAME_UPDATE in same block", func(t *testing.T) {
+		// First, create a name in the database
+		name := "d/updatetest"
+		txHash := chainhash.Hash{20}
+
+		nameRecord := &namedb.NameRecord{
+			Name:      name,
+			Value:     `{"ip":"1.2.3.4"}`,
+			TxHash:    txHash,
+			OutIndex:  0,
+			Height:    100,
+			ExpiresAt: 100 + config.NameExpirationBlocks,
+			Address:   "test_address",
+			UpdatedAt: time.Now(),
+		}
+
+		err := nameDB.PutName(name, nameRecord)
+		if err != nil {
+			t.Fatalf("failed to store name: %v", err)
+		}
+
+		// Store UTXO for the name - need enough value for output + fee
+		utxo := &namedb.UTXO{
+			TxHash:   txHash,
+			OutIndex: 0,
+			Value:    config.DustLimit + config.MinNameOperationFee,
+			Address:  "test_address",
+			PkScript: []byte{0x76, 0xa9},
+			Height:   100,
+		}
+		err = nameDB.AddUTXO(utxo)
+		if err != nil {
+			t.Fatalf("failed to store UTXO: %v", err)
+		}
+
+		// Create two NAME_UPDATE transactions for the same name
+		value := []byte(`{"ip":"5.6.7.8"}`)
+		script := buildNameUpdateScript([]byte(name), value)
+
+		tx1 := wire.NewMsgTx(1)
+		tx1.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: wire.OutPoint{Hash: txHash, Index: 0},
+			SignatureScript:  []byte{},
+			Sequence:         0xffffffff,
+		})
+		tx1.AddTxOut(&wire.TxOut{
+			Value:    config.DustLimit,
+			PkScript: script,
+		})
+
+		tx2 := wire.NewMsgTx(1)
+		tx2.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: wire.OutPoint{Hash: txHash, Index: 0}, // Same UTXO
+			SignatureScript:  []byte{},
+			Sequence:         0xffffffff,
+		})
+		tx2.AddTxOut(&wire.TxOut{
+			Value:    config.DustLimit,
+			PkScript: script, // Same name
+		})
+
+		// Create block with both transactions
+		block := wire.NewMsgBlock(&wire.BlockHeader{
+			Version:   1,
+			Timestamp: time.Now(),
+			Bits:      0x207fffff,
+		})
+		block.AddTransaction(tx1)
+		block.AddTransaction(tx2)
+
+		utilBlock := btcutil.NewBlock(block)
+		utilBlock.SetHeight(150)
+
+		// Should reject duplicate NAME_UPDATE
+		err = bc.validateNameOperations(utilBlock)
+		if err == nil {
+			t.Fatal("expected error for duplicate NAME_UPDATE, got nil")
+		}
+		if !strings.Contains(err.Error(), "duplicate name operation") {
+			t.Errorf("expected duplicate name operation error, got: %v", err)
+		}
+	})
+
+	t.Run("different names in same block should succeed", func(t *testing.T) {
+		// Create NAME_NEW commitments for two different names
+		name1 := "d/name1"
+		name2 := "d/name2"
+		rand1 := make([]byte, 20)
+		rand2 := make([]byte, 20)
+		for i := range rand1 {
+			rand1[i] = byte(i)
+			rand2[i] = byte(i + 10)
+		}
+
+		commitHash1 := computeCommitHash(rand1, name1, bc.chainParams)
+		commitHash2 := computeCommitHash(rand2, name2, bc.chainParams)
+
+		// Store NAME_NEW commitments
+		err := nameDB.PutNameNew(commitHash1, 200)
+		if err != nil {
+			t.Fatalf("failed to store NAME_NEW 1: %v", err)
+		}
+		err = nameDB.PutNameNew(commitHash2, 200)
+		if err != nil {
+			t.Fatalf("failed to store NAME_NEW 2: %v", err)
+		}
+
+		// Create two NAME_FIRSTUPDATE transactions for different names
+		value := []byte(`{"ip":"1.2.3.4"}`)
+		script1 := buildNameFirstUpdateScript([]byte(name1), rand1, value)
+		script2 := buildNameFirstUpdateScript([]byte(name2), rand2, value)
+
+		// Create UTXOs for the inputs
+		prevHash1 := chainhash.Hash{30}
+		prevHash2 := chainhash.Hash{31}
+		
+		utxo1 := &namedb.UTXO{
+			TxHash:   prevHash1,
+			OutIndex: 0,
+			Value:    config.DustLimit + config.MinNameOperationFee,
+			Address:  "test_address1",
+			PkScript: []byte{0x76, 0xa9},
+			Height:   199,
+		}
+		utxo2 := &namedb.UTXO{
+			TxHash:   prevHash2,
+			OutIndex: 0,
+			Value:    config.DustLimit + config.MinNameOperationFee,
+			Address:  "test_address2",
+			PkScript: []byte{0x76, 0xa9},
+			Height:   199,
+		}
+		
+		if err := nameDB.AddUTXO(utxo1); err != nil {
+			t.Fatalf("failed to add UTXO1: %v", err)
+		}
+		if err := nameDB.AddUTXO(utxo2); err != nil {
+			t.Fatalf("failed to add UTXO2: %v", err)
+		}
+
+		tx1 := wire.NewMsgTx(1)
+		tx1.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: wire.OutPoint{Hash: prevHash1, Index: 0},
+			SignatureScript:  []byte{},
+			Sequence:         0xffffffff,
+		})
+		tx1.AddTxOut(&wire.TxOut{
+			Value:    config.DustLimit,
+			PkScript: script1,
+		})
+
+		tx2 := wire.NewMsgTx(1)
+		tx2.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: wire.OutPoint{Hash: prevHash2, Index: 0},
+			SignatureScript:  []byte{},
+			Sequence:         0xffffffff,
+		})
+		tx2.AddTxOut(&wire.TxOut{
+			Value:    config.DustLimit,
+			PkScript: script2,
+		})
+
+		// Create block with both transactions
+		block := wire.NewMsgBlock(&wire.BlockHeader{
+			Version:   1,
+			Timestamp: time.Now(),
+			Bits:      0x207fffff,
+		})
+		block.AddTransaction(tx1)
+		block.AddTransaction(tx2)
+
+		utilBlock := btcutil.NewBlock(block)
+		utilBlock.SetHeight(213) // 13 blocks after NAME_NEW
+
+		// Should succeed - different names
+		err = bc.validateNameOperations(utilBlock)
+		if err != nil {
+			t.Errorf("expected no error for different names in same block, got: %v", err)
+		}
+	})
+
+	t.Run("same name in different operation types within block should fail", func(t *testing.T) {
+		// This is a tricky edge case: what if someone tries to do NAME_FIRSTUPDATE
+		// and NAME_UPDATE for the same name in the same block?
+		// This should be rejected because it violates the single-operation-per-name-per-block rule
+		
+		name := "d/edgecase"
+		rand := make([]byte, 20)
+		for i := range rand {
+			rand[i] = byte(i + 20)
+		}
+		commitHash := computeCommitHash(rand, name, bc.chainParams)
+
+		// Store NAME_NEW
+		err := nameDB.PutNameNew(commitHash, 300)
+		if err != nil {
+			t.Fatalf("failed to store NAME_NEW: %v", err)
+		}
+
+		// Create NAME_FIRSTUPDATE transaction
+		value := []byte(`{"ip":"1.2.3.4"}`)
+		script1 := buildNameFirstUpdateScript([]byte(name), rand, value)
+
+		// Create UTXOs for the inputs
+		prevHash1 := chainhash.Hash{40}
+		prevHash2 := chainhash.Hash{41}
+		
+		utxo1 := &namedb.UTXO{
+			TxHash:   prevHash1,
+			OutIndex: 0,
+			Value:    config.DustLimit + config.MinNameOperationFee,
+			Address:  "test_address1",
+			PkScript: []byte{0x76, 0xa9},
+			Height:   299,
+		}
+		utxo2 := &namedb.UTXO{
+			TxHash:   prevHash2,
+			OutIndex: 0,
+			Value:    config.DustLimit + config.MinNameOperationFee,
+			Address:  "test_address2",
+			PkScript: []byte{0x76, 0xa9},
+			Height:   299,
+		}
+		
+		if err := nameDB.AddUTXO(utxo1); err != nil {
+			t.Fatalf("failed to add UTXO1: %v", err)
+		}
+		if err := nameDB.AddUTXO(utxo2); err != nil {
+			t.Fatalf("failed to add UTXO2: %v", err)
+		}
+
+		tx1 := wire.NewMsgTx(1)
+		tx1.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: wire.OutPoint{Hash: prevHash1, Index: 0},
+			SignatureScript:  []byte{},
+			Sequence:         0xffffffff,
+		})
+		tx1.AddTxOut(&wire.TxOut{
+			Value:    config.DustLimit,
+			PkScript: script1,
+		})
+
+		// Try to create NAME_UPDATE for same name (even though it doesn't exist yet in DB)
+		// This should still fail due to duplicate name detection
+		script2 := buildNameUpdateScript([]byte(name), []byte(`{"ip":"5.6.7.8"}`))
+
+		tx2 := wire.NewMsgTx(1)
+		tx2.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: wire.OutPoint{Hash: prevHash2, Index: 0},
+			SignatureScript:  []byte{},
+			Sequence:         0xffffffff,
+		})
+		tx2.AddTxOut(&wire.TxOut{
+			Value:    config.DustLimit,
+			PkScript: script2,
+		})
+
+		// Create block with both transactions
+		block := wire.NewMsgBlock(&wire.BlockHeader{
+			Version:   1,
+			Timestamp: time.Now(),
+			Bits:      0x207fffff,
+		})
+		block.AddTransaction(tx1)
+		block.AddTransaction(tx2)
+
+		utilBlock := btcutil.NewBlock(block)
+		utilBlock.SetHeight(313)
+
+		// Should reject - same name even if different operations
+		err = bc.validateNameOperations(utilBlock)
+		if err == nil {
+			t.Fatal("expected error for same name with different operations in same block, got nil")
+		}
+		// The error might be "duplicate name operation" or "name not found" since
+		// the NAME_UPDATE will be validated but the name doesn't exist in the DB yet.
+		// Both are acceptable since the block should be rejected.
+		if !strings.Contains(err.Error(), "duplicate name operation") && 
+		   !strings.Contains(err.Error(), "name not found") {
+			t.Errorf("expected duplicate name operation or name not found error, got: %v", err)
+		}
+	})
+}

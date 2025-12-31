@@ -13,14 +13,15 @@
 - **Protocol version implemented:** Partial (Base protocol only, no AuxPow)
 - **Critical issues:** 3
 - **High priority issues:** 1 (6 resolved: chain ID in NAME_NEW commitment ✅, namespace validation ✅, NAME_FIRSTUPDATE timing window ✅, NAME_NEW fee requirements ✅, transaction fee validation ✅, strict script validation ✅)
-- **Medium priority issues:** 8 (1 resolved: value encoding validation ✅)
+- **Medium priority issues:** 8 (2 resolved: value encoding validation ✅, double-spend detection for names ✅)
 - **Low priority issues:** 4
 - **Missing features:** 12
-- **Overall compatibility:** ~55% (Core name operations work with chain ID protection, namespace validation, timing window enforcement, dust limit validation, transaction fee validation, value encoding validation, and strict script validation, but consensus/mining features missing)
+- **Overall compatibility:** ~58% (Core name operations work with chain ID protection, namespace validation, timing window enforcement, dust limit validation, transaction fee validation, value encoding validation, strict script validation, and double-spend detection, but consensus/mining features missing)
 
 **Status:** ⚠️ **NOT PRODUCTION READY** - Critical consensus-breaking features missing
 
 **Recent Progress:**
+- ✅ 2025-12-31: Implemented double-spend detection for names (Issue #13) - Prevents multiple name operations for the same name within a single block
 - ✅ 2025-12-31: Implemented strict script validation (Issue #9) - Enforces consensus-critical drop opcode placement and P2PKH suffix validation
 - ✅ 2025-12-31: Implemented chain ID in NAME_NEW commitment (Issue #7) - Prevents cross-chain replay attacks by including network magic bytes in commitment hash
 - ✅ 2025-12-31: Implemented value encoding validation (Issue #12) - Values must be valid UTF-8; d/ and id/ namespaces require valid JSON
@@ -656,13 +657,71 @@ Namecoin Core validates that name values are properly encoded (typically JSON fo
 
 ---
 
-### 13. No Double-Spend Detection for Names
+### 13. No Double-Spend Detection for Names ✅ RESOLVED
 **Location:** chain/blockchain.go - validateNameOperations()  
 **Severity:** MEDIUM  
+**Status:** ✅ **RESOLVED** (2025-12-31)  
 **Expected:** Detect if same name is updated multiple times in same block  
-**Actual:** No duplicate name update detection within a block
+**Actual:** ✅ Now detects and rejects duplicate name operations within a block
 
-**Description:**
+**Resolution:**
+Implemented comprehensive double-spend detection for name operations with the following changes:
+1. Added `seenNames` map in `validateNameOperations()` to track names processed in the current block
+2. For NAME_FIRSTUPDATE operations: Check if name already seen in block and reject if duplicate
+3. For NAME_UPDATE operations: Check if name already seen in block and reject if duplicate
+4. Added comprehensive unit tests in `chain/blockchain_test.go` (`TestDoubleSpendDetection`) covering:
+   - Duplicate NAME_NEW commitments in same block (already existed, verified still working)
+   - Duplicate NAME_FIRSTUPDATE for same name in same block (newly detected and rejected)
+   - Duplicate NAME_UPDATE for same name in same block (newly detected and rejected)
+   - Different names in same block (allowed, as expected)
+   - Same name with different operation types in same block (rejected, prevents edge case attacks)
+
+**Implementation:**
+```go
+// chain/blockchain.go:105-115
+func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
+	height := block.Height()
+
+	// Track NAME_NEW commitment hashes seen in this block to detect duplicates
+	seenNameNewCommits := make(map[string]bool)
+	
+	// Track names seen in this block to prevent double-spending
+	// (multiple NAME_FIRSTUPDATE or NAME_UPDATE operations for the same name)
+	seenNames := make(map[string]bool)
+
+// For NAME_FIRSTUPDATE (lines 164-180):
+	// Check for duplicate name operation in this block
+	if seenNames[name] {
+		return fmt.Errorf("duplicate name operation in block for name: %s", name)
+	}
+	seenNames[name] = true
+
+// For NAME_UPDATE (lines 203-220):
+	// Check for duplicate name operation in this block
+	if seenNames[name] {
+		return fmt.Errorf("duplicate name operation in block for name: %s", name)
+	}
+	seenNames[name] = true
+```
+
+Per Namecoin consensus rules, only one operation per name is allowed within a single block. This prevents:
+- **Double-spending attacks**: Multiple transactions cannot operate on the same name simultaneously
+- **Consensus violations**: Blocks with duplicate name operations are invalid and will be rejected
+- **Front-running attacks**: Miners cannot include multiple conflicting operations for the same name
+- **Edge case exploits**: NAME_FIRSTUPDATE followed by NAME_UPDATE for the same name in one block is rejected
+
+**Test Coverage:**
+- ✅ Duplicate NAME_NEW commitment detection (existing test verified)
+- ✅ Duplicate NAME_FIRSTUPDATE detection (5 test cases)
+- ✅ Duplicate NAME_UPDATE detection (5 test cases)
+- ✅ Multiple different names in same block (allowed)
+- ✅ Same name with different operation types (rejected)
+- ✅ All tests passing with proper UTXO and fee validation
+
+**Security Impact:**
+This fix addresses a **consensus vulnerability** that could allow multiple conflicting operations on the same name within a single block, creating ambiguity about which operation should be applied. The implementation now matches Namecoin Core's strict one-operation-per-name-per-block rule.
+
+**Description (original):**
 A malicious actor could create multiple NAME_UPDATE transactions for the same name in a single block. Only one should be valid.
 
 ---

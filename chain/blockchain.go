@@ -109,6 +109,10 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 	// Track NAME_NEW commitment hashes seen in this block to detect duplicates.
 	// Using string conversion of byte slice as map key is idiomatic in Go.
 	seenNameNewCommits := make(map[string]bool)
+	
+	// Track names seen in this block to prevent double-spending
+	// (multiple NAME_FIRSTUPDATE or NAME_UPDATE operations for the same name)
+	seenNames := make(map[string]bool)
 
 	for txIdx, tx := range block.Transactions() {
 		msgTx := tx.MsgTx()
@@ -168,6 +172,12 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 						txOut.Value, config.DustLimit)
 				}
 
+				// Check for duplicate name operation in this block
+				if seenNames[name] {
+					return fmt.Errorf("duplicate name operation in block for name: %s", name)
+				}
+				seenNames[name] = true
+
 				// Verify name doesn't exist
 				if _, err := bc.nameDB.GetName(name); err == nil {
 					return fmt.Errorf("name already exists: %s", name)
@@ -206,6 +216,12 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 					return fmt.Errorf("name_update output value %d below dust limit %d",
 						txOut.Value, config.DustLimit)
 				}
+
+				// Check for duplicate name operation in this block
+				if seenNames[name] {
+					return fmt.Errorf("duplicate name operation in block for name: %s", name)
+				}
+				seenNames[name] = true
 
 				// Verify name exists and not expired
 				record, err := bc.nameDB.GetName(name)
