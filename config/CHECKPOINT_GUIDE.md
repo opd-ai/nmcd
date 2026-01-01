@@ -12,7 +12,7 @@ Checkpoints are hardcoded block heights and their corresponding block hashes tha
 
 The checkpoint infrastructure is now implemented with genesis blocks for all three networks:
 - **Mainnet**: Genesis block (height 0)
-- **Testnet**: Genesis block (height 0)  
+- **Testnet**: Genesis block (height 0)
 - **Regtest**: Genesis block (height 0)
 
 **Additional checkpoints should be added** from the official Namecoin Core source code to improve security and sync performance.
@@ -63,12 +63,12 @@ var (
     mainnetBlock19200Hash = chainhash.Hash([chainhash.HashSize]byte{
         // ... bytes here
     })
-    
+
     // Block 24000: Name expiration rule change
     mainnetBlock24000Hash = chainhash.Hash([chainhash.HashSize]byte{
         // ... bytes here
     })
-    
+
     // Add more as needed
 )
 ```
@@ -171,15 +171,15 @@ While manual conversion is straightforward, you could create a small tool to aut
 func hexHashToBytes(hexStr string) [32]byte {
     // Remove 0x prefix if present
     hexStr = strings.TrimPrefix(hexStr, "0x")
-    
+
     // Decode hex to bytes
     bytes, _ := hex.DecodeString(hexStr)
-    
+
     // Reverse for little-endian
     for i, j := 0, len(bytes)-1; i < j; i, j = i+1, j-1 {
         bytes[i], bytes[j] = bytes[j], bytes[i]
     }
-    
+
     var result [32]byte
     copy(result[:], bytes)
     return result

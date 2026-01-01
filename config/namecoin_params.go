@@ -222,7 +222,7 @@ var NamecoinMainNetParams = chaincfg.Params{
 	//
 	// Important checkpoints to consider adding:
 	// - Block 19200: AuxPow (merged mining) activation
-	// - Block 24000: Name expiration rule change  
+	// - Block 24000: Name expiration rule change
 	// - Regular intervals (e.g., every 50,000-100,000 blocks for recent history)
 	Checkpoints: []chaincfg.Checkpoint{
 		{Height: 0, Hash: &MainNetGenesisHash},
