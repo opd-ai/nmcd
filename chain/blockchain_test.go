@@ -56,8 +56,8 @@ func buildNameNewScript(hash []byte) []byte {
 	return buildScript(
 		[]byte{opNameNew},
 		pushData(hash),
-		[]byte{op2Drop},    // Required OP_2DROP
-		makeP2PKHScript(),  // Required P2PKH suffix
+		[]byte{op2Drop},   // Required OP_2DROP
+		makeP2PKHScript(), // Required P2PKH suffix
 	)
 }
 
@@ -69,9 +69,9 @@ func buildNameFirstUpdateScript(name, rand, value []byte) []byte {
 		pushData(name),
 		pushData(rand),
 		pushData(value),
-		[]byte{op2Drop},    // Required first OP_2DROP
-		[]byte{op2Drop},    // Required second OP_2DROP
-		makeP2PKHScript(),  // Required P2PKH suffix
+		[]byte{op2Drop},   // Required first OP_2DROP
+		[]byte{op2Drop},   // Required second OP_2DROP
+		makeP2PKHScript(), // Required P2PKH suffix
 	)
 }
 
@@ -82,9 +82,9 @@ func buildNameUpdateScript(name, value []byte) []byte {
 		[]byte{opNameUpdate},
 		pushData(name),
 		pushData(value),
-		[]byte{op2Drop},    // Required OP_2DROP
-		[]byte{opDrop},     // Required OP_DROP
-		makeP2PKHScript(),  // Required P2PKH suffix
+		[]byte{op2Drop},   // Required OP_2DROP
+		[]byte{opDrop},    // Required OP_DROP
+		makeP2PKHScript(), // Required P2PKH suffix
 	)
 }
 
@@ -99,8 +99,8 @@ func TestParseNameScript_NameNew(t *testing.T) {
 	script := buildScript(
 		[]byte{opNameNew},
 		pushData(hash),
-		[]byte{op2Drop},    // Required OP_2DROP
-		makeP2PKHScript(),  // Required P2PKH suffix
+		[]byte{op2Drop},   // Required OP_2DROP
+		makeP2PKHScript(), // Required P2PKH suffix
 	)
 
 	op, name, value, err := parseNameScript(script)
@@ -159,9 +159,9 @@ func TestParseNameScript_NameFirstUpdate(t *testing.T) {
 				pushData([]byte(tc.scriptName)),
 				pushData(tc.rand),
 				pushData([]byte(tc.scriptValue)),
-				[]byte{op2Drop},    // Required first OP_2DROP
-				[]byte{op2Drop},    // Required second OP_2DROP
-				makeP2PKHScript(),  // Required P2PKH suffix
+				[]byte{op2Drop},   // Required first OP_2DROP
+				[]byte{op2Drop},   // Required second OP_2DROP
+				makeP2PKHScript(), // Required P2PKH suffix
 			)
 
 			op, name, value, err := parseNameScript(script)
@@ -211,9 +211,9 @@ func TestParseNameScript_NameUpdate(t *testing.T) {
 				[]byte{opNameUpdate},
 				pushData([]byte(tc.scriptName)),
 				pushData([]byte(tc.scriptValue)),
-				[]byte{op2Drop},    // Required OP_2DROP
-				[]byte{opDrop},     // Required OP_DROP
-				makeP2PKHScript(),  // Required P2PKH suffix
+				[]byte{op2Drop},   // Required OP_2DROP
+				[]byte{opDrop},    // Required OP_DROP
+				makeP2PKHScript(), // Required P2PKH suffix
 			)
 
 			op, name, value, err := parseNameScript(script)
@@ -327,9 +327,9 @@ func TestParseNameScript_PushDataFormats(t *testing.T) {
 			[]byte{opNameUpdate},
 			pushData([]byte(name)),
 			pushData([]byte(value)),
-			[]byte{op2Drop},    // Required OP_2DROP
-			[]byte{opDrop},     // Required OP_DROP
-			makeP2PKHScript(),  // Required P2PKH suffix
+			[]byte{op2Drop},   // Required OP_2DROP
+			[]byte{opDrop},    // Required OP_DROP
+			makeP2PKHScript(), // Required P2PKH suffix
 		)
 
 		op, parsedName, parsedValue, err := parseNameScript(script)
@@ -359,9 +359,9 @@ func TestParseNameScript_PushDataFormats(t *testing.T) {
 			[]byte{opNameUpdate},
 			pushData([]byte(name)),
 			pushData([]byte(value)),
-			[]byte{op2Drop},    // Required OP_2DROP
-			[]byte{opDrop},     // Required OP_DROP
-			makeP2PKHScript(),  // Required P2PKH suffix
+			[]byte{op2Drop},   // Required OP_2DROP
+			[]byte{opDrop},    // Required OP_DROP
+			makeP2PKHScript(), // Required P2PKH suffix
 		)
 
 		op, parsedName, parsedValue, err := parseNameScript(script)
@@ -391,9 +391,9 @@ func TestParseNameScript_PushDataFormats(t *testing.T) {
 			[]byte{opNameUpdate},
 			pushData([]byte(name)),
 			pushData([]byte(value)),
-			[]byte{op2Drop},    // Required OP_2DROP
-			[]byte{opDrop},     // Required OP_DROP
-			makeP2PKHScript(),  // Required P2PKH suffix
+			[]byte{op2Drop},   // Required OP_2DROP
+			[]byte{opDrop},    // Required OP_DROP
+			makeP2PKHScript(), // Required P2PKH suffix
 		)
 
 		op, parsedName, parsedValue, err := parseNameScript(script)
@@ -2703,9 +2703,9 @@ func TestNameUpdateUTXOChainValidation(t *testing.T) {
 			[]byte{opNameUpdate},
 			pushData([]byte(nameStr)),
 			pushData([]byte(updatedValue)),
-			[]byte{op2Drop},    // Required OP_2DROP
-			[]byte{opDrop},     // Required OP_DROP
-			makeP2PKHScript(),  // Required P2PKH suffix
+			[]byte{op2Drop},   // Required OP_2DROP
+			[]byte{opDrop},    // Required OP_DROP
+			makeP2PKHScript(), // Required P2PKH suffix
 		)
 
 		tx := wire.NewMsgTx(1)
@@ -2750,9 +2750,9 @@ func TestNameUpdateUTXOChainValidation(t *testing.T) {
 			[]byte{opNameUpdate},
 			pushData([]byte(nameStr)),
 			pushData([]byte(updatedValue)),
-			[]byte{op2Drop},    // Required OP_2DROP
-			[]byte{opDrop},     // Required OP_DROP
-			makeP2PKHScript(),  // Required P2PKH suffix
+			[]byte{op2Drop},   // Required OP_2DROP
+			[]byte{opDrop},    // Required OP_DROP
+			makeP2PKHScript(), // Required P2PKH suffix
 		)
 
 		tx := wire.NewMsgTx(1)
@@ -2795,9 +2795,9 @@ func TestNameUpdateUTXOChainValidation(t *testing.T) {
 			[]byte{opNameUpdate},
 			pushData([]byte(nameStr)),
 			pushData([]byte(updatedValue)),
-			[]byte{op2Drop},    // Required OP_2DROP
-			[]byte{opDrop},     // Required OP_DROP
-			makeP2PKHScript(),  // Required P2PKH suffix
+			[]byte{op2Drop},   // Required OP_2DROP
+			[]byte{opDrop},    // Required OP_DROP
+			makeP2PKHScript(), // Required P2PKH suffix
 		)
 
 		tx := wire.NewMsgTx(1)
@@ -2834,9 +2834,9 @@ func TestNameUpdateUTXOChainValidation(t *testing.T) {
 			[]byte{opNameUpdate},
 			pushData([]byte(nameStr)),
 			pushData([]byte(updatedValue)),
-			[]byte{op2Drop},    // Required OP_2DROP
-			[]byte{opDrop},     // Required OP_DROP
-			makeP2PKHScript(),  // Required P2PKH suffix
+			[]byte{op2Drop},   // Required OP_2DROP
+			[]byte{opDrop},    // Required OP_DROP
+			makeP2PKHScript(), // Required P2PKH suffix
 		)
 
 		tx := wire.NewMsgTx(1)
@@ -3255,7 +3255,7 @@ func TestDoubleSpendDetection(t *testing.T) {
 		// Create UTXOs for the inputs
 		prevHash1 := chainhash.Hash{}
 		prevHash2 := chainhash.Hash{1}
-		
+
 		utxo1 := &namedb.UTXO{
 			TxHash:   prevHash1,
 			OutIndex: 0,
@@ -3272,7 +3272,7 @@ func TestDoubleSpendDetection(t *testing.T) {
 			PkScript: []byte{0x76, 0xa9},
 			Height:   99,
 		}
-		
+
 		if err := nameDB.AddUTXO(utxo1); err != nil {
 			t.Fatalf("failed to add UTXO1: %v", err)
 		}
@@ -3346,7 +3346,7 @@ func TestDoubleSpendDetection(t *testing.T) {
 		// Create UTXOs for the inputs
 		prevHash1 := chainhash.Hash{10}
 		prevHash2 := chainhash.Hash{11}
-		
+
 		utxo1 := &namedb.UTXO{
 			TxHash:   prevHash1,
 			OutIndex: 0,
@@ -3363,7 +3363,7 @@ func TestDoubleSpendDetection(t *testing.T) {
 			PkScript: []byte{0x76, 0xa9},
 			Height:   99,
 		}
-		
+
 		if err := nameDB.AddUTXO(utxo1); err != nil {
 			t.Fatalf("failed to add UTXO1: %v", err)
 		}
@@ -3530,7 +3530,7 @@ func TestDoubleSpendDetection(t *testing.T) {
 		// Create UTXOs for the inputs
 		prevHash1 := chainhash.Hash{30}
 		prevHash2 := chainhash.Hash{31}
-		
+
 		utxo1 := &namedb.UTXO{
 			TxHash:   prevHash1,
 			OutIndex: 0,
@@ -3547,7 +3547,7 @@ func TestDoubleSpendDetection(t *testing.T) {
 			PkScript: []byte{0x76, 0xa9},
 			Height:   199,
 		}
-		
+
 		if err := nameDB.AddUTXO(utxo1); err != nil {
 			t.Fatalf("failed to add UTXO1: %v", err)
 		}
@@ -3600,7 +3600,7 @@ func TestDoubleSpendDetection(t *testing.T) {
 		// This is a tricky edge case: what if someone tries to do NAME_FIRSTUPDATE
 		// and NAME_UPDATE for the same name in the same block?
 		// This should be rejected because it violates the single-operation-per-name-per-block rule
-		
+
 		name := "d/edgecase"
 		rand := make([]byte, 20)
 		for i := range rand {
@@ -3621,7 +3621,7 @@ func TestDoubleSpendDetection(t *testing.T) {
 		// Create UTXOs for the inputs
 		prevHash1 := chainhash.Hash{40}
 		prevHash2 := chainhash.Hash{41}
-		
+
 		utxo1 := &namedb.UTXO{
 			TxHash:   prevHash1,
 			OutIndex: 0,
@@ -3638,7 +3638,7 @@ func TestDoubleSpendDetection(t *testing.T) {
 			PkScript: []byte{0x76, 0xa9},
 			Height:   299,
 		}
-		
+
 		if err := nameDB.AddUTXO(utxo1); err != nil {
 			t.Fatalf("failed to add UTXO1: %v", err)
 		}
@@ -3798,7 +3798,7 @@ func TestRollbackNameFirstUpdateExactHeight(t *testing.T) {
 	// NOT the estimated height that would have been calculated by the old algorithm.
 	// Example with these test values:
 	//   - Original NAME_NEW height: nameNewHeight variable
-	//   - NAME_FIRSTUPDATE height: firstUpdateHeight variable  
+	//   - NAME_FIRSTUPDATE height: firstUpdateHeight variable
 	//   - Old algorithm would estimate: firstUpdateHeight - MinBlocksBeforeFirstUpdate
 	if restoredNameNew.Height != nameNewHeight {
 		t.Errorf("NAME_NEW height not restored correctly:\n"+
@@ -3895,5 +3895,103 @@ func TestRollbackNameFirstUpdateFallback(t *testing.T) {
 	if restoredNameNew.Height != expectedHeight {
 		t.Errorf("Fallback estimation failed: expected %d, got %d",
 			expectedHeight, restoredNameNew.Height)
+	}
+}
+
+// TestNameExpirationWithHistoryCleanup verifies that expired names have their history cleaned up
+func TestNameExpirationWithHistoryCleanup(t *testing.T) {
+	// Setup test environment
+	dbPath := filepath.Join(t.TempDir(), "test-expiration-cleanup.db")
+	ndb, err := namedb.NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create name database: %v", err)
+	}
+	defer ndb.Close()
+
+	bc := &BlockChain{
+		nameDB:      ndb,
+		chainParams: &config.NamecoinMainNetParams,
+	}
+
+	// Create a name that will expire
+	nameStr := "d/expired"
+	value := "test value"
+	nameHeight := int32(100)
+	expiresAt := nameHeight + config.NameExpirationBlocks // Expires at height 100 + 36000 = 36100
+
+	hash1, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+	hash2, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000002")
+
+	// Create initial name record
+	record1 := &namedb.NameRecord{
+		Name:      nameStr,
+		Value:     value,
+		TxHash:    *hash1,
+		OutIndex:  0,
+		Height:    nameHeight,
+		ExpiresAt: expiresAt,
+		Address:   "Ntest123",
+		UpdatedAt: time.Now(),
+	}
+
+	// Add the name and some history
+	if err := ndb.PutName(nameStr, record1); err != nil {
+		t.Fatalf("Failed to put name: %v", err)
+	}
+	if err := ndb.AddHistory(*hash1, record1); err != nil {
+		t.Fatalf("Failed to add history 1: %v", err)
+	}
+
+	// Update the name to add more history
+	record2 := &namedb.NameRecord{
+		Name:      nameStr,
+		Value:     "updated value",
+		TxHash:    *hash2,
+		OutIndex:  0,
+		Height:    nameHeight + 1000,
+		ExpiresAt: expiresAt + 1000,
+		Address:   "Ntest456",
+		UpdatedAt: time.Now(),
+	}
+	if err := ndb.PutName(nameStr, record2); err != nil {
+		t.Fatalf("Failed to update name: %v", err)
+	}
+	if err := ndb.AddHistory(*hash2, record2); err != nil {
+		t.Fatalf("Failed to add history 2: %v", err)
+	}
+
+	// Verify history exists before expiration
+	history, err := ndb.GetHistory(nameStr)
+	if err != nil {
+		t.Fatalf("Failed to get history before expiration: %v", err)
+	}
+	if len(history) != 2 {
+		t.Errorf("Expected 2 history entries before expiration, got %d", len(history))
+	}
+
+	// Create a block at height where the name expires
+	expirationHeight := expiresAt + 1000 + 1 // One block after the updated expiration
+	msgBlock := wire.NewMsgBlock(&wire.BlockHeader{})
+	block := btcutil.NewBlock(msgBlock)
+	block.SetHeight(expirationHeight)
+
+	// Process the block which should clean up expired names and their history
+	if err := bc.updateNameDatabase(block); err != nil {
+		t.Fatalf("Failed to update name database: %v", err)
+	}
+
+	// Verify the name is deleted
+	_, err = ndb.GetName(nameStr)
+	if err == nil {
+		t.Error("Expected error when getting expired name, got nil")
+	}
+
+	// Verify history is also deleted
+	history, err = ndb.GetHistory(nameStr)
+	if err != nil {
+		t.Fatalf("Failed to get history after expiration: %v", err)
+	}
+	if len(history) != 0 {
+		t.Errorf("Expected 0 history entries after expiration cleanup, got %d", len(history))
 	}
 }

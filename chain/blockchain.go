@@ -109,7 +109,7 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 	// Track NAME_NEW commitment hashes seen in this block to detect duplicates.
 	// Using string conversion of byte slice as map key is idiomatic in Go.
 	seenNameNewCommits := make(map[string]bool)
-	
+
 	// Track names seen in this block to prevent double-spending
 	// (multiple NAME_FIRSTUPDATE or NAME_UPDATE operations for the same name)
 	seenNames := make(map[string]bool)
@@ -238,7 +238,7 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 					Hash:  record.TxHash,
 					Index: record.OutIndex,
 				}
-				
+
 				// Check if any transaction input spends the current name UTXO
 				found := false
 				for _, txIn := range msgTx.TxIn {
@@ -248,7 +248,7 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 						break
 					}
 				}
-				
+
 				if !found {
 					return fmt.Errorf("name_update does not spend current name UTXO (tx=%s, out=%d): name theft attempt for %s",
 						currentUTXO.Hash.String(), currentUTXO.Index, name)
@@ -358,7 +358,12 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 		return err
 	}
 	for _, name := range expired {
+		// Delete the name record
 		if err := bc.nameDB.DeleteName(name); err != nil {
+			return err
+		}
+		// Clean up history entries for the expired name to prevent storage waste
+		if err := bc.nameDB.DeleteHistory(name); err != nil {
 			return err
 		}
 	}
@@ -420,7 +425,7 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 			case namedb.NameFirstUpdate:
 				// Extract the owner address from the script
 				address := extractAddressFromNameScript(txOut.PkScript, bc.chainParams)
-				
+
 				// Retrieve the NAME_NEW record before deleting it so we can store
 				// the original height for accurate reorg handling
 				commitHash := computeCommitHash(extra, name, bc.chainParams)
@@ -439,7 +444,7 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 						nameNewHeight = 0
 					}
 				}
-				
+
 				record := &namedb.NameRecord{
 					Name:          name,
 					Value:         value,
@@ -465,7 +470,7 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 			case namedb.NameUpdate:
 				// Extract the owner address from the script
 				address := extractAddressFromNameScript(txOut.PkScript, bc.chainParams)
-				
+
 				// Preserve the NameNewHeight from the previous record (if available)
 				// This is needed for accurate rollback if this update is later rolled back
 				var nameNewHeight int32
@@ -473,7 +478,7 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 				if err == nil && prevRecord != nil {
 					nameNewHeight = prevRecord.NameNewHeight
 				}
-				
+
 				record := &namedb.NameRecord{
 					Name:          name,
 					Value:         value,
@@ -1121,7 +1126,7 @@ func (bc *BlockChain) rollbackNameOperations(block *btcutil.Block) {
 				// 2. Remove the history entry for this operation
 				// 3. Delete the name from the database
 				// 4. Restore the NAME_NEW commitment that was consumed with exact height
-				
+
 				// Retrieve the name record before deleting to get NameNewHeight
 				nameRecord, err := bc.nameDB.GetName(name)
 				var nameNewHeight int32
@@ -1136,7 +1141,7 @@ func (bc *BlockChain) rollbackNameOperations(block *btcutil.Block) {
 						nameNewHeight = 0
 					}
 				}
-				
+
 				_, _ = bc.nameDB.RemoveLastHistoryEntry(name)
 				_ = bc.nameDB.DeleteName(name)
 

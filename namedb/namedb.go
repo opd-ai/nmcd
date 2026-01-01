@@ -56,14 +56,14 @@ func (op NameOperation) String() string {
 
 // NameRecord represents a name in the database
 type NameRecord struct {
-	Name         string
-	Value        string
-	TxHash       chainhash.Hash
-	OutIndex     uint32 // Output index of the UTXO that owns this name
-	Height       int32
-	ExpiresAt    int32
-	Address      string
-	UpdatedAt    time.Time
+	Name          string
+	Value         string
+	TxHash        chainhash.Hash
+	OutIndex      uint32 // Output index of the UTXO that owns this name
+	Height        int32
+	ExpiresAt     int32
+	Address       string
+	UpdatedAt     time.Time
 	NameNewHeight int32 // Original NAME_NEW height (for NAME_FIRSTUPDATE only, used during reorg rollback)
 }
 
@@ -157,6 +157,40 @@ func (ndb *NameDatabase) DeleteName(name string) error {
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket(namesBucket)
 		return bucket.Delete([]byte(name))
+	})
+}
+
+// DeleteHistory removes all history entries for a name.
+// This should be called when a name is deleted (e.g., due to expiration)
+// to clean up storage and prevent history entries from accumulating.
+func (ndb *NameDatabase) DeleteHistory(name string) error {
+	ndb.mu.Lock()
+	defer ndb.mu.Unlock()
+
+	return ndb.db.Update(func(tx *bbolt.Tx) error {
+		indexBucket := tx.Bucket(historyIndexBucket)
+		histBucket := tx.Bucket(historyBucket)
+
+		// Get the list of txHashes from the index
+		indexData := indexBucket.Get([]byte(name))
+		if indexData == nil {
+			return nil // No history for this name
+		}
+
+		if len(indexData)%txHashSize != 0 {
+			return fmt.Errorf("corrupt history index for name: %s", name)
+		}
+
+		// Delete all history records from the history bucket
+		for i := 0; i < len(indexData); i += txHashSize {
+			txHashBytes := indexData[i : i+txHashSize]
+			if err := histBucket.Delete(txHashBytes); err != nil {
+				return err
+			}
+		}
+
+		// Delete the index entry
+		return indexBucket.Delete([]byte(name))
 	})
 }
 

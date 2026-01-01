@@ -862,3 +862,172 @@ func TestNameOperationString(t *testing.T) {
 		})
 	}
 }
+
+// TestDeleteHistory verifies that DeleteHistory removes all history entries for a name
+func TestDeleteHistory(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test-delete-history.db")
+
+	db, err := NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Create test hashes
+	hash1, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+	hash2, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000002")
+	hash3, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000003")
+
+	// Create test records
+	record1 := &NameRecord{
+		Name:      "d/test",
+		Value:     "value1",
+		TxHash:    *hash1,
+		Height:    100,
+		ExpiresAt: 200,
+		UpdatedAt: time.Now(),
+	}
+	record2 := &NameRecord{
+		Name:      "d/test",
+		Value:     "value2",
+		TxHash:    *hash2,
+		Height:    150,
+		ExpiresAt: 250,
+		UpdatedAt: time.Now(),
+	}
+	record3 := &NameRecord{
+		Name:      "d/test",
+		Value:     "value3",
+		TxHash:    *hash3,
+		Height:    180,
+		ExpiresAt: 280,
+		UpdatedAt: time.Now(),
+	}
+
+	// Add history entries
+	if err := db.AddHistory(*hash1, record1); err != nil {
+		t.Fatalf("Failed to add history 1: %v", err)
+	}
+	if err := db.AddHistory(*hash2, record2); err != nil {
+		t.Fatalf("Failed to add history 2: %v", err)
+	}
+	if err := db.AddHistory(*hash3, record3); err != nil {
+		t.Fatalf("Failed to add history 3: %v", err)
+	}
+
+	// Verify history exists before deletion
+	history, err := db.GetHistory("d/test")
+	if err != nil {
+		t.Fatalf("Failed to get history before deletion: %v", err)
+	}
+	if len(history) != 3 {
+		t.Errorf("Expected 3 history entries before deletion, got %d", len(history))
+	}
+
+	// Delete history
+	if err := db.DeleteHistory("d/test"); err != nil {
+		t.Fatalf("Failed to delete history: %v", err)
+	}
+
+	// Verify history is empty after deletion
+	history, err = db.GetHistory("d/test")
+	if err != nil {
+		t.Fatalf("Failed to get history after deletion: %v", err)
+	}
+	if len(history) != 0 {
+		t.Errorf("Expected 0 history entries after deletion, got %d", len(history))
+	}
+}
+
+// TestDeleteHistoryEmpty verifies that DeleteHistory doesn't error on non-existent names
+func TestDeleteHistoryEmpty(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test-delete-history-empty.db")
+
+	db, err := NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Try to delete history for a name that has no history
+	err = db.DeleteHistory("d/nonexistent")
+	if err != nil {
+		t.Errorf("DeleteHistory should not error on non-existent name: %v", err)
+	}
+}
+
+// TestDeleteHistoryMultipleNames verifies that DeleteHistory only affects the specified name
+func TestDeleteHistoryMultipleNames(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test-delete-history-multiple.db")
+
+	db, err := NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Create test hashes
+	hash1, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+	hash2, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000002")
+	hash3, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000003")
+
+	// Create records for different names
+	record1 := &NameRecord{
+		Name:      "d/name1",
+		Value:     "value1",
+		TxHash:    *hash1,
+		Height:    100,
+		ExpiresAt: 200,
+		UpdatedAt: time.Now(),
+	}
+	record2 := &NameRecord{
+		Name:      "d/name2",
+		Value:     "value2",
+		TxHash:    *hash2,
+		Height:    150,
+		ExpiresAt: 250,
+		UpdatedAt: time.Now(),
+	}
+	record3 := &NameRecord{
+		Name:      "d/name2",
+		Value:     "value3",
+		TxHash:    *hash3,
+		Height:    180,
+		ExpiresAt: 280,
+		UpdatedAt: time.Now(),
+	}
+
+	// Add history for both names
+	if err := db.AddHistory(*hash1, record1); err != nil {
+		t.Fatalf("Failed to add history for name1: %v", err)
+	}
+	if err := db.AddHistory(*hash2, record2); err != nil {
+		t.Fatalf("Failed to add history for name2 (1): %v", err)
+	}
+	if err := db.AddHistory(*hash3, record3); err != nil {
+		t.Fatalf("Failed to add history for name2 (2): %v", err)
+	}
+
+	// Delete history for name2 only
+	if err := db.DeleteHistory("d/name2"); err != nil {
+		t.Fatalf("Failed to delete history for name2: %v", err)
+	}
+
+	// Verify name1 history is intact
+	history1, err := db.GetHistory("d/name1")
+	if err != nil {
+		t.Fatalf("Failed to get history for name1: %v", err)
+	}
+	if len(history1) != 1 {
+		t.Errorf("Expected 1 history entry for name1, got %d", len(history1))
+	}
+
+	// Verify name2 history is deleted
+	history2, err := db.GetHistory("d/name2")
+	if err != nil {
+		t.Fatalf("Failed to get history for name2: %v", err)
+	}
+	if len(history2) != 0 {
+		t.Errorf("Expected 0 history entries for name2 after deletion, got %d", len(history2))
+	}
+}
