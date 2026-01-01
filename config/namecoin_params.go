@@ -211,8 +211,25 @@ var NamecoinMainNetParams = chaincfg.Params{
 	CoinbaseMaturity:         100,
 	SubsidyReductionInterval: 210000,
 
-	// Checkpoints (empty for now - can be added later for faster sync)
-	Checkpoints: nil,
+	// Checkpoints ordered by height. These protect against long-range reorg attacks
+	// and enable faster initial sync. Additional checkpoints should be added from
+	// Namecoin Core src/chainparams.cpp (https://github.com/namecoin/namecoin-core)
+	//
+	// To add checkpoints:
+	// 1. Find the latest checkpoint values in Namecoin Core's chainparams.cpp
+	// 2. Convert block hashes from Namecoin Core's format to chainhash.Hash format
+	// 3. Add entries to the slice below, ordered by ascending height
+	//
+	// Important checkpoints to consider adding:
+	// - Block 19200: AuxPow (merged mining) activation
+	// - Block 24000: Name expiration rule change
+	// - Regular intervals (e.g., every 50,000-100,000 blocks for recent history)
+	Checkpoints: []chaincfg.Checkpoint{
+		{Height: 0, Hash: &MainNetGenesisHash},
+		// TODO: Add additional checkpoints from Namecoin Core
+		// The official checkpoint list can be found at:
+		// https://github.com/namecoin/namecoin-core/blob/master/src/chainparams.cpp
+	},
 
 	// Consensus rule change deployments
 	RuleChangeActivationThreshold: 1916,
@@ -258,8 +275,12 @@ var NamecoinTestNetParams = chaincfg.Params{
 	CoinbaseMaturity:         100,
 	SubsidyReductionInterval: 210000,
 
-	// Checkpoints
-	Checkpoints: nil,
+	// Checkpoints ordered by height for testnet
+	// See mainnet checkpoints for documentation on how to add more
+	Checkpoints: []chaincfg.Checkpoint{
+		{Height: 0, Hash: &testNetGenesisHash},
+		// TODO: Add additional testnet checkpoints from Namecoin Core
+	},
 
 	// Consensus rule change deployments
 	RuleChangeActivationThreshold: 1512,
@@ -308,8 +329,12 @@ var NamecoinRegTestParams = chaincfg.Params{
 	CoinbaseMaturity:         100,
 	SubsidyReductionInterval: 150,
 
-	// Checkpoints
-	Checkpoints: nil,
+	// Checkpoints for regtest (typically minimal or none for local testing)
+	// Regtest is used for local development and testing, so checkpoints are
+	// not typically needed. However, the genesis block is included for consistency.
+	Checkpoints: []chaincfg.Checkpoint{
+		{Height: 0, Hash: &regTestGenesisHash},
+	},
 
 	// Consensus rule change deployments
 	RuleChangeActivationThreshold: 108,
