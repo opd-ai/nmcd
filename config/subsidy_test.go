@@ -6,10 +6,10 @@ import (
 
 func TestCalcBlockSubsidy(t *testing.T) {
 	tests := []struct {
-		name          string
-		height        int32
-		wantSubsidy   int64
-		description   string
+		name        string
+		height      int32
+		wantSubsidy int64
+		description string
 	}{
 		{
 			name:        "genesis block",

@@ -231,9 +231,10 @@ func TestNamecoinBech32HRP(t *testing.T) {
 // Source: https://github.com/namecoin/namecoin-core/blob/master/src/kernel/chainparams.cpp
 //
 // Namecoin Core uses pchMessageStart as a 4-byte array in wire order:
-//   Mainnet:  {0xf9, 0xbe, 0xb4, 0xfe}
-//   Testnet:  {0xfa, 0xbf, 0xb5, 0xfe}
-//   Regtest:  {0xfa, 0xbf, 0xb5, 0xda}
+//
+//	Mainnet:  {0xf9, 0xbe, 0xb4, 0xfe}
+//	Testnet:  {0xfa, 0xbf, 0xb5, 0xfe}
+//	Regtest:  {0xfa, 0xbf, 0xb5, 0xda}
 //
 // These bytes are sent in network byte order (big-endian) during P2P protocol handshakes.
 // CRITICAL: Wrong magic bytes prevent network communication entirely.
@@ -345,4 +346,3 @@ func TestChainParamsNetworkMagic(t *testing.T) {
 		})
 	}
 }
-

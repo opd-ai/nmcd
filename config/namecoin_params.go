@@ -18,13 +18,13 @@ var (
 	// Little-endian uint32: 0xfeb4bef9
 	// Wire format (big-endian): 0xf9beb4fe
 	MainNetMagic = wire.BitcoinNet(0xf9beb4fe)
-	
+
 	// TestNetMagic is the magic bytes for Namecoin testnet
 	// Namecoin Core bytes: {0xfa, 0xbf, 0xb5, 0xfe}
 	// Little-endian uint32: 0xfeb5bffa
 	// Wire format (big-endian): 0xfabfb5fe
 	TestNetMagic = wire.BitcoinNet(0xfabfb5fe)
-	
+
 	// RegTestMagic is the magic bytes for Namecoin regtest
 	// Namecoin Core bytes: {0xfa, 0xbf, 0xb5, 0xda}
 	// Little-endian uint32: 0xdab5bffa
