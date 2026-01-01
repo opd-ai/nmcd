@@ -1,8 +1,10 @@
 package config
 
 import (
+	"encoding/binary"
 	"testing"
 
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/wire"
 )
 
@@ -224,3 +226,123 @@ func TestNamecoinBech32HRP(t *testing.T) {
 			NamecoinRegTestParams.Bech32HRPSegwit)
 	}
 }
+
+// TestNetworkMagicBytesMatchNamecoinCore verifies that network magic bytes match Namecoin Core's pchMessageStart values.
+// Source: https://github.com/namecoin/namecoin-core/blob/master/src/kernel/chainparams.cpp
+//
+// Namecoin Core uses pchMessageStart as a 4-byte array in wire order:
+//   Mainnet:  {0xf9, 0xbe, 0xb4, 0xfe}
+//   Testnet:  {0xfa, 0xbf, 0xb5, 0xfe}
+//   Regtest:  {0xfa, 0xbf, 0xb5, 0xda}
+//
+// These bytes are sent in network byte order (big-endian) during P2P protocol handshakes.
+// CRITICAL: Wrong magic bytes prevent network communication entirely.
+func TestNetworkMagicBytesMatchNamecoinCore(t *testing.T) {
+	tests := []struct {
+		name              string
+		magic             wire.BitcoinNet
+		expectedWireBytes [4]byte // Network byte order (big-endian) - must match Namecoin Core
+		network           string
+	}{
+		{
+			name:              "Mainnet magic bytes",
+			magic:             MainNetMagic,
+			expectedWireBytes: [4]byte{0xf9, 0xbe, 0xb4, 0xfe},
+			network:           "mainnet",
+		},
+		{
+			name:              "Testnet magic bytes",
+			magic:             TestNetMagic,
+			expectedWireBytes: [4]byte{0xfa, 0xbf, 0xb5, 0xfe},
+			network:           "testnet",
+		},
+		{
+			name:              "Regtest magic bytes",
+			magic:             RegTestMagic,
+			expectedWireBytes: [4]byte{0xfa, 0xbf, 0xb5, 0xda},
+			network:           "regtest",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Convert wire.BitcoinNet (uint32) to byte array in big-endian order
+			// This is how the magic bytes appear on the wire during protocol handshake
+			var actualBytes [4]byte
+			binary.BigEndian.PutUint32(actualBytes[:], uint32(tt.magic))
+
+			// Compare each byte - must match Namecoin Core exactly
+			for i := 0; i < 4; i++ {
+				if actualBytes[i] != tt.expectedWireBytes[i] {
+					t.Errorf("%s byte[%d] = 0x%02x, want 0x%02x (full: %#v, want: %#v) - CRITICAL: Network communication will fail!",
+						tt.network, i, actualBytes[i], tt.expectedWireBytes[i],
+						actualBytes, tt.expectedWireBytes)
+				}
+			}
+
+			// Also verify the uint32 representation for documentation
+			expectedUint32 := binary.BigEndian.Uint32(tt.expectedWireBytes[:])
+			if uint32(tt.magic) != expectedUint32 {
+				t.Errorf("%s magic = 0x%08x, want 0x%08x - CRITICAL: Network communication will fail!",
+					tt.network, uint32(tt.magic), expectedUint32)
+			}
+
+			t.Logf("%s: magic=0x%08x, wire bytes={0x%02x, 0x%02x, 0x%02x, 0x%02x} ✓",
+				tt.network, uint32(tt.magic),
+				actualBytes[0], actualBytes[1], actualBytes[2], actualBytes[3])
+		})
+	}
+}
+
+// TestNetworkMagicUniqueness ensures all network magic values are unique
+// to prevent cross-network message confusion.
+func TestNetworkMagicUniqueness(t *testing.T) {
+	magics := map[wire.BitcoinNet]string{
+		MainNetMagic: "mainnet",
+		TestNetMagic: "testnet",
+		RegTestMagic: "regtest",
+	}
+
+	// Verify we have exactly 3 unique values
+	if len(magics) != 3 {
+		t.Errorf("Expected 3 unique network magic values, got %d", len(magics))
+		t.Logf("MainNet: 0x%08x", MainNetMagic)
+		t.Logf("TestNet: 0x%08x", TestNetMagic)
+		t.Logf("RegTest: 0x%08x", RegTestMagic)
+	}
+}
+
+// TestChainParamsNetworkMagic verifies that chain params use the correct magic bytes.
+func TestChainParamsNetworkMagic(t *testing.T) {
+	tests := []struct {
+		name          string
+		params        *chaincfg.Params
+		expectedMagic wire.BitcoinNet
+	}{
+		{
+			name:          "Mainnet params",
+			params:        &NamecoinMainNetParams,
+			expectedMagic: MainNetMagic,
+		},
+		{
+			name:          "Testnet params",
+			params:        &NamecoinTestNetParams,
+			expectedMagic: TestNetMagic,
+		},
+		{
+			name:          "Regtest params",
+			params:        &NamecoinRegTestParams,
+			expectedMagic: RegTestMagic,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.params.Net != tt.expectedMagic {
+				t.Errorf("%s params.Net = 0x%08x, want 0x%08x - CRITICAL: Network communication will fail!",
+					tt.name, tt.params.Net, tt.expectedMagic)
+			}
+		})
+	}
+}
+

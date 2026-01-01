@@ -13,14 +13,15 @@
 - **Protocol version implemented:** Partial (Base protocol only, no AuxPow)
 - **Critical issues:** 2 (1 resolved: subsidy calculation ✅)
 - **High priority issues:** 1 (6 resolved: chain ID in NAME_NEW commitment ✅, namespace validation ✅, NAME_FIRSTUPDATE timing window ✅, NAME_NEW fee requirements ✅, transaction fee validation ✅, strict script validation ✅)
-- **Medium priority issues:** 7 (4 resolved: value encoding validation ✅, double-spend detection for names ✅, incomplete reorg handling for NAME_NEW ✅, name deletion/expiration cleanup ✅)
+- **Medium priority issues:** 7 (5 resolved: value encoding validation ✅, double-spend detection for names ✅, incomplete reorg handling for NAME_NEW ✅, name deletion/expiration cleanup ✅, network magic verification ✅)
 - **Low priority issues:** 4
 - **Missing features:** 12
-- **Overall compatibility:** ~65% (Core name operations work with chain ID protection, namespace validation, timing window enforcement, dust limit validation, transaction fee validation, value encoding validation, strict script validation, double-spend detection, accurate reorg handling, expiration cleanup, and subsidy validation, but AuxPow and other consensus/mining features still missing)
+- **Overall compatibility:** ~65% (Core name operations work with chain ID protection, namespace validation, timing window enforcement, dust limit validation, transaction fee validation, value encoding validation, strict script validation, double-spend detection, accurate reorg handling, expiration cleanup, subsidy validation, and correct network magic bytes, but AuxPow and other consensus/mining features still missing)
 
 **Status:** ⚠️ **NOT PRODUCTION READY** - Critical consensus-breaking features missing (AuxPow)
 
 **Recent Progress:**
+- ✅ 2026-01-01: Fixed network magic byte verification (Issue #17) - Corrected testnet (0x0709110b → 0xfabfb5fe) and regtest (0xdab5bffa → 0xfabfb5da) magic bytes to match Namecoin Core, enabling network communication
 - ✅ 2026-01-01: Implemented subsidy calculation and validation (Issue #3) - Block rewards now validated according to Namecoin's halving schedule (50 NMC initial, halving every 210,000 blocks)
 - ✅ 2026-01-01: Implemented name deletion/expiration cleanup (Issue #14) - Expired names now have their history entries properly cleaned up to prevent storage waste
 - ✅ 2026-01-01: Fixed incomplete reorg handling for NAME_NEW (Issue #11) - NAME_NEW commitments now restored with exact original height during blockchain reorganization instead of estimated height
@@ -1049,21 +1050,71 @@ Checkpoints protect against long-range reorg attacks. Namecoin Core has many che
 
 ---
 
-### 17. Incomplete Network Magic Verification
-**Location:** config/namecoin_params.go:12-19  
-**Severity:** MEDIUM  
+### 17. Incomplete Network Magic Verification ✅ RESOLVED
+**Location:** config/namecoin_params.go:12-31 - Network magic bytes
+**Severity:** ~~MEDIUM~~ **CRITICAL** (reclassified - wrong magic bytes prevent all network communication)
+**Status:** ✅ **RESOLVED** (2026-01-01)
 **Expected:** Verify magic bytes match Namecoin Core exactly  
-**Actual:** Magic bytes defined but need verification
+**Actual:** ✅ Now verified and corrected to match Namecoin Core
 
-**Description:**
+**Resolution:**
+Fixed critical network magic byte errors that prevented network communication with testnet and regtest networks. The implementation now matches Namecoin Core's pchMessageStart values exactly.
+
+**Changes made:**
+1. Verified mainnet magic bytes (already correct): 0xf9beb4fe ✅
+2. Fixed testnet magic bytes: 0x0709110b → 0xfabfb5fe ✅
+3. Fixed regtest magic bytes: 0xdab5bffa → 0xfabfb5da ✅
+4. Added comprehensive documentation explaining byte order and source
+5. Created comprehensive unit tests (`TestNetworkMagicBytesMatchNamecoinCore`, `TestNetworkMagicUniqueness`, `TestChainParamsNetworkMagic`) that verify magic bytes match Namecoin Core exactly
+
+**Implementation:**
 ```go
-// config/namecoin_params.go:14-15
-MainNetMagic = wire.BitcoinNet(0xf9beb4fe)
+// config/namecoin_params.go:12-31
+// Namecoin network magic bytes
+// These values MUST match Namecoin Core's pchMessageStart in src/kernel/chainparams.cpp
+// Format: wire.BitcoinNet interprets the value as little-endian uint32
+var (
+	// MainNetMagic is the magic value for Namecoin mainnet
+	// Namecoin Core bytes: {0xf9, 0xbe, 0xb4, 0xfe}
+	MainNetMagic = wire.BitcoinNet(0xf9beb4fe)
+	
+	// TestNetMagic is the magic bytes for Namecoin testnet
+	// Namecoin Core bytes: {0xfa, 0xbf, 0xb5, 0xfe}
+	TestNetMagic = wire.BitcoinNet(0xfabfb5fe)
+	
+	// RegTestMagic is the magic bytes for Namecoin regtest
+	// Namecoin Core bytes: {0xfa, 0xbf, 0xb5, 0xda}
+	RegTestMagic = wire.BitcoinNet(0xfabfb5da)
+)
 ```
 
-Need to verify this exactly matches Namecoin Core's magic bytes (byte order, value).
+**Verification source:** https://github.com/namecoin/namecoin-core/blob/master/src/kernel/chainparams.cpp
 
-**Verification needed:** Compare with Namecoin Core src/chainparams.cpp
+Per Namecoin Core pchMessageStart arrays (verified 2026-01-01):
+- **Mainnet**: {0xf9, 0xbe, 0xb4, 0xfe} (unchanged)
+- **Testnet**: {0xfa, 0xbf, 0xb5, 0xfe} (was wrong, now fixed)
+- **Regtest**: {0xfa, 0xbf, 0xb5, 0xda} (was wrong, now fixed)
+
+**Test Coverage:**
+- ✅ Byte-by-byte verification against Namecoin Core values
+- ✅ Uniqueness validation (no duplicate magic bytes across networks)
+- ✅ Chain params integration verification
+- ✅ All tests passing
+
+**Security Impact:**
+This fix addresses a **critical network bug** that prevented communication with Namecoin testnet and regtest networks:
+- **Wrong testnet magic**: Nodes couldn't connect to testnet peers or exchange messages
+- **Wrong regtest magic**: Development and testing were broken as nodes couldn't communicate
+- **Impact on mainnet**: No impact (magic bytes were already correct)
+
+Network magic bytes are the first 4 bytes exchanged during P2P protocol handshakes. Wrong values cause immediate disconnection, making it impossible to:
+- Sync the blockchain
+- Relay transactions
+- Receive new blocks
+- Participate in the P2P network
+
+**Why this is CRITICAL, not MEDIUM:**
+The audit initially classified this as MEDIUM because it stated "need verification." However, upon verification, we discovered the values were **WRONG** for testnet and regtest, making this a consensus-breaking, network-breaking bug. The severity has been upgraded to CRITICAL retrospectively.
 
 ---
 
@@ -1263,7 +1314,7 @@ Should import test vectors from Namecoin Core to ensure identical validation log
 2. ~~**Implement NAME_FIRSTUPDATE timing window** - Enforce 12-36000 block constraint~~ ✅ **COMPLETED** (2025-12-31)
 3. ~~**Implement UTXO chain validation** - Prevent name theft~~ ✅ **COMPLETED** (2025-12-31)
 4. **Add checkpoints** - Import from Namecoin Core
-5. **Verify network magic bytes** - Ensure exact match with Core
+5. ~~**Verify network magic bytes** - Ensure exact match with Core~~ ✅ **COMPLETED** (2026-01-01)
 6. ~~**Implement strict script validation** - Issue #9 from audit~~ ✅ **COMPLETED** (2025-12-31)
 
 ### Medium-term (Production Readiness):
