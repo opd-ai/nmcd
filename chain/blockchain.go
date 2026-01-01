@@ -430,8 +430,10 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 					// Use the exact NAME_NEW height from the database
 					nameNewHeight = nameNewRecord.Height
 				} else {
-					// Fallback: estimate if NAME_NEW record not found (should not happen in normal operation)
-					// This can occur if processing blocks created before NAME_NEW height tracking
+					// Fallback estimation for cases where NAME_NEW record is not found.
+					// This can occur during database upgrades or if processing old blocks
+					// where NAME_NEW was not properly tracked. Uses conservative estimate
+					// based on minimum timing requirement.
 					nameNewHeight = height - config.MinBlocksBeforeFirstUpdate
 					if nameNewHeight < 0 {
 						nameNewHeight = 0

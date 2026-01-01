@@ -3794,8 +3794,12 @@ func TestRollbackNameFirstUpdateExactHeight(t *testing.T) {
 		t.Fatalf("Expected NAME_NEW to be restored after rollback: %v", err)
 	}
 
-	// This is the critical assertion: the height should be the EXACT original height (100),
-	// NOT the estimated height (firstUpdateHeight - MinBlocksBeforeFirstUpdate = 150 - 12 = 138)
+	// This is the critical assertion: the height should be the EXACT original height,
+	// NOT the estimated height that would have been calculated by the old algorithm.
+	// Example with these test values:
+	//   - Original NAME_NEW height: nameNewHeight variable
+	//   - NAME_FIRSTUPDATE height: firstUpdateHeight variable  
+	//   - Old algorithm would estimate: firstUpdateHeight - MinBlocksBeforeFirstUpdate
 	if restoredNameNew.Height != nameNewHeight {
 		t.Errorf("NAME_NEW height not restored correctly:\n"+
 			"  Expected (exact original): %d\n"+

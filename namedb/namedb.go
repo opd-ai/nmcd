@@ -424,7 +424,8 @@ func (ndb *NameDatabase) RemoveLastHistoryEntry(name string) (*NameRecord, error
 	return prevRecord, err
 }
 
-// encodeNameRecord serializes a name record
+// encodeNameRecord serializes a name record.
+// Encoding format (version 3): version + value + txhash + outindex + height + expiresAt + address + timestamp + namenewheight
 func encodeNameRecord(record *NameRecord) []byte {
 	// Encoding format: version byte + value + txhash + outindex + height + expiresAt + address + timestamp + namenewheight
 	data := make([]byte, 0, 1+len(record.Value)+32+4+4+4+len(record.Address)+8+4)
