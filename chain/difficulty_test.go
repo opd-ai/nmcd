@@ -22,15 +22,17 @@ bc := &BlockChain{
 chainParams: &config.NamecoinRegTestParams,
 }
 
-// Create a block with difficulty bits that exceed the PoW limit
-// 0x1e0fffff would exceed regtest's 0x207fffff limit
+// Create a block with difficulty bits that exceed the PoW limit.
+// Regtest's PoW limit is 0x207fffff (2^255 - 1, very easy).
+// To exceed this limit (be even easier/invalid), we use 0x21000000
+// which would decode to a target larger than the PoW limit.
 invalidBlock := btcutil.NewBlock(&wire.MsgBlock{
 Header: wire.BlockHeader{
 Version:    1,
 PrevBlock:  chainhash.Hash{},
 MerkleRoot: chainhash.Hash{},
 Timestamp:  time.Now(),
-Bits:       0x1e0fffff, // Invalid: easier than allowed
+Bits:       0x21000000, // Invalid: decodes to target > PowLimit
 Nonce:      0,
 },
 Transactions: []*wire.MsgTx{&wire.MsgTx{}},
