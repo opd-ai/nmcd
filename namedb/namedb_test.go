@@ -513,7 +513,7 @@ func TestDecodeNameRecordCorruptData(t *testing.T) {
 		{
 			name:    "unsupported version",
 			data:    []byte{1, 0, 0, 0, 0}, // version 1 (unsupported)
-			wantErr: "unsupported record version: 1 (expected 2)",
+			wantErr: "unsupported record version: 1 (expected 2 or 3)",
 		},
 		{
 			name:    "truncated at value length",

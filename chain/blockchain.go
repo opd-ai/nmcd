@@ -420,15 +420,36 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 			case namedb.NameFirstUpdate:
 				// Extract the owner address from the script
 				address := extractAddressFromNameScript(txOut.PkScript, bc.chainParams)
+				
+				// Retrieve the NAME_NEW record before deleting it so we can store
+				// the original height for accurate reorg handling
+				commitHash := computeCommitHash(extra, name, bc.chainParams)
+				nameNewRecord, err := bc.nameDB.GetNameNew(commitHash)
+				var nameNewHeight int32
+				if err == nil && nameNewRecord != nil {
+					// Use the exact NAME_NEW height from the database
+					nameNewHeight = nameNewRecord.Height
+				} else {
+					// Fallback estimation for cases where NAME_NEW record is not found.
+					// This can occur during database upgrades or if processing old blocks
+					// where NAME_NEW was not properly tracked. Uses conservative estimate
+					// based on minimum timing requirement.
+					nameNewHeight = height - config.MinBlocksBeforeFirstUpdate
+					if nameNewHeight < 0 {
+						nameNewHeight = 0
+					}
+				}
+				
 				record := &namedb.NameRecord{
-					Name:      name,
-					Value:     value,
-					TxHash:    *txHash,
-					OutIndex:  uint32(outIdx),
-					Height:    height,
-					ExpiresAt: height + config.NameExpirationBlocks,
-					Address:   address,
-					UpdatedAt: blockTime,
+					Name:          name,
+					Value:         value,
+					TxHash:        *txHash,
+					OutIndex:      uint32(outIdx),
+					Height:        height,
+					ExpiresAt:     height + config.NameExpirationBlocks,
+					Address:       address,
+					UpdatedAt:     blockTime,
+					NameNewHeight: nameNewHeight, // Store for accurate rollback
 				}
 				if err := bc.nameDB.PutName(name, record); err != nil {
 					return err
@@ -437,8 +458,6 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 					return err
 				}
 				// Clean up the NAME_NEW commitment after successful registration
-				// Use chain-specific commitment hash to match the NAME_NEW validation
-				commitHash := computeCommitHash(extra, name, bc.chainParams)
 				if err := bc.nameDB.DeleteNameNew(commitHash); err != nil {
 					return err
 				}
@@ -446,15 +465,25 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 			case namedb.NameUpdate:
 				// Extract the owner address from the script
 				address := extractAddressFromNameScript(txOut.PkScript, bc.chainParams)
+				
+				// Preserve the NameNewHeight from the previous record (if available)
+				// This is needed for accurate rollback if this update is later rolled back
+				var nameNewHeight int32
+				prevRecord, err := bc.nameDB.GetName(name)
+				if err == nil && prevRecord != nil {
+					nameNewHeight = prevRecord.NameNewHeight
+				}
+				
 				record := &namedb.NameRecord{
-					Name:      name,
-					Value:     value,
-					TxHash:    *txHash,
-					OutIndex:  uint32(outIdx),
-					Height:    height,
-					ExpiresAt: height + config.NameExpirationBlocks,
-					Address:   address,
-					UpdatedAt: blockTime,
+					Name:          name,
+					Value:         value,
+					TxHash:        *txHash,
+					OutIndex:      uint32(outIdx),
+					Height:        height,
+					ExpiresAt:     height + config.NameExpirationBlocks,
+					Address:       address,
+					UpdatedAt:     blockTime,
+					NameNewHeight: nameNewHeight, // Preserve from previous record
 				}
 				if err := bc.nameDB.PutName(name, record); err != nil {
 					return err
@@ -1088,30 +1117,33 @@ func (bc *BlockChain) rollbackNameOperations(block *btcutil.Block) {
 
 			case namedb.NameFirstUpdate:
 				// Rollback NAME_FIRSTUPDATE:
-				// 1. Remove the history entry for this operation
-				// 2. Delete the name from the database
-				// 3. Restore the NAME_NEW commitment that was consumed
+				// 1. Retrieve the name record to get the original NAME_NEW height
+				// 2. Remove the history entry for this operation
+				// 3. Delete the name from the database
+				// 4. Restore the NAME_NEW commitment that was consumed with exact height
+				
+				// Retrieve the name record before deleting to get NameNewHeight
+				nameRecord, err := bc.nameDB.GetName(name)
+				var nameNewHeight int32
+				if err == nil && nameRecord != nil && nameRecord.NameNewHeight != 0 {
+					// Use the exact NAME_NEW height stored during NAME_FIRSTUPDATE
+					nameNewHeight = nameRecord.NameNewHeight
+				} else {
+					// Fallback: estimate if NameNewHeight not set (old records from v2 or earlier)
+					// This maintains backward compatibility with existing databases
+					nameNewHeight = block.Height() - config.MinBlocksBeforeFirstUpdate
+					if nameNewHeight < 0 {
+						nameNewHeight = 0
+					}
+				}
+				
 				_, _ = bc.nameDB.RemoveLastHistoryEntry(name)
 				_ = bc.nameDB.DeleteName(name)
 
-				// Restore the NAME_NEW commitment. The commitment hash is
-				// computed from rand (extra), name, and chain ID.
-				//
-				// Height estimation: We use block.Height() - MinBlocksBeforeFirstUpdate
-				// as a conservative estimate. The actual NAME_NEW could have been
-				// created earlier, but this is the earliest possible height. This
-				// is safe because:
-				// - If a new NAME_FIRSTUPDATE is attempted, it will pass the
-				//   MinBlocksBeforeFirstUpdate check since actual elapsed blocks >= min
-				// - The exact original height isn't stored, so estimation is necessary
+				// Restore the NAME_NEW commitment with the exact original height.
+				// The commitment hash is computed from rand (extra), name, and chain ID.
 				commitHash := computeCommitHash(extra, name, bc.chainParams)
-				estimatedNameNewHeight := block.Height() - config.MinBlocksBeforeFirstUpdate
-				// Ensure height is non-negative (shouldn't happen in practice
-				// since NAME_FIRSTUPDATE requires MinBlocksBeforeFirstUpdate to pass)
-				if estimatedNameNewHeight < 0 {
-					estimatedNameNewHeight = 0
-				}
-				_ = bc.nameDB.RestoreNameNew(commitHash, estimatedNameNewHeight)
+				_ = bc.nameDB.RestoreNameNew(commitHash, nameNewHeight)
 
 				// Track this commitment as restored so we don't delete it if
 				// the NAME_NEW for this commitment is also in this block

@@ -25,10 +25,11 @@ var (
 // a 32-byte result, same as a single SHA256.
 const txHashSize = 32
 
-// NameRecord encoding version. This implementation uses a single version format
-// that includes OutIndex for UTXO chain validation, matching Namecoin Core's
-// requirements. This is a clean Namecoin implementation - no legacy versions exist.
-const NameRecordVersion = 2
+// NameRecord encoding version. This implementation uses versioned format:
+// - Version 2: Includes OutIndex for UTXO chain validation
+// - Version 3: Adds NameNewHeight for accurate reorg handling
+// This is a clean Namecoin implementation - no legacy versions exist.
+const NameRecordVersion = 3
 
 // NameOperation represents a name operation type
 type NameOperation uint8
@@ -55,14 +56,15 @@ func (op NameOperation) String() string {
 
 // NameRecord represents a name in the database
 type NameRecord struct {
-	Name      string
-	Value     string
-	TxHash    chainhash.Hash
-	OutIndex  uint32         // Output index of the UTXO that owns this name
-	Height    int32
-	ExpiresAt int32
-	Address   string
-	UpdatedAt time.Time
+	Name         string
+	Value        string
+	TxHash       chainhash.Hash
+	OutIndex     uint32 // Output index of the UTXO that owns this name
+	Height       int32
+	ExpiresAt    int32
+	Address      string
+	UpdatedAt    time.Time
+	NameNewHeight int32 // Original NAME_NEW height (for NAME_FIRSTUPDATE only, used during reorg rollback)
 }
 
 // UTXO represents an unspent transaction output
@@ -422,10 +424,11 @@ func (ndb *NameDatabase) RemoveLastHistoryEntry(name string) (*NameRecord, error
 	return prevRecord, err
 }
 
-// encodeNameRecord serializes a name record
+// encodeNameRecord serializes a name record.
+// Encoding format (version 3): version + value + txhash + outindex + height + expiresAt + address + timestamp + namenewheight
 func encodeNameRecord(record *NameRecord) []byte {
-	// Encoding format: version byte + value + txhash + outindex + height + expiresAt + address + timestamp
-	data := make([]byte, 0, 1+len(record.Value)+32+4+4+4+len(record.Address)+8)
+	// Encoding format: version byte + value + txhash + outindex + height + expiresAt + address + timestamp + namenewheight
+	data := make([]byte, 0, 1+len(record.Value)+32+4+4+4+len(record.Address)+8+4)
 
 	// Version byte
 	data = append(data, byte(NameRecordVersion))
@@ -465,11 +468,18 @@ func encodeNameRecord(record *NameRecord) []byte {
 	binary.LittleEndian.PutUint64(ts, uint64(record.UpdatedAt.Unix()))
 	data = append(data, ts...)
 
+	// NameNewHeight (new in v3)
+	nameNewHeight := make([]byte, 4)
+	binary.LittleEndian.PutUint32(nameNewHeight, uint32(record.NameNewHeight))
+	data = append(data, nameNewHeight...)
+
 	return data
 }
 
 // decodeNameRecord deserializes a name record.
 // Returns an error if the data is corrupt or truncated.
+// Supports both version 2 (without NameNewHeight) and version 3 (with NameNewHeight)
+// for backward compatibility during upgrades.
 func decodeNameRecord(data []byte) (*NameRecord, error) {
 	if len(data) < 1 {
 		return nil, fmt.Errorf("corrupt record: empty data")
@@ -479,8 +489,8 @@ func decodeNameRecord(data []byte) (*NameRecord, error) {
 
 	// Check version byte
 	version := data[offset]
-	if version != NameRecordVersion {
-		return nil, fmt.Errorf("unsupported record version: %d (expected %d)", version, NameRecordVersion)
+	if version != 2 && version != 3 {
+		return nil, fmt.Errorf("unsupported record version: %d (expected 2 or 3)", version)
 	}
 	offset++
 
@@ -542,6 +552,12 @@ func decodeNameRecord(data []byte) (*NameRecord, error) {
 	if offset+8 <= len(data) {
 		ts := binary.LittleEndian.Uint64(data[offset : offset+8])
 		record.UpdatedAt = time.Unix(int64(ts), 0)
+		offset += 8
+	}
+
+	// NameNewHeight (new in v3, optional for backward compatibility)
+	if version >= 3 && offset+4 <= len(data) {
+		record.NameNewHeight = int32(binary.LittleEndian.Uint32(data[offset : offset+4]))
 	}
 
 	return record, nil
