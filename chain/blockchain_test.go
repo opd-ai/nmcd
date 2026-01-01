@@ -4265,6 +4265,3 @@ func TestValidateBlockSubsidyMultipleOutputs(t *testing.T) {
 		t.Error("Expected error for multiple outputs totaling more than 50 NMC, got nil")
 	}
 }
-
-// TestValidateProofOfWork tests that proof of work validation correctly accepts
-// and rejects blocks based on their difficulty target and hash.
