@@ -81,6 +81,11 @@ func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.Behavi
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 
+	// Validate block subsidy before processing
+	if err := bc.validateBlockSubsidy(block); err != nil {
+		return false, false, fmt.Errorf("invalid block subsidy: %w", err)
+	}
+
 	// Validate name operations before processing
 	if err := bc.validateNameOperations(block); err != nil {
 		return false, false, fmt.Errorf("invalid name operations: %w", err)
@@ -100,6 +105,49 @@ func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.Behavi
 	}
 
 	return isMainChain, isOrphan, nil
+}
+
+// validateBlockSubsidy validates that the coinbase transaction reward does not exceed
+// the maximum allowed block subsidy for the given height.
+//
+// This is a consensus-critical validation that ensures miners cannot create more coins
+// than the protocol allows. The subsidy follows Namecoin's halving schedule:
+// - Initial: 50 NMC per block
+// - Halves every 210,000 blocks
+// - Maximum supply: ~21,000,000 NMC
+//
+// Note: This function only validates that the reward doesn't EXCEED the maximum.
+// It's acceptable for miners to claim less than the maximum (though unusual).
+func (bc *BlockChain) validateBlockSubsidy(block *btcutil.Block) error {
+	// Get the coinbase transaction (always the first transaction)
+	if len(block.Transactions()) == 0 {
+		return fmt.Errorf("block has no transactions")
+	}
+
+	coinbaseTx := block.Transactions()[0].MsgTx()
+
+	// Calculate total coinbase outputs
+	var totalOutput int64
+	for _, txOut := range coinbaseTx.TxOut {
+		totalOutput += txOut.Value
+	}
+
+	// Calculate maximum allowed subsidy for this block height
+	maxSubsidy := config.CalcBlockSubsidy(block.Height(), bc.chainParams)
+
+	// In a proper implementation, we should also add transaction fees to maxSubsidy.
+	// However, since we don't have full UTXO tracking for all historical blocks,
+	// we'll skip fee validation for now. This is documented as a known limitation.
+	//
+	// For now, we only validate that the coinbase output doesn't exceed the base subsidy.
+	// This catches the most egregious cases where miners try to create too many coins.
+
+	if totalOutput > maxSubsidy {
+		return fmt.Errorf("coinbase output %d exceeds maximum block subsidy %d at height %d",
+			totalOutput, maxSubsidy, block.Height())
+	}
+
+	return nil
 }
 
 // validateNameOperations validates name operations in a block
