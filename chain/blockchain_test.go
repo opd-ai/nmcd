@@ -3995,3 +3995,273 @@ func TestNameExpirationWithHistoryCleanup(t *testing.T) {
 		t.Errorf("Expected 0 history entries after expiration cleanup, got %d", len(history))
 	}
 }
+
+// TestValidateBlockSubsidy tests subsidy validation for blocks at different heights
+func TestValidateBlockSubsidy(t *testing.T) {
+	// Create a minimal BlockChain with just the chain params for testing subsidy validation
+	bc := &BlockChain{
+		chainParams: &config.NamecoinRegTestParams, // Use regtest for testing
+	}
+
+	tests := []struct {
+		name           string
+		height         int32
+		coinbaseOutput int64
+		wantErr        bool
+		description    string
+	}{
+		{
+			name:           "genesis block with correct subsidy",
+			height:         0,
+			coinbaseOutput: 50 * config.CoinValue,
+			wantErr:        false,
+			description:    "Genesis block with exactly 50 NMC should be valid",
+		},
+		{
+			name:           "genesis block with less than max subsidy",
+			height:         0,
+			coinbaseOutput: 25 * config.CoinValue,
+			wantErr:        false,
+			description:    "Miners can claim less than maximum (though unusual)",
+		},
+		{
+			name:           "genesis block with excessive subsidy",
+			height:         0,
+			coinbaseOutput: 51 * config.CoinValue,
+			wantErr:        true,
+			description:    "Genesis block with more than 50 NMC should be rejected",
+		},
+		{
+			name:           "block 100 with correct subsidy",
+			height:         100,
+			coinbaseOutput: 50 * config.CoinValue,
+			wantErr:        false,
+			description:    "Block before first halving should allow 50 NMC",
+		},
+		{
+			name:           "block 100 with excessive subsidy",
+			height:         100,
+			coinbaseOutput: 55 * config.CoinValue,
+			wantErr:        true,
+			description:    "Block 100 with more than 50 NMC should be rejected",
+		},
+		{
+			name:           "first halving block (regtest: 150) with correct subsidy",
+			height:         150,
+			coinbaseOutput: 25 * config.CoinValue,
+			wantErr:        false,
+			description:    "First halving block with exactly 25 NMC should be valid",
+		},
+		{
+			name:           "first halving block attempting old subsidy",
+			height:         150,
+			coinbaseOutput: 50 * config.CoinValue,
+			wantErr:        true,
+			description:    "After halving, old subsidy amount should be rejected",
+		},
+		{
+			name:           "second halving block (regtest: 300)",
+			height:         300,
+			coinbaseOutput: 12.5 * config.CoinValue,
+			wantErr:        false,
+			description:    "Second halving block with exactly 12.5 NMC should be valid",
+		},
+		{
+			name:           "second halving block with excessive subsidy",
+			height:         300,
+			coinbaseOutput: 25 * config.CoinValue,
+			wantErr:        true,
+			description:    "After second halving, previous era subsidy should be rejected",
+		},
+		{
+			name:           "far future block with zero subsidy",
+			height:         64 * 150, // Beyond 64 halvings in regtest
+			coinbaseOutput: 0,
+			wantErr:        false,
+			description:    "Block after 64 halvings can have zero subsidy",
+		},
+		{
+			name:           "far future block attempting subsidy",
+			height:         64 * 150,
+			coinbaseOutput: 1 * config.CoinValue,
+			wantErr:        true,
+			description:    "Block after 64 halvings cannot claim any subsidy",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a test block with coinbase transaction
+			block := createTestBlockWithCoinbase(tt.height, tt.coinbaseOutput)
+
+			// Validate the block subsidy
+			err := bc.validateBlockSubsidy(block)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("validateBlockSubsidy() expected error but got nil\nDescription: %s", tt.description)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("validateBlockSubsidy() unexpected error: %v\nDescription: %s", err, tt.description)
+				}
+			}
+		})
+	}
+}
+
+// createTestBlockWithCoinbase creates a test block with a coinbase transaction
+// that has the specified output value
+func createTestBlockWithCoinbase(height int32, coinbaseOutput int64) *btcutil.Block {
+	// Create coinbase transaction
+	coinbaseTx := wire.NewMsgTx(1)
+
+	// Add coinbase input (no previous output)
+	coinbaseTx.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: wire.OutPoint{
+			Hash:  chainhash.Hash{},
+			Index: 0xffffffff,
+		},
+		SignatureScript: []byte{0x04, 0xff, 0xff, 0x00, 0x1d, 0x01, 0x04},
+		Sequence:        0xffffffff,
+	})
+
+	// Add coinbase output with specified value
+	coinbaseTx.AddTxOut(&wire.TxOut{
+		Value:    coinbaseOutput,
+		PkScript: makeP2PKHScript(),
+	})
+
+	// Create block header
+	header := wire.BlockHeader{
+		Version:   1,
+		PrevBlock: chainhash.Hash{},
+		Timestamp: time.Now(),
+		Bits:      0x207fffff,
+		Nonce:     0,
+	}
+
+	// Create block
+	msgBlock := wire.NewMsgBlock(&header)
+	msgBlock.AddTransaction(coinbaseTx)
+
+	// Wrap in btcutil.Block
+	block := btcutil.NewBlock(msgBlock)
+	block.SetHeight(height)
+
+	return block
+}
+
+// TestValidateBlockSubsidyNoTransactions tests that blocks without transactions are rejected
+func TestValidateBlockSubsidyNoTransactions(t *testing.T) {
+	// Create a minimal BlockChain with just the chain params for testing
+	bc := &BlockChain{
+		chainParams: &config.NamecoinRegTestParams,
+	}
+
+	// Create block with no transactions
+	header := wire.BlockHeader{
+		Version:   1,
+		PrevBlock: chainhash.Hash{},
+		Timestamp: time.Now(),
+		Bits:      0x207fffff,
+		Nonce:     0,
+	}
+
+	msgBlock := wire.NewMsgBlock(&header)
+	block := btcutil.NewBlock(msgBlock)
+	block.SetHeight(0)
+
+	// Should fail validation
+	err := bc.validateBlockSubsidy(block)
+	if err == nil {
+		t.Error("Expected error for block with no transactions, got nil")
+	}
+	if !strings.Contains(err.Error(), "no transactions") {
+		t.Errorf("Expected 'no transactions' error, got: %v", err)
+	}
+}
+
+// TestValidateBlockSubsidyMultipleOutputs tests that subsidy validation works with multiple coinbase outputs
+func TestValidateBlockSubsidyMultipleOutputs(t *testing.T) {
+	// Create a minimal BlockChain with just the chain params for testing
+	bc := &BlockChain{
+		chainParams: &config.NamecoinRegTestParams,
+	}
+
+	// Create coinbase transaction with multiple outputs
+	coinbaseTx := wire.NewMsgTx(1)
+
+	coinbaseTx.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: wire.OutPoint{
+			Hash:  chainhash.Hash{},
+			Index: 0xffffffff,
+		},
+		SignatureScript: []byte{0x04, 0xff, 0xff, 0x00, 0x1d, 0x01, 0x04},
+		Sequence:        0xffffffff,
+	})
+
+	// Add multiple outputs that sum to exactly 50 NMC
+	coinbaseTx.AddTxOut(&wire.TxOut{
+		Value:    30 * config.CoinValue,
+		PkScript: makeP2PKHScript(),
+	})
+	coinbaseTx.AddTxOut(&wire.TxOut{
+		Value:    20 * config.CoinValue,
+		PkScript: makeP2PKHScript(),
+	})
+
+	// Create block
+	header := wire.BlockHeader{
+		Version:   1,
+		PrevBlock: chainhash.Hash{},
+		Timestamp: time.Now(),
+		Bits:      0x207fffff,
+		Nonce:     0,
+	}
+
+	msgBlock := wire.NewMsgBlock(&header)
+	msgBlock.AddTransaction(coinbaseTx)
+
+	block := btcutil.NewBlock(msgBlock)
+	block.SetHeight(0)
+
+	// Should pass validation (total = 50 NMC)
+	err := bc.validateBlockSubsidy(block)
+	if err != nil {
+		t.Errorf("Expected no error for multiple outputs totaling 50 NMC, got: %v", err)
+	}
+
+	// Now test with excessive total
+	coinbaseTx2 := wire.NewMsgTx(1)
+	coinbaseTx2.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: wire.OutPoint{
+			Hash:  chainhash.Hash{},
+			Index: 0xffffffff,
+		},
+		SignatureScript: []byte{0x04, 0xff, 0xff, 0x00, 0x1d, 0x01, 0x04},
+		Sequence:        0xffffffff,
+	})
+
+	// Add outputs that sum to more than 50 NMC
+	coinbaseTx2.AddTxOut(&wire.TxOut{
+		Value:    30 * config.CoinValue,
+		PkScript: makeP2PKHScript(),
+	})
+	coinbaseTx2.AddTxOut(&wire.TxOut{
+		Value:    25 * config.CoinValue, // Total: 55 NMC
+		PkScript: makeP2PKHScript(),
+	})
+
+	msgBlock2 := wire.NewMsgBlock(&header)
+	msgBlock2.AddTransaction(coinbaseTx2)
+
+	block2 := btcutil.NewBlock(msgBlock2)
+	block2.SetHeight(0)
+
+	// Should fail validation (total = 55 NMC > 50 NMC)
+	err = bc.validateBlockSubsidy(block2)
+	if err == nil {
+		t.Error("Expected error for multiple outputs totaling more than 50 NMC, got nil")
+	}
+}
