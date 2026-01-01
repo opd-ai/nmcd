@@ -10,13 +10,19 @@ import (
 )
 
 // Namecoin network magic bytes
+// These values MUST match Namecoin Core's pchMessageStart in src/kernel/chainparams.cpp
 var (
-	// MainNetMagic is the magic value for Namecoin mainnet (little-endian wire bytes 0xf9, 0xbe, 0xb4, 0xfe): 0xf9beb4fe
+	// MainNetMagic is the magic value for Namecoin mainnet
+	// Wire bytes: {0xf9, 0xbe, 0xb4, 0xfe}
 	MainNetMagic = wire.BitcoinNet(0xf9beb4fe)
+
 	// TestNetMagic is the magic bytes for Namecoin testnet
-	TestNetMagic = wire.BitcoinNet(0x0709110b)
+	// Wire bytes: {0xfa, 0xbf, 0xb5, 0xfe}
+	TestNetMagic = wire.BitcoinNet(0xfabfb5fe)
+
 	// RegTestMagic is the magic bytes for Namecoin regtest
-	RegTestMagic = wire.BitcoinNet(0xdab5bffa)
+	// Wire bytes: {0xfa, 0xbf, 0xb5, 0xda}
+	RegTestMagic = wire.BitcoinNet(0xfabfb5da)
 )
 
 // Namecoin genesis block hashes
