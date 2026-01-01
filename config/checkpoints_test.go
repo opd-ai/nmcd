@@ -54,6 +54,12 @@ func TestTestnetCheckpoints(t *testing.T) {
 	if checkpoints[0].Hash == nil {
 		t.Fatal("genesis checkpoint hash should not be nil")
 	}
+
+	// Verify it matches the testNetGenesisHash
+	if !checkpoints[0].Hash.IsEqual(&testNetGenesisHash) {
+		t.Errorf("genesis checkpoint hash mismatch: got %s, want %s",
+			checkpoints[0].Hash, testNetGenesisHash)
+	}
 }
 
 // TestRegtestCheckpoints verifies that regtest has checkpoints configured
@@ -75,6 +81,12 @@ func TestRegtestCheckpoints(t *testing.T) {
 
 	if checkpoints[0].Hash == nil {
 		t.Fatal("genesis checkpoint hash should not be nil")
+	}
+
+	// Verify it matches the regTestGenesisHash
+	if !checkpoints[0].Hash.IsEqual(&regTestGenesisHash) {
+		t.Errorf("genesis checkpoint hash mismatch: got %s, want %s",
+			checkpoints[0].Hash, regTestGenesisHash)
 	}
 }
 
