@@ -3696,3 +3696,200 @@ func TestDoubleSpendDetection(t *testing.T) {
 		}
 	})
 }
+
+// TestRollbackNameFirstUpdateExactHeight tests that NAME_FIRSTUPDATE rollback
+// restores the NAME_NEW commitment with the exact original height (not estimated).
+// This test verifies Issue #11 fix: Incomplete Reorg Handling for NAME_NEW.
+func TestRollbackNameFirstUpdateExactHeight(t *testing.T) {
+	// Create temporary database
+	dbPath := filepath.Join(os.TempDir(), "test-rollback-exact-height.db")
+	defer os.Remove(dbPath)
+
+	ndb, err := namedb.NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer ndb.Close()
+
+	// Create a BlockChain wrapper
+	bc := &BlockChain{
+		nameDB:      ndb,
+		chainParams: &config.NamecoinRegTestParams,
+	}
+
+	// Simulate a complete NAME_NEW -> NAME_FIRSTUPDATE flow with rollback
+	nameStr := "d/testname"
+	value := `{"ip":"192.168.1.1"}`
+	rand := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+		0x11, 0x12, 0x13, 0x14}
+
+	// Step 1: Create NAME_NEW at height 100
+	nameNewHeight := int32(100)
+	commitHash := computeCommitHash(rand, nameStr, bc.chainParams)
+	if err := ndb.PutNameNew(commitHash, nameNewHeight); err != nil {
+		t.Fatalf("Failed to create NAME_NEW: %v", err)
+	}
+
+	// Verify NAME_NEW was stored with correct height
+	nameNewRecord, err := ndb.GetNameNew(commitHash)
+	if err != nil {
+		t.Fatalf("Failed to get NAME_NEW: %v", err)
+	}
+	if nameNewRecord.Height != nameNewHeight {
+		t.Fatalf("NAME_NEW height mismatch: expected %d, got %d", nameNewHeight, nameNewRecord.Height)
+	}
+
+	// Step 2: Process NAME_FIRSTUPDATE at height 150 (50 blocks after NAME_NEW)
+	// This is well within the valid window (12-36000 blocks)
+	firstUpdateHeight := int32(150)
+	txHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000002")
+
+	// Create the NAME_FIRSTUPDATE record with NameNewHeight set (as would happen in real processing)
+	record := &namedb.NameRecord{
+		Name:          nameStr,
+		Value:         value,
+		TxHash:        *txHash,
+		OutIndex:      0,
+		Height:        firstUpdateHeight,
+		ExpiresAt:     firstUpdateHeight + 36000,
+		Address:       "Ntest123",
+		UpdatedAt:     time.Now(),
+		NameNewHeight: nameNewHeight, // This is the key field we're testing
+	}
+
+	// Put the name and add to history (simulating updateNameDatabase)
+	if err := ndb.PutName(nameStr, record); err != nil {
+		t.Fatalf("Failed to put name: %v", err)
+	}
+	if err := ndb.AddHistory(*txHash, record); err != nil {
+		t.Fatalf("Failed to add history: %v", err)
+	}
+
+	// Delete the NAME_NEW commitment (as happens during NAME_FIRSTUPDATE processing)
+	if err := ndb.DeleteNameNew(commitHash); err != nil {
+		t.Fatalf("Failed to delete NAME_NEW: %v", err)
+	}
+
+	// Verify NAME_NEW is gone
+	if _, err := ndb.GetNameNew(commitHash); err == nil {
+		t.Fatal("Expected NAME_NEW to be deleted after NAME_FIRSTUPDATE")
+	}
+
+	// Step 3: Rollback the NAME_FIRSTUPDATE block
+	msgBlock := wire.NewMsgBlock(&wire.BlockHeader{})
+	tx := wire.NewMsgTx(1)
+	script := buildNameFirstUpdateScript([]byte(nameStr), rand, []byte(value))
+	tx.AddTxOut(wire.NewTxOut(config.DustLimit, script))
+	msgBlock.AddTransaction(tx)
+
+	block := btcutil.NewBlock(msgBlock)
+	block.SetHeight(firstUpdateHeight)
+
+	bc.rollbackNameOperations(block)
+
+	// Step 4: Verify the NAME_NEW was restored with EXACT original height
+	restoredNameNew, err := ndb.GetNameNew(commitHash)
+	if err != nil {
+		t.Fatalf("Expected NAME_NEW to be restored after rollback: %v", err)
+	}
+
+	// This is the critical assertion: the height should be the EXACT original height (100),
+	// NOT the estimated height (firstUpdateHeight - MinBlocksBeforeFirstUpdate = 150 - 12 = 138)
+	if restoredNameNew.Height != nameNewHeight {
+		t.Errorf("NAME_NEW height not restored correctly:\n"+
+			"  Expected (exact original): %d\n"+
+			"  Got:                       %d\n"+
+			"  Would have been (old bug): %d",
+			nameNewHeight,
+			restoredNameNew.Height,
+			firstUpdateHeight-config.MinBlocksBeforeFirstUpdate)
+	}
+
+	// Verify the name was deleted
+	if _, err := ndb.GetName(nameStr); err == nil {
+		t.Error("Expected name to be deleted after rollback")
+	}
+
+	// Verify history was cleared
+	history, err := ndb.GetHistory(nameStr)
+	if err != nil {
+		t.Fatalf("Failed to get history: %v", err)
+	}
+	if len(history) != 0 {
+		t.Errorf("Expected empty history after rollback, got %d entries", len(history))
+	}
+}
+
+// TestRollbackNameFirstUpdateFallback tests backward compatibility when
+// NameNewHeight is not set (e.g., old database records from version 2).
+func TestRollbackNameFirstUpdateFallback(t *testing.T) {
+	// Create temporary database
+	dbPath := filepath.Join(os.TempDir(), "test-rollback-fallback.db")
+	defer os.Remove(dbPath)
+
+	ndb, err := namedb.NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer ndb.Close()
+
+	bc := &BlockChain{
+		nameDB:      ndb,
+		chainParams: &config.NamecoinRegTestParams,
+	}
+
+	nameStr := "d/oldname"
+	value := `{"ip":"10.0.0.1"}`
+	rand := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+		0x11, 0x12, 0x13, 0x14}
+	height := int32(200)
+	txHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000003")
+
+	// Create a record WITHOUT NameNewHeight set (simulating old v2 record)
+	record := &namedb.NameRecord{
+		Name:          nameStr,
+		Value:         value,
+		TxHash:        *txHash,
+		OutIndex:      0,
+		Height:        height,
+		ExpiresAt:     height + 36000,
+		Address:       "Nold456",
+		UpdatedAt:     time.Now(),
+		NameNewHeight: 0, // Explicitly zero (as would happen with old records)
+	}
+
+	if err := ndb.PutName(nameStr, record); err != nil {
+		t.Fatalf("Failed to put name: %v", err)
+	}
+	if err := ndb.AddHistory(*txHash, record); err != nil {
+		t.Fatalf("Failed to add history: %v", err)
+	}
+
+	// Rollback the block
+	msgBlock := wire.NewMsgBlock(&wire.BlockHeader{})
+	tx := wire.NewMsgTx(1)
+	script := buildNameFirstUpdateScript([]byte(nameStr), rand, []byte(value))
+	tx.AddTxOut(wire.NewTxOut(config.DustLimit, script))
+	msgBlock.AddTransaction(tx)
+
+	block := btcutil.NewBlock(msgBlock)
+	block.SetHeight(height)
+
+	bc.rollbackNameOperations(block)
+
+	// When NameNewHeight is not set, should fall back to estimation
+	commitHash := computeCommitHash(rand, nameStr, bc.chainParams)
+	restoredNameNew, err := ndb.GetNameNew(commitHash)
+	if err != nil {
+		t.Fatalf("Expected NAME_NEW to be restored with fallback logic: %v", err)
+	}
+
+	// Should use estimated height (backward compatibility)
+	expectedHeight := height - config.MinBlocksBeforeFirstUpdate
+	if restoredNameNew.Height != expectedHeight {
+		t.Errorf("Fallback estimation failed: expected %d, got %d",
+			expectedHeight, restoredNameNew.Height)
+	}
+}
