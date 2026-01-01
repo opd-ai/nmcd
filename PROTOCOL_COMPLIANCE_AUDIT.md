@@ -13,14 +13,15 @@
 - **Protocol version implemented:** Partial (Base protocol only, no AuxPow)
 - **Critical issues:** 3
 - **High priority issues:** 1 (6 resolved: chain ID in NAME_NEW commitment ✅, namespace validation ✅, NAME_FIRSTUPDATE timing window ✅, NAME_NEW fee requirements ✅, transaction fee validation ✅, strict script validation ✅)
-- **Medium priority issues:** 7 (3 resolved: value encoding validation ✅, double-spend detection for names ✅, incomplete reorg handling for NAME_NEW ✅)
+- **Medium priority issues:** 7 (4 resolved: value encoding validation ✅, double-spend detection for names ✅, incomplete reorg handling for NAME_NEW ✅, name deletion/expiration cleanup ✅)
 - **Low priority issues:** 4
 - **Missing features:** 12
-- **Overall compatibility:** ~60% (Core name operations work with chain ID protection, namespace validation, timing window enforcement, dust limit validation, transaction fee validation, value encoding validation, strict script validation, double-spend detection, and accurate reorg handling, but consensus/mining features missing)
+- **Overall compatibility:** ~60% (Core name operations work with chain ID protection, namespace validation, timing window enforcement, dust limit validation, transaction fee validation, value encoding validation, strict script validation, double-spend detection, accurate reorg handling, and expiration cleanup, but consensus/mining features missing)
 
 **Status:** ⚠️ **NOT PRODUCTION READY** - Critical consensus-breaking features missing
 
 **Recent Progress:**
+- ✅ 2026-01-01: Implemented name deletion/expiration cleanup (Issue #14) - Expired names now have their history entries properly cleaned up to prevent storage waste
 - ✅ 2026-01-01: Fixed incomplete reorg handling for NAME_NEW (Issue #11) - NAME_NEW commitments now restored with exact original height during blockchain reorganization instead of estimated height
 - ✅ 2025-12-31: Implemented double-spend detection for names (Issue #13) - Prevents multiple name operations for the same name within a single block
 - ✅ 2025-12-31: Implemented strict script validation (Issue #9) - Enforces consensus-critical drop opcode placement and P2PKH suffix validation
@@ -814,28 +815,90 @@ A malicious actor could create multiple NAME_UPDATE transactions for the same na
 
 ---
 
-### 14. Missing Name Deletion/Expiration Cleanup
-**Location:** chain/blockchain.go:189-196 - updateNameDatabase()  
+### 14. Missing Name Deletion/Expiration Cleanup ✅ RESOLVED
+**Location:** chain/blockchain.go:355-368 - updateNameDatabase() and namedb/namedb.go:163-203 - DeleteHistory()  
 **Severity:** MEDIUM  
+**Status:** ✅ **RESOLVED** (2026-01-01)  
 **Expected:** Clean up expired names on block processing  
-**Actual:** Deletes expired names but doesn't clean up history
+**Actual:** ✅ Now deletes both name records and their history entries
 
-**Description:**
+**Resolution:**
+Implemented comprehensive history cleanup for expired names with the following changes:
+1. Added `DeleteHistory()` method in `namedb/namedb.go` that:
+   - Retrieves all history txHashes from the history index for a name
+   - Deletes all corresponding history records from the history bucket
+   - Deletes the index entry from the history index bucket
+   - Handles non-existent names gracefully (no error)
+2. Updated `updateNameDatabase()` in `chain/blockchain.go` to call `DeleteHistory()` after deleting expired names
+3. Added comprehensive unit tests in `namedb/namedb_test.go`:
+   - `TestDeleteHistory`: Verifies deletion of multiple history entries
+   - `TestDeleteHistoryEmpty`: Verifies graceful handling of non-existent names
+   - `TestDeleteHistoryMultipleNames`: Verifies isolation between different names
+4. Added integration test in `chain/blockchain_test.go`:
+   - `TestNameExpirationWithHistoryCleanup`: Verifies end-to-end expiration cleanup with history
+
+**Implementation:**
 ```go
-// chain/blockchain.go:189-196
-expired, err := bc.nameDB.GetExpiredNames(height)
-if err != nil {
-    return err
+// namedb/namedb.go:163-203
+func (ndb *NameDatabase) DeleteHistory(name string) error {
+	ndb.mu.Lock()
+	defer ndb.mu.Unlock()
+
+	return ndb.db.Update(func(tx *bbolt.Tx) error {
+		indexBucket := tx.Bucket(historyIndexBucket)
+		histBucket := tx.Bucket(historyBucket)
+
+		// Get the list of txHashes from the index
+		indexData := indexBucket.Get([]byte(name))
+		if indexData == nil {
+			return nil // No history for this name
+		}
+
+		if len(indexData)%txHashSize != 0 {
+			return fmt.Errorf("corrupt history index for name: %s", name)
+		}
+
+		// Delete all history records from the history bucket
+		for i := 0; i < len(indexData); i += txHashSize {
+			txHashBytes := indexData[i : i+txHashSize]
+			if err := histBucket.Delete(txHashBytes); err != nil {
+				return err
+			}
+		}
+
+		// Delete the index entry
+		return indexBucket.Delete([]byte(name))
+	})
 }
+
+// chain/blockchain.go:355-368
 for _, name := range expired {
-    if err := bc.nameDB.DeleteName(name); err != nil {
-        return err
-    }
+	// Delete the name record
+	if err := bc.nameDB.DeleteName(name); err != nil {
+		return err
+	}
+	// Clean up history entries for the expired name to prevent storage waste
+	if err := bc.nameDB.DeleteHistory(name); err != nil {
+		return err
+	}
 }
-// Missing: Clean up history entries for expired names
 ```
 
-History entries remain after expiration, wasting storage.
+Per Namecoin protocol and efficient storage management:
+- **Storage Efficiency**: History entries can accumulate over time for long-lived names. When a name expires, both the name record and all associated history entries should be deleted to reclaim storage space.
+- **Clean State**: Ensures the database doesn't accumulate orphaned history entries for names that no longer exist.
+- **Proper Isolation**: The `DeleteHistory()` method only affects the specified name, preserving history for other names.
+
+**Test Coverage:**
+- ✅ Basic deletion with multiple history entries
+- ✅ Graceful handling of non-existent names (no error)
+- ✅ Isolation between different names (deleting history for one name doesn't affect others)
+- ✅ End-to-end integration test with blockchain expiration flow
+- ✅ All existing tests pass (no regressions)
+- ✅ Full test suite passing across all packages
+
+**Storage Impact:**
+This fix prevents unbounded growth of the history bucket by cleaning up history entries when names expire. For a name with N updates over its lifetime, this saves N×(record_size) bytes per expired name, which can be significant for long-running nodes with high name turnover.
 
 ---
 
