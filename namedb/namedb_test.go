@@ -865,8 +865,7 @@ func TestNameOperationString(t *testing.T) {
 
 // TestDeleteHistory verifies that DeleteHistory removes all history entries for a name
 func TestDeleteHistory(t *testing.T) {
-	dbPath := filepath.Join(os.TempDir(), "test-delete-history.db")
-	defer os.Remove(dbPath)
+	dbPath := filepath.Join(t.TempDir(), "test-delete-history.db")
 
 	db, err := NewNameDatabase(dbPath)
 	if err != nil {
@@ -942,8 +941,7 @@ func TestDeleteHistory(t *testing.T) {
 
 // TestDeleteHistoryEmpty verifies that DeleteHistory doesn't error on non-existent names
 func TestDeleteHistoryEmpty(t *testing.T) {
-	dbPath := filepath.Join(os.TempDir(), "test-delete-history-empty.db")
-	defer os.Remove(dbPath)
+	dbPath := filepath.Join(t.TempDir(), "test-delete-history-empty.db")
 
 	db, err := NewNameDatabase(dbPath)
 	if err != nil {
@@ -960,8 +958,7 @@ func TestDeleteHistoryEmpty(t *testing.T) {
 
 // TestDeleteHistoryMultipleNames verifies that DeleteHistory only affects the specified name
 func TestDeleteHistoryMultipleNames(t *testing.T) {
-	dbPath := filepath.Join(os.TempDir(), "test-delete-history-multiple.db")
-	defer os.Remove(dbPath)
+	dbPath := filepath.Join(t.TempDir(), "test-delete-history-multiple.db")
 
 	db, err := NewNameDatabase(dbPath)
 	if err != nil {
