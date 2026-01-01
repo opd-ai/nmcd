@@ -81,6 +81,24 @@ func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.Behavi
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 
+	// Validate proof of work (difficulty) before processing
+	// This ensures the block hash meets the difficulty target specified in the block header.
+	// While btcd's ProcessBlock also validates this, we perform an explicit check here for:
+	// 1. Clear visibility that difficulty validation is happening
+	// 2. Early rejection of invalid blocks before expensive processing
+	// 3. Explicit verification that Namecoin's PoW parameters are correctly validated
+	//
+	// Namecoin uses the same difficulty adjustment algorithm as Bitcoin:
+	// - Retargets every 2016 blocks
+	// - Targets 10 minute block time
+	// - Max 4x adjustment per retarget period
+	//
+	// Note: This validates pre-AuxPoW blocks (< 19,200). AuxPoW blocks (>= 19,200) require
+	// additional validation of the parent Bitcoin block, which is not yet implemented.
+	if err := bc.validateProofOfWork(block); err != nil {
+		return false, false, fmt.Errorf("invalid proof of work: %w", err)
+	}
+
 	// Validate block subsidy before processing
 	if err := bc.validateBlockSubsidy(block); err != nil {
 		return false, false, fmt.Errorf("invalid block subsidy: %w", err)
@@ -92,6 +110,12 @@ func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.Behavi
 	}
 
 	// Process the block using btcd blockchain
+	// btcd will perform additional validations including:
+	// - Difficulty retargeting logic (every 2016 blocks)
+	// - Timestamp validation
+	// - Merkle root verification
+	// - Transaction validation
+	// - etc.
 	isMainChain, isOrphan, err := bc.BlockChain.ProcessBlock(block, flags)
 	if err != nil {
 		return isMainChain, isOrphan, err
@@ -148,6 +172,34 @@ func (bc *BlockChain) validateBlockSubsidy(block *btcutil.Block) error {
 	}
 
 	return nil
+}
+
+// validateProofOfWork validates that the block hash meets the difficulty target
+// specified in the block header's Bits field.
+//
+// This function ensures:
+// 1. The block header Bits field is within the proof of work limit (not too easy)
+// 2. The block hash is less than the target difficulty (proof of work completed)
+//
+// Namecoin uses the same proof of work validation as Bitcoin:
+// - SHA-256 double hash of the block header
+// - Target difficulty encoded in compact form in the Bits field
+// - Block hash must be numerically less than the target
+//
+// The difficulty adjustment (retargeting) is handled by btcd's blockchain package
+// and occurs every 2016 blocks following Bitcoin's algorithm.
+//
+// Note: This validates pre-AuxPoW blocks. AuxPoW blocks (>= 19,200 on mainnet)
+// require additional validation of the parent Bitcoin block's proof of work,
+// which is not yet implemented. See PROTOCOL_COMPLIANCE_AUDIT.md Issue #1.
+func (bc *BlockChain) validateProofOfWork(block *btcutil.Block) error {
+	// Use btcd's CheckProofOfWork function which validates:
+	// 1. The target difficulty from Bits is <= PowLimit (from chain params)
+	// 2. The block hash is <= target difficulty
+	//
+	// This uses the PowLimit from our Namecoin chain parameters, ensuring
+	// Namecoin-specific limits are enforced.
+	return blockchain.CheckProofOfWork(block, bc.chainParams.PowLimit)
 }
 
 // validateNameOperations validates name operations in a block
