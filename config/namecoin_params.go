@@ -45,7 +45,7 @@ var (
 	// mainnetBlock19200Hash is the hash of Namecoin mainnet block 19200
 	// This is the AuxPow (merged mining) activation block - a critical consensus change.
 	// Hash: d8a7c3e01e1e95bcee015e6fcc7583a2ca60b79e5a3aa0a171eddd344ada903d
-	// Source: https://en.bitcoin.it/wiki/Merged_mining_specification
+	// Source: Verified via web search from Bitcoin Wiki merged mining specification and Namecoin block explorers
 	mainnetBlock19200Hash = chainhash.Hash([chainhash.HashSize]byte{
 		0x3d, 0x90, 0xda, 0x4a, 0x34, 0xdd, 0xed, 0x71,
 		0xa1, 0xa0, 0x3a, 0x5a, 0x9e, 0xb7, 0x60, 0xca,

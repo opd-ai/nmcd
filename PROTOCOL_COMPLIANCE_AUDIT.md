@@ -89,13 +89,13 @@ All three phases of AuxPow implementation are now complete and fully integrated:
   - Full integration in `ProcessBlock()` pipeline
 
 **Test Coverage:**
-- ✅ 16 comprehensive test functions, all passing:
-  - Merkle branch serialization/deserialization (5 tests)
-  - AuxPow structure round-trip (2 tests)
-  - Merkle branch verification (5 tests)
-  - Chain ID extraction (4 tests)
-  - AuxPow validation (3 tests)
-  - Integration tests (3 tests)
+- ✅ 13 comprehensive test functions, all passing:
+  - Merkle branch serialization/deserialization
+  - AuxPow structure round-trip
+  - Merkle branch verification
+  - Chain ID extraction
+  - AuxPow validation
+  - Integration tests
 - ✅ 100% test success rate
 - ✅ Realistic test data matching Namecoin protocol
 
