@@ -291,6 +291,7 @@ type UTXO struct {
 //   - utxos: available UTXOs to spend (must include the name UTXO)
 //   - nameUtxoIndex: index of the UTXO that currently holds the name
 //   - feeRate: satoshis per byte for the transaction fee
+//   - destAddress: optional destination address for the name (nil to keep at current address)
 //
 // Returns the signed transaction and any error.
 func (w *Wallet) CreateNameUpdateTx(
@@ -298,6 +299,7 @@ func (w *Wallet) CreateNameUpdateTx(
 	utxos []UTXO,
 	nameUtxoIndex int,
 	feeRate int64,
+	destAddress btcutil.Address,
 ) (*wire.MsgTx, error) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
@@ -308,7 +310,7 @@ func (w *Wallet) CreateNameUpdateTx(
 
 	nameUtxo := utxos[nameUtxoIndex]
 
-	// Get the key for the name UTXO
+	// Get the key for the name UTXO (needed for signing)
 	kp, ok := w.keys[nameUtxo.Address]
 	if !ok {
 		return nil, fmt.Errorf("no key for name owner address: %s", nameUtxo.Address)
@@ -320,8 +322,28 @@ func (w *Wallet) CreateNameUpdateTx(
 		totalIn += utxo.Value
 	}
 
+	// Determine the destination pubkey hash
+	// If destAddress is provided, the name will be transferred to that address.
+	// Otherwise, the name remains at the current owner's address.
+	// This enables both simple value updates and ownership transfers.
+	var pubKeyHash []byte
+	var changeAddr btcutil.Address
+	if destAddress != nil {
+		// Use provided destination address for name transfer
+		switch addr := destAddress.(type) {
+		case *btcutil.AddressPubKeyHash:
+			pubKeyHash = addr.ScriptAddress()
+		default:
+			return nil, fmt.Errorf("unsupported destination address type: %T", destAddress)
+		}
+		changeAddr = destAddress
+	} else {
+		// Keep at current address (simple value update without ownership transfer)
+		pubKeyHash = btcutil.Hash160(kp.PublicKey.SerializeCompressed())
+		changeAddr = kp.Address
+	}
+
 	// Build NAME_UPDATE output script
-	pubKeyHash := btcutil.Hash160(kp.PublicKey.SerializeCompressed())
 	nameScript, err := BuildNameUpdateScript(name, newValue, pubKeyHash)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build name script: %w", err)
@@ -357,7 +379,7 @@ func (w *Wallet) CreateNameUpdateTx(
 
 	// Add change output if above dust
 	if changeValue >= config.DustLimit {
-		changeScript, err := txscript.PayToAddrScript(kp.Address)
+		changeScript, err := txscript.PayToAddrScript(changeAddr)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create change script: %w", err)
 		}
