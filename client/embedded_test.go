@@ -14,54 +14,69 @@ import (
 func TestNewEmbeddedClient(t *testing.T) {
 	tests := []struct {
 		name      string
-		cfg       *Config
+		setupCfg  func(t *testing.T) *Config
 		wantError bool
 		errorMsg  string
 	}{
 		{
-			name:      "nil config uses defaults",
-			cfg:       nil,
+			name: "nil config uses defaults",
+			setupCfg: func(t *testing.T) *Config {
+				return &Config{
+					DataDir: t.TempDir(),
+					Network: "regtest",
+				}
+			},
 			wantError: false,
 		},
 		{
 			name: "custom data directory",
-			cfg: &Config{
-				DataDir: t.TempDir(),
-				Network: "regtest",
+			setupCfg: func(t *testing.T) *Config {
+				return &Config{
+					DataDir: t.TempDir(),
+					Network: "regtest",
+				}
 			},
 			wantError: false,
 		},
 		{
 			name: "mainnet configuration",
-			cfg: &Config{
-				DataDir: t.TempDir(),
-				Network: "mainnet",
+			setupCfg: func(t *testing.T) *Config {
+				return &Config{
+					DataDir: t.TempDir(),
+					Network: "mainnet",
+				}
 			},
 			wantError: false,
 		},
 		{
 			name: "testnet configuration",
-			cfg: &Config{
-				DataDir: t.TempDir(),
-				Network: "testnet",
+			setupCfg: func(t *testing.T) *Config {
+				return &Config{
+					DataDir: t.TempDir(),
+					Network: "testnet",
+				}
 			},
 			wantError: false,
 		},
 		{
 			name: "invalid network",
-			cfg: &Config{
-				DataDir: t.TempDir(),
-				Network: "invalid",
+			setupCfg: func(t *testing.T) *Config {
+				return &Config{
+					DataDir: t.TempDir(),
+					Network: "invalid",
+				}
 			},
 			wantError: true,
 			errorMsg:  "unknown network",
 		},
 		{
 			name: "wallet disabled",
-			cfg: &Config{
-				DataDir:       t.TempDir(),
-				Network:       "regtest",
-				DisableWallet: true,
+			setupCfg: func(t *testing.T) *Config {
+				return &Config{
+					DataDir:       t.TempDir(),
+					Network:       "regtest",
+					DisableWallet: true,
+				}
 			},
 			wantError: false,
 		},
@@ -69,15 +84,10 @@ func TestNewEmbeddedClient(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Use temp directory for nil config test
-			if tt.cfg == nil {
-				tt.cfg = &Config{
-					DataDir: t.TempDir(),
-					Network: "regtest",
-				}
-			}
+			// Setup config with temp directory inside subtest
+			cfg := tt.setupCfg(t)
 
-			client, err := NewEmbeddedClient(tt.cfg)
+			client, err := NewEmbeddedClient(cfg)
 			if tt.wantError {
 				if err == nil {
 					t.Errorf("NewEmbeddedClient() expected error containing %q, got nil", tt.errorMsg)
@@ -99,17 +109,17 @@ func TestNewEmbeddedClient(t *testing.T) {
 			if client.nameDB == nil {
 				t.Error("nameDB is nil")
 			}
-			if !tt.cfg.DisableWallet && client.wallet == nil {
+			if !cfg.DisableWallet && client.wallet == nil {
 				t.Error("wallet is nil but should be initialized")
 			}
-			if tt.cfg.DisableWallet && client.wallet != nil {
+			if cfg.DisableWallet && client.wallet != nil {
 				t.Error("wallet is not nil but should be disabled")
 			}
-			if client.network != tt.cfg.Network {
-				t.Errorf("network = %v, want %v", client.network, tt.cfg.Network)
+			if client.network != cfg.Network {
+				t.Errorf("network = %v, want %v", client.network, cfg.Network)
 			}
-			if client.dataDir != tt.cfg.DataDir {
-				t.Errorf("dataDir = %v, want %v", client.dataDir, tt.cfg.DataDir)
+			if client.dataDir != cfg.DataDir {
+				t.Errorf("dataDir = %v, want %v", client.dataDir, cfg.DataDir)
 			}
 			if client.closed {
 				t.Error("client should not be closed after initialization")

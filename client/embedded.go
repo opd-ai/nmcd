@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,10 +30,14 @@ type EmbeddedClient struct {
 	// mu protects client state during initialization and shutdown
 	mu sync.RWMutex
 
-	// stopCh signals shutdown to background goroutines
+	// stopCh signals shutdown to background goroutines.
+	// Note: In the current Phase 2 foundation implementation, no background
+	// goroutines are started yet. This field is reserved for future use when
+	// implementing background tasks (e.g., NAME_NEW tracking, blockchain sync).
 	stopCh chan struct{}
 
-	// wg tracks background goroutines for graceful shutdown
+	// wg tracks background goroutines for graceful shutdown.
+	// It is kept alongside stopCh to support future background workers.
 	wg sync.WaitGroup
 
 	// closed tracks whether client has been closed
@@ -184,8 +189,8 @@ func (c *EmbeddedClient) ResolveName(ctx context.Context, name string) (*NameRec
 	// nameDB.GetName already uses RLock internally for thread safety
 	record, err := c.nameDB.GetName(name)
 	if err != nil {
-		// Check if error message indicates name not found
-		if err.Error() == "name not found" {
+		// Check if error is the sentinel ErrNameNotFound
+		if errors.Is(err, namedb.ErrNameNotFound) {
 			return nil, ErrNameNotFound
 		}
 		return nil, fmt.Errorf("failed to get name: %w", err)
@@ -328,7 +333,11 @@ func (c *EmbeddedClient) Close() error {
 
 // defaultConfig returns the default client configuration
 func defaultConfig() *Config {
-	homeDir, _ := os.UserHomeDir()
+	homeDir, err := os.UserHomeDir()
+	if err != nil || homeDir == "" {
+		// Fallback to current working directory if the home directory cannot be determined.
+		homeDir = "."
+	}
 	return &Config{
 		Mode:           ModeAuto,
 		DataDir:        filepath.Join(homeDir, ".nmcd"),
