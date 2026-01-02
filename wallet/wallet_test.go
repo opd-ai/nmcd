@@ -149,6 +149,163 @@ func TestBuildNameUpdateScript(t *testing.T) {
 	}
 }
 
+func TestBuildNameNewScript(t *testing.T) {
+	hash := make([]byte, 20)
+	for i := range hash {
+		hash[i] = byte(i + 100)
+	}
+
+	pubKeyHash := make([]byte, 20)
+	for i := range pubKeyHash {
+		pubKeyHash[i] = byte(i)
+	}
+
+	tests := []struct {
+		name       string
+		hash       []byte
+		pubKeyHash []byte
+		wantErr    bool
+	}{
+		{
+			name:       "valid hash and pubKeyHash",
+			hash:       hash,
+			pubKeyHash: pubKeyHash,
+			wantErr:    false,
+		},
+		{
+			name:       "invalid hash length",
+			hash:       make([]byte, 10),
+			pubKeyHash: pubKeyHash,
+			wantErr:    true,
+		},
+		{
+			name:       "invalid pubkey hash",
+			hash:       hash,
+			pubKeyHash: make([]byte, 10),
+			wantErr:    true,
+		},
+		{
+			name:       "nil hash",
+			hash:       nil,
+			pubKeyHash: pubKeyHash,
+			wantErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			script, err := BuildNameNewScript(tt.hash, tt.pubKeyHash)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			// Check script starts with NAME_NEW opcode
+			if len(script) == 0 || script[0] != opNameNew {
+				t.Error("script doesn't start with OP_NAME_NEW")
+			}
+
+			// Verify script contains the hash
+			// Basic check: script should contain the hash data
+			if len(script) < 20 {
+				t.Errorf("script too short: %d bytes", len(script))
+			}
+		})
+	}
+}
+
+func TestBuildNameFirstUpdateScript(t *testing.T) {
+	pubKeyHash := make([]byte, 20)
+	for i := range pubKeyHash {
+		pubKeyHash[i] = byte(i)
+	}
+
+	tests := []struct {
+		name       string
+		nameVal    string
+		rand       string
+		value      string
+		pubKeyHash []byte
+		wantErr    bool
+	}{
+		{
+			name:       "valid registration",
+			nameVal:    "d/example",
+			rand:       "randomsalt123",
+			value:      `{"ip":"192.168.1.1"}`,
+			pubKeyHash: pubKeyHash,
+			wantErr:    false,
+		},
+		{
+			name:       "empty name",
+			nameVal:    "",
+			rand:       "salt",
+			value:      "test",
+			pubKeyHash: pubKeyHash,
+			wantErr:    true,
+		},
+		{
+			name:       "name too long",
+			nameVal:    string(make([]byte, 256)),
+			rand:       "salt",
+			value:      "test",
+			pubKeyHash: pubKeyHash,
+			wantErr:    true,
+		},
+		{
+			name:       "value too long",
+			nameVal:    "d/test",
+			rand:       "salt",
+			value:      string(make([]byte, 1024)),
+			pubKeyHash: pubKeyHash,
+			wantErr:    true,
+		},
+		{
+			name:       "invalid pubkey hash",
+			nameVal:    "d/test",
+			rand:       "salt",
+			value:      "test",
+			pubKeyHash: make([]byte, 10),
+			wantErr:    true,
+		},
+		{
+			name:       "empty rand is allowed",
+			nameVal:    "d/test",
+			rand:       "",
+			value:      "test",
+			pubKeyHash: pubKeyHash,
+			wantErr:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			script, err := BuildNameFirstUpdateScript(tt.nameVal, tt.rand, tt.value, tt.pubKeyHash)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			// Check script starts with NAME_FIRSTUPDATE opcode
+			if len(script) == 0 || script[0] != opNameFirstUpdate {
+				t.Error("script doesn't start with OP_NAME_FIRSTUPDATE")
+			}
+		})
+	}
+}
+
 func TestPushData(t *testing.T) {
 	tests := []struct {
 		name      string

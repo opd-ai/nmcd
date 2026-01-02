@@ -29,7 +29,7 @@ type BlockChain struct {
 	blockDB     database.DB // Block database for blockchain storage
 	chainParams *chaincfg.Params
 	mu          sync.RWMutex
-	
+
 	// auxPowCache stores AuxPow data temporarily keyed by block hash
 	// This is needed because btcd's blockchain package works with btcutil.Block
 	// which doesn't have AuxPow fields, but we need to validate AuxPow.
@@ -100,10 +100,10 @@ func NewBlockChain(cfg *Config, indexManager blockchain.IndexManager) (*BlockCha
 
 	// Create blockchain config
 	bcConfig := blockchain.Config{
-		DB:              blockDB,
-		ChainParams:     cfg.ChainParams,
-		TimeSource:      blockchain.NewMedianTime(),
-		IndexManager:    indexManager,
+		DB:               blockDB,
+		ChainParams:      cfg.ChainParams,
+		TimeSource:       blockchain.NewMedianTime(),
+		IndexManager:     indexManager,
 		UtxoCacheMaxSize: 250 * 1024 * 1024, // 250 MB UTXO cache (recommended default)
 	}
 
@@ -129,23 +129,23 @@ func NewBlockChain(cfg *Config, indexManager blockchain.IndexManager) (*BlockCha
 func (bc *BlockChain) Close() error {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
-	
+
 	var errs []error
-	
+
 	// Close name database
 	if bc.nameDB != nil {
 		if err := bc.nameDB.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to close name database: %w", err))
 		}
 	}
-	
+
 	// Close block database
 	if bc.blockDB != nil {
 		if err := bc.blockDB.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to close block database: %w", err))
 		}
 	}
-	
+
 	// Return all errors if any occurred
 	if len(errs) > 0 {
 		// Join all errors into a single error message
@@ -155,7 +155,7 @@ func (bc *BlockChain) Close() error {
 		}
 		return fmt.Errorf("%s", errMsg)
 	}
-	
+
 	return nil
 }
 
@@ -181,30 +181,30 @@ func (bc *BlockChain) SetBlockAuxPowFromBytes(blockHash *chainhash.Hash, seriali
 		// Block header is incomplete, skip AuxPow parsing
 		return nil
 	}
-	
+
 	// Extract version from header (bytes 0-3, little-endian)
 	version := int32(serializedBlock[0]) | int32(serializedBlock[1])<<8 |
 		int32(serializedBlock[2])<<16 | int32(serializedBlock[3])<<24
-	
+
 	hasAuxPowBit := (version & config.AuxPowVersionBit) != 0
 	if !hasAuxPowBit {
 		// No AuxPow for this block
 		return nil
 	}
-	
+
 	// Deserialize the full block including AuxPow
 	block, err := NewBlockFromBytes(serializedBlock)
 	if err != nil {
 		return fmt.Errorf("failed to deserialize block with AuxPow: %w", err)
 	}
-	
+
 	// Cache the AuxPow for validation
 	if block.AuxPow() != nil {
 		bc.auxPowMu.Lock()
 		bc.auxPowCache[*blockHash] = block.AuxPow()
 		bc.auxPowMu.Unlock()
 	}
-	
+
 	return nil
 }
 
@@ -532,10 +532,10 @@ func (bc *BlockChain) validateAuxPow(block *btcutil.Block) error {
 	// Retrieve cached AuxPow data
 	blockHash := block.Hash()
 	auxPow := bc.getBlockAuxPow(blockHash)
-	
+
 	// Ensure we clean up the cache entry when done (success or failure)
 	defer bc.clearBlockAuxPow(blockHash)
-	
+
 	if auxPow == nil {
 		return fmt.Errorf("block at height %d requires AuxPow but no AuxPow data was provided", height)
 	}
@@ -544,7 +544,7 @@ func (bc *BlockChain) validateAuxPow(block *btcutil.Block) error {
 	// For merged mining, the parent block (Bitcoin) must meet a difficulty target.
 	// We use the current block's difficulty target from its Bits field.
 	targetDifficulty := blockchain.CompactToBig(block.MsgBlock().Header.Bits)
-	
+
 	// Validate the AuxPow proof
 	// This checks:
 	// 1. Chain ID matches Namecoin (NamecoinChainID = 1)
@@ -557,12 +557,12 @@ func (bc *BlockChain) validateAuxPow(block *btcutil.Block) error {
 	// the big-endian bytes from big.Int.
 	var targetHash chainhash.Hash
 	targetBytes := targetDifficulty.Bytes()
-	
+
 	// Reverse bytes: big.Int is big-endian, Hash (for HashToBig) is little-endian
 	for i := 0; i < len(targetBytes); i++ {
 		targetHash[len(targetBytes)-1-i] = targetBytes[i]
 	}
-	
+
 	if err := auxPow.ValidateAuxPow(blockHash, NamecoinChainID, &targetHash); err != nil {
 		return fmt.Errorf("AuxPow validation failed for block %s at height %d: %w",
 			blockHash.String(), height, err)

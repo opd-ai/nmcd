@@ -168,11 +168,11 @@ func TestEmbeddedClient_ResolveName(t *testing.T) {
 	}
 
 	tests := []struct {
-		name      string
-		ctx       context.Context
+		name       string
+		ctx        context.Context
 		nameLookup string
-		want      *NameRecord
-		wantError error
+		want       *NameRecord
+		wantError  error
 	}{
 		{
 			name:       "resolve existing name",
@@ -461,11 +461,11 @@ func TestEmbeddedClient_ListNames(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name       string
-		filter     *ListFilter
-		wantCount  int
-		wantNames  []string
-		wantError  bool
+		name      string
+		filter    *ListFilter
+		wantCount int
+		wantNames []string
+		wantError bool
 	}{
 		{
 			name:      "nil filter returns default limit",
@@ -715,7 +715,7 @@ func TestEmbeddedClient_GetNameHistory(t *testing.T) {
 
 	// Test 3: Name with multiple operations (updates)
 	testName2 := "d/updated"
-	
+
 	// First update
 	txHash2, _ := chainhash.NewHashFromStr("2222222222222222222222222222222222222222222222222222222222222222")
 	nameRecord2 := &namedb.NameRecord{

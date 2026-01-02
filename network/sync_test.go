@@ -20,22 +20,22 @@ func TestSyncManagerCreation(t *testing.T) {
 		maxPeers:    8,
 		quit:        make(chan struct{}),
 	}
-	
+
 	// Create sync manager
 	sm := NewSyncManager(pm)
 	if sm == nil {
 		t.Fatal("NewSyncManager returned nil")
 	}
-	
+
 	// Check initial state
 	if !sm.headersFirstMode {
 		t.Error("Expected sync manager to start in headers-first mode")
 	}
-	
+
 	if sm.IsSyncing() {
 		t.Error("Expected sync manager to not be syncing initially")
 	}
-	
+
 	// Clean up
 	sm.Stop()
 }
@@ -49,35 +49,35 @@ func TestSyncManagerUpdatePeerHeight(t *testing.T) {
 		maxPeers:    8,
 		quit:        make(chan struct{}),
 	}
-	
+
 	sm := NewSyncManager(pm)
 	defer sm.Stop()
-	
+
 	// Create a mock peer (nil is okay for this test)
 	var mockPeer *peer.Peer = nil
-	
+
 	// Update with a height
 	sm.UpdatePeerHeight(mockPeer, 100)
-	
+
 	// Check that best height was updated
 	sm.mu.RLock()
 	if sm.bestHeight != 100 {
 		t.Errorf("Expected best height 100, got %d", sm.bestHeight)
 	}
 	sm.mu.RUnlock()
-	
+
 	// Update with a higher height
 	sm.UpdatePeerHeight(mockPeer, 200)
-	
+
 	sm.mu.RLock()
 	if sm.bestHeight != 200 {
 		t.Errorf("Expected best height 200, got %d", sm.bestHeight)
 	}
 	sm.mu.RUnlock()
-	
+
 	// Update with a lower height (should not change)
 	sm.UpdatePeerHeight(mockPeer, 150)
-	
+
 	sm.mu.RLock()
 	if sm.bestHeight != 200 {
 		t.Errorf("Expected best height to remain 200, got %d", sm.bestHeight)
@@ -94,29 +94,29 @@ func TestSyncManagerBlockReceived(t *testing.T) {
 		maxPeers:    8,
 		quit:        make(chan struct{}),
 	}
-	
+
 	sm := NewSyncManager(pm)
 	defer sm.Stop()
-	
+
 	// Create a test block hash
 	hash := chainhash.Hash{}
 	hash[0] = 1
-	
+
 	// Add to requested blocks manually
 	sm.mu.Lock()
 	sm.requestedBlocks[hash] = time.Now()
 	sm.mu.Unlock()
-	
+
 	// Verify it's in the map
 	sm.mu.RLock()
 	if _, exists := sm.requestedBlocks[hash]; !exists {
 		t.Error("Expected block to be in requested blocks map")
 	}
 	sm.mu.RUnlock()
-	
+
 	// Notify that block was received
 	sm.BlockReceived(&hash)
-	
+
 	// Verify it was removed
 	sm.mu.RLock()
 	if _, exists := sm.requestedBlocks[hash]; exists {
@@ -134,27 +134,27 @@ func TestSyncManagerCleanupOldRequests(t *testing.T) {
 		maxPeers:    8,
 		quit:        make(chan struct{}),
 	}
-	
+
 	sm := NewSyncManager(pm)
 	defer sm.Stop()
-	
+
 	// Create test hashes
 	oldHash := chainhash.Hash{}
 	oldHash[0] = 1
 	newHash := chainhash.Hash{}
 	newHash[0] = 2
-	
+
 	// Add old and new requests
 	sm.mu.Lock()
 	sm.requestedBlocks[oldHash] = time.Now().Add(-3 * time.Minute) // Old request
 	sm.requestedBlocks[newHash] = time.Now()                       // New request
 	sm.mu.Unlock()
-	
+
 	// Run cleanup
 	sm.mu.Lock()
 	sm.cleanupOldRequests()
 	sm.mu.Unlock()
-	
+
 	// Check that old request was removed and new request remains
 	sm.mu.RLock()
 	if _, exists := sm.requestedBlocks[oldHash]; exists {
@@ -175,15 +175,15 @@ func TestSyncManagerHandleHeaders(t *testing.T) {
 		maxPeers:    8,
 		quit:        make(chan struct{}),
 	}
-	
+
 	sm := NewSyncManager(pm)
 	defer sm.Stop()
-	
+
 	// Create empty headers message
 	msg := wire.NewMsgHeaders()
-	
+
 	// Handle empty headers (should not panic)
 	sm.HandleHeaders(nil, msg)
-	
+
 	// No assertions needed - test passes if no panic occurs
 }

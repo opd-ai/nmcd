@@ -214,16 +214,16 @@ var NamecoinMainNetParams = chaincfg.Params{
 	GenesisHash:  &MainNetGenesisHash,
 
 	// Proof of work parameters
-	PowLimit:                  new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 224), big.NewInt(1)),
-	PowLimitBits:              0x1d00ffff,
-	TargetTimespan:            time.Hour * 24 * 14,  // 2 weeks
-	TargetTimePerBlock:        time.Minute * 10,     // 10 minutes
-	RetargetAdjustmentFactor:  4,                    // 25% less, 400% more
-	ReduceMinDifficulty:       false,
-	MinDiffReductionTime:      0,
-	GenerateSupported:         false,
-	CoinbaseMaturity:          100,
-	SubsidyReductionInterval:  210000,
+	PowLimit:                 new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 224), big.NewInt(1)),
+	PowLimitBits:             0x1d00ffff,
+	TargetTimespan:           time.Hour * 24 * 14, // 2 weeks
+	TargetTimePerBlock:       time.Minute * 10,    // 10 minutes
+	RetargetAdjustmentFactor: 4,                   // 25% less, 400% more
+	ReduceMinDifficulty:      false,
+	MinDiffReductionTime:     0,
+	GenerateSupported:        false,
+	CoinbaseMaturity:         100,
+	SubsidyReductionInterval: 210000,
 
 	// Checkpoints ordered by height. These protect against long-range reorg attacks
 	// and enable faster initial sync. Additional checkpoints should be added from
@@ -281,16 +281,16 @@ var NamecoinTestNetParams = chaincfg.Params{
 	GenesisHash:  &testNetGenesisHash,
 
 	// Proof of work parameters
-	PowLimit:                  new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 224), big.NewInt(1)),
-	PowLimitBits:              0x1d00ffff,
-	TargetTimespan:            time.Hour * 24 * 14,  // 2 weeks
-	TargetTimePerBlock:        time.Minute * 10,     // 10 minutes
-	RetargetAdjustmentFactor:  4,                    // 25% less, 400% more
-	ReduceMinDifficulty:       true,
-	MinDiffReductionTime:      time.Minute * 20,
-	GenerateSupported:         false,
-	CoinbaseMaturity:          100,
-	SubsidyReductionInterval:  210000,
+	PowLimit:                 new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 224), big.NewInt(1)),
+	PowLimitBits:             0x1d00ffff,
+	TargetTimespan:           time.Hour * 24 * 14, // 2 weeks
+	TargetTimePerBlock:       time.Minute * 10,    // 10 minutes
+	RetargetAdjustmentFactor: 4,                   // 25% less, 400% more
+	ReduceMinDifficulty:      true,
+	MinDiffReductionTime:     time.Minute * 20,
+	GenerateSupported:        false,
+	CoinbaseMaturity:         100,
+	SubsidyReductionInterval: 210000,
 
 	// Checkpoints ordered by height for testnet
 	// These protect against long-range reorg attacks and enable faster initial sync.
@@ -355,16 +355,16 @@ var NamecoinRegTestParams = chaincfg.Params{
 	// Regtest uses a much higher PowLimit (255 bits vs 224 for mainnet/testnet)
 	// to allow instant block generation without actual mining hardware.
 	// This matches Bitcoin Core's regtest behavior.
-	PowLimit:                  new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 255), big.NewInt(1)),
-	PowLimitBits:              0x207fffff,
-	TargetTimespan:            time.Hour * 24 * 14,  // 2 weeks
-	TargetTimePerBlock:        time.Minute * 10,     // 10 minutes
-	RetargetAdjustmentFactor:  4,                    // 25% less, 400% more
-	ReduceMinDifficulty:       true,
-	MinDiffReductionTime:      time.Minute * 20,
-	GenerateSupported:         true,
-	CoinbaseMaturity:          100,
-	SubsidyReductionInterval:  150,
+	PowLimit:                 new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 255), big.NewInt(1)),
+	PowLimitBits:             0x207fffff,
+	TargetTimespan:           time.Hour * 24 * 14, // 2 weeks
+	TargetTimePerBlock:       time.Minute * 10,    // 10 minutes
+	RetargetAdjustmentFactor: 4,                   // 25% less, 400% more
+	ReduceMinDifficulty:      true,
+	MinDiffReductionTime:     time.Minute * 20,
+	GenerateSupported:        true,
+	CoinbaseMaturity:         100,
+	SubsidyReductionInterval: 150,
 
 	// Checkpoints for regtest (typically minimal or none for local testing)
 	// Regtest is used for local development and testing, so checkpoints are

@@ -18,37 +18,37 @@ import (
 // 3. Request full blocks for headers we don't have
 // 4. Transition from IBD to normal operation when caught up
 type SyncManager struct {
-	pm            *PeerManager
-	blockchain    *chain.BlockChain
-	
+	pm         *PeerManager
+	blockchain *chain.BlockChain
+
 	// Sync state
-	mu            sync.RWMutex
-	syncPeer      *peer.Peer      // Current peer we're syncing from
-	headersFirstMode bool         // True during IBD, false during normal operation
-	requestedBlocks  map[chainhash.Hash]time.Time  // Track block requests to avoid duplicates
-	
+	mu               sync.RWMutex
+	syncPeer         *peer.Peer                   // Current peer we're syncing from
+	headersFirstMode bool                         // True during IBD, false during normal operation
+	requestedBlocks  map[chainhash.Hash]time.Time // Track block requests to avoid duplicates
+
 	// Best known height from peers
-	bestHeight    int32
-	bestPeer      *peer.Peer
-	
-	quit          chan struct{}
-	wg            sync.WaitGroup
+	bestHeight int32
+	bestPeer   *peer.Peer
+
+	quit chan struct{}
+	wg   sync.WaitGroup
 }
 
 // NewSyncManager creates a new sync manager
 func NewSyncManager(pm *PeerManager) *SyncManager {
 	sm := &SyncManager{
-		pm:              pm,
-		blockchain:      pm.blockchain,
-		headersFirstMode: true,  // Start in IBD mode
-		requestedBlocks: make(map[chainhash.Hash]time.Time),
-		quit:            make(chan struct{}),
+		pm:               pm,
+		blockchain:       pm.blockchain,
+		headersFirstMode: true, // Start in IBD mode
+		requestedBlocks:  make(map[chainhash.Hash]time.Time),
+		quit:             make(chan struct{}),
 	}
-	
+
 	// Start the sync loop
 	sm.wg.Add(1)
 	go sm.syncLoop()
-	
+
 	return sm
 }
 
@@ -61,10 +61,10 @@ func (sm *SyncManager) Stop() {
 // syncLoop is the main sync orchestration loop
 func (sm *SyncManager) syncLoop() {
 	defer sm.wg.Done()
-	
+
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-sm.quit:
@@ -79,16 +79,16 @@ func (sm *SyncManager) syncLoop() {
 func (sm *SyncManager) syncTick() {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	
+
 	// Skip if blockchain is not initialized
 	if sm.blockchain == nil {
 		return
 	}
-	
+
 	// Get our current best block height
 	bestSnapshot := sm.blockchain.BestSnapshot()
 	ourHeight := bestSnapshot.Height
-	
+
 	// Check if we need to sync
 	if sm.bestHeight > ourHeight {
 		// We're behind, start syncing
@@ -101,7 +101,7 @@ func (sm *SyncManager) syncTick() {
 		sm.headersFirstMode = false
 		sm.syncPeer = nil
 	}
-	
+
 	// Clean up old block requests (>2 minutes old)
 	sm.cleanupOldRequests()
 }
@@ -110,7 +110,7 @@ func (sm *SyncManager) syncTick() {
 func (sm *SyncManager) startSync(p *peer.Peer) {
 	sm.syncPeer = p
 	log.Printf("Starting sync with peer %s (height: %d)", p.Addr(), sm.bestHeight)
-	
+
 	// Request headers from this peer
 	sm.requestHeaders(p)
 }
@@ -126,19 +126,19 @@ func (sm *SyncManager) requestHeaders(p *peer.Peer) {
 		}
 		return
 	}
-	
+
 	// Get our latest block locator
 	locator, err := sm.blockchain.LatestBlockLocator()
 	if err != nil {
 		log.Printf("Failed to get block locator: %v", err)
 		return
 	}
-	
+
 	// Create getheaders message
 	msg := wire.NewMsgGetHeaders()
 	msg.BlockLocatorHashes = locator
 	msg.HashStop = chainhash.Hash{} // Empty hash means "send all you have"
-	
+
 	// Send to peer
 	p.QueueMessage(msg, nil)
 	log.Printf("Sent getheaders request to %s", p.Addr())
@@ -149,7 +149,7 @@ func (sm *SyncManager) requestHeaders(p *peer.Peer) {
 func (sm *SyncManager) HandleHeaders(p *peer.Peer, msg *wire.MsgHeaders) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	
+
 	headerCount := len(msg.Headers)
 	if headerCount == 0 {
 		if p != nil {
@@ -159,39 +159,39 @@ func (sm *SyncManager) HandleHeaders(p *peer.Peer, msg *wire.MsgHeaders) {
 		}
 		return
 	}
-	
+
 	if p != nil {
 		log.Printf("Received %d headers from %s", headerCount, p.Addr())
 	} else {
 		log.Printf("Received %d headers", headerCount)
 	}
-	
+
 	// Skip processing if we don't have a blockchain or peer
 	if sm.blockchain == nil || p == nil {
 		return
 	}
-	
+
 	// Process each header by requesting the full block
 	// In headers-first sync, we validate headers first, then download blocks
 	for _, header := range msg.Headers {
 		blockHash := header.BlockHash()
-		
+
 		// Skip if we already requested this block recently
 		if _, exists := sm.requestedBlocks[blockHash]; exists {
 			continue
 		}
-		
+
 		// Check if we already have this block
 		_, err := sm.blockchain.BlockByHash(&blockHash)
 		if err == nil {
 			// We already have this block, skip it
 			continue
 		}
-		
+
 		// Request the full block
 		sm.requestBlock(p, &blockHash)
 	}
-	
+
 	// If we received max headers (2000), there may be more available
 	// Request more headers to continue the chain
 	if headerCount == wire.MaxBlockHeadersPerMsg {
@@ -204,11 +204,11 @@ func (sm *SyncManager) HandleHeaders(p *peer.Peer, msg *wire.MsgHeaders) {
 func (sm *SyncManager) requestBlock(p *peer.Peer, hash *chainhash.Hash) {
 	// Mark as requested
 	sm.requestedBlocks[*hash] = time.Now()
-	
+
 	// Create getdata message for the block
 	msg := wire.NewMsgGetData()
 	msg.AddInvVect(wire.NewInvVect(wire.InvTypeBlock, hash))
-	
+
 	// Send to peer
 	p.QueueMessage(msg, nil)
 }
@@ -218,7 +218,7 @@ func (sm *SyncManager) requestBlock(p *peer.Peer, hash *chainhash.Hash) {
 func (sm *SyncManager) UpdatePeerHeight(p *peer.Peer, height int32) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	
+
 	if height > sm.bestHeight {
 		sm.bestHeight = height
 		sm.bestPeer = p

@@ -47,15 +47,15 @@ type Metrics struct {
 	TxsInMempool uint64 // Current transactions in mempool
 
 	// Validation metrics
-	ValidationErrors     uint64 // Total validation errors
-	SubsidyErrors        uint64 // Block subsidy validation errors
-	ProofOfWorkErrors    uint64 // Proof of work validation errors
-	AuxPoWErrors         uint64 // AuxPow validation errors
-	VersionErrors        uint64 // Block version validation errors
-	DustLimitErrors      uint64 // Dust limit validation errors
-	TimingWindowErrors   uint64 // Name timing window errors
-	NameTheftAttempts    uint64 // Name theft attempts detected
-	DoubleSpendAttempts  uint64 // Double-spend attempts detected
+	ValidationErrors    uint64 // Total validation errors
+	SubsidyErrors       uint64 // Block subsidy validation errors
+	ProofOfWorkErrors   uint64 // Proof of work validation errors
+	AuxPoWErrors        uint64 // AuxPow validation errors
+	VersionErrors       uint64 // Block version validation errors
+	DustLimitErrors     uint64 // Dust limit validation errors
+	TimingWindowErrors  uint64 // Name timing window errors
+	NameTheftAttempts   uint64 // Name theft attempts detected
+	DoubleSpendAttempts uint64 // Double-spend attempts detected
 
 	// Performance metrics
 	StartTime           time.Time     // Node start time

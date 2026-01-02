@@ -282,7 +282,7 @@ func (ap *AuxPow) ValidateAuxPow(blockHash *chainhash.Hash, expectedChainID uint
 	parentHash := ap.ParentBlock.BlockHash()
 	parentHashBig := blockchain.HashToBig(&parentHash)
 	targetBig := blockchain.HashToBig(targetDifficulty)
-	
+
 	if parentHashBig.Cmp(targetBig) > 0 {
 		return fmt.Errorf("parent block hash %s does not meet difficulty target %s",
 			parentHash.String(), targetDifficulty.String())
@@ -300,11 +300,11 @@ func (ap *AuxPow) ValidateAuxPow(blockHash *chainhash.Hash, expectedChainID uint
 	// Per Namecoin spec, the aux block hash is committed in the coinbase outputs.
 	// We need to verify the chain merkle branch connects the aux block hash to
 	// this commitment root in the coinbase.
-	
+
 	// The chain merkle root is computed from the coinbase transaction's outputs.
 	// For Namecoin, this is typically in a specific output that commits to the
 	// merkle root of all merge-mined chains.
-	// 
+	//
 	// However, the exact format varies. A common approach is to use the coinbase
 	// transaction hash itself as the root (since the aux block hash must appear
 	// somewhere in the coinbase to be committed).
@@ -312,7 +312,7 @@ func (ap *AuxPow) ValidateAuxPow(blockHash *chainhash.Hash, expectedChainID uint
 	// For a simplified but correct implementation that matches most merged mining:
 	// We verify that the aux block hash, when walked up the chain merkle branch,
 	// produces a hash that appears in the coinbase transaction.
-	
+
 	// Compute the expected root by applying the chain merkle branch to the block hash
 	// This should produce a value that's committed in the coinbase
 	computedRoot := *blockHash
@@ -337,18 +337,18 @@ func (ap *AuxPow) ValidateAuxPow(blockHash *chainhash.Hash, expectedChainID uint
 	// A stricter check would parse the specific output format, but this approach
 	// is more robust across different mining pool implementations.
 	coinbaseTxHash2 := ap.CoinbaseTx.TxHash()
-	
+
 	// The chain merkle root should connect to the coinbase transaction
 	// In the standard format, the computed root from the chain merkle branch
 	// should match a specific commitment in the coinbase.
-	// 
+	//
 	// For most merged mining implementations, we verify:
 	// CheckMerkleBranch(blockHash, ChainMerkleBranch, <root committed in coinbase>)
 	//
 	// The root is typically the coinbase tx hash itself or a specific output.
 	// For robustness, we accept if the chain merkle branch is empty (direct commitment)
 	// or if it properly connects to the coinbase.
-	
+
 	if len(ap.ChainMerkleBranch.Branch) == 0 {
 		// Direct commitment: aux block hash should be in coinbase
 		// This is valid for single-chain merged mining
@@ -356,24 +356,24 @@ func (ap *AuxPow) ValidateAuxPow(blockHash *chainhash.Hash, expectedChainID uint
 	} else {
 		// Verify the chain merkle branch connects the aux block hash to something
 		// in the coinbase. The computed root should relate to the coinbase.
-		// 
+		//
 		// In practice, we verify that the merkle branch is structurally valid
 		// and that it connects to a commitment in the coinbase tx.
-		// 
+		//
 		// A common pattern: the coinbase tx hash is used as the root for verification
 		if !CheckMerkleBranch(blockHash, &ap.ChainMerkleBranch, &coinbaseTxHash2) {
 			// If that doesn't match, it might be a multi-chain merkle tree
 			// In that case, we verify the branch is at least structurally valid
 			// by checking it produces some consistent root
-			
+
 			// For now, we accept the proof if:
 			// 1. The coinbase merkle branch is valid (already checked above)
 			// 2. The chain merkle branch structure is valid (branches not too deep)
 			// 3. The parent block PoW is valid (already checked above)
-			// 
+			//
 			// This is a pragmatic approach that works with various merged mining formats
 			// while still providing strong security guarantees.
-			
+
 			// Verify structural validity
 			if len(ap.ChainMerkleBranch.Branch) > 32 {
 				return fmt.Errorf("chain merkle branch too deep: %d levels (max 32)",

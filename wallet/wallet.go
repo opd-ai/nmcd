@@ -200,6 +200,12 @@ func (w *Wallet) GetKey(address string) (*KeyPair, error) {
 // Namecoin-specific opcodes for name operations.
 // These opcodes extend Bitcoin's script language for Namecoin's naming system.
 const (
+	// opNameNew (0xd0) begins a NAME_NEW operation to pre-register a name commitment
+	opNameNew = 0xd0
+
+	// opNameFirstUpdate (0xd1) completes name registration by revealing the name
+	opNameFirstUpdate = 0xd1
+
 	// opNameUpdate (0xd2) begins a NAME_UPDATE operation to update an existing name's value
 	opNameUpdate = 0xd2
 
@@ -249,6 +255,91 @@ func BuildNameUpdateScript(name, value string, pubKeyHash []byte) ([]byte, error
 
 	// OP_2DROP OP_DROP (remove name op data from stack)
 	script = append(script, op2Drop, opDrop)
+
+	// Standard P2PKH: OP_DUP OP_HASH160 <pubkeyhash> OP_EQUALVERIFY OP_CHECKSIG
+	script = append(script, opDup, opHash160)
+	script = append(script, 0x14) // Push 20 bytes
+	script = append(script, pubKeyHash...)
+	script = append(script, opEqualVerify, opCheckSig)
+
+	return script, nil
+}
+
+// BuildNameNewScript creates a NAME_NEW output script for name pre-registration.
+// The script format is: OP_NAME_NEW <hash> OP_2DROP <P2PKH script>
+//
+// Parameters:
+//   - hash: The commitment hash (typically Hash(name || rand))
+//   - pubKeyHash: The 20-byte public key hash for the receiving address
+//
+// Returns the complete script bytes or an error if parameters are invalid.
+func BuildNameNewScript(hash []byte, pubKeyHash []byte) ([]byte, error) {
+	if len(hash) != 20 {
+		return nil, fmt.Errorf("invalid hash length: %d (expected 20)", len(hash))
+	}
+	if len(pubKeyHash) != 20 {
+		return nil, fmt.Errorf("invalid pubkey hash length: %d", len(pubKeyHash))
+	}
+
+	// Build the script manually
+	script := make([]byte, 0, 64)
+
+	// OP_NAME_NEW
+	script = append(script, opNameNew)
+
+	// Push hash
+	script = append(script, pushData(hash)...)
+
+	// OP_2DROP (remove name op data from stack)
+	script = append(script, op2Drop)
+
+	// Standard P2PKH: OP_DUP OP_HASH160 <pubkeyhash> OP_EQUALVERIFY OP_CHECKSIG
+	script = append(script, opDup, opHash160)
+	script = append(script, 0x14) // Push 20 bytes
+	script = append(script, pubKeyHash...)
+	script = append(script, opEqualVerify, opCheckSig)
+
+	return script, nil
+}
+
+// BuildNameFirstUpdateScript creates a NAME_FIRSTUPDATE output script for completing name registration.
+// The script format is: OP_NAME_FIRSTUPDATE <name> <rand> <value> OP_2DROP OP_2DROP <P2PKH script>
+//
+// Parameters:
+//   - name: The name being registered (e.g., "d/example")
+//   - rand: The random salt used in the NAME_NEW commitment
+//   - value: The initial value for the name (typically JSON)
+//   - pubKeyHash: The 20-byte public key hash for the receiving address
+//
+// Returns the complete script bytes or an error if parameters are invalid.
+func BuildNameFirstUpdateScript(name, rand, value string, pubKeyHash []byte) ([]byte, error) {
+	if len(name) == 0 || len(name) > 255 {
+		return nil, fmt.Errorf("invalid name length: %d", len(name))
+	}
+	if len(value) > 1023 {
+		return nil, fmt.Errorf("value too large: %d bytes", len(value))
+	}
+	if len(pubKeyHash) != 20 {
+		return nil, fmt.Errorf("invalid pubkey hash length: %d", len(pubKeyHash))
+	}
+
+	// Build the script manually
+	script := make([]byte, 0, 256)
+
+	// OP_NAME_FIRSTUPDATE
+	script = append(script, opNameFirstUpdate)
+
+	// Push name
+	script = append(script, pushData([]byte(name))...)
+
+	// Push rand
+	script = append(script, pushData([]byte(rand))...)
+
+	// Push value
+	script = append(script, pushData([]byte(value))...)
+
+	// OP_2DROP OP_2DROP (remove name op data from stack)
+	script = append(script, op2Drop, op2Drop)
 
 	// Standard P2PKH: OP_DUP OP_HASH160 <pubkeyhash> OP_EQUALVERIFY OP_CHECKSIG
 	script = append(script, opDup, opHash160)
