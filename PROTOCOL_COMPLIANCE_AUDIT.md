@@ -84,7 +84,7 @@ var genesisBlock = wire.MsgBlock{
 ---
 
 ### 2. Missing Block Version Validation for AuxPow ✅ RESOLVED
-**Location:** chain/blockchain.go:204-241 - validateBlockVersion() and config/config.go:47-71 - AuxPow constants  
+**Location:** chain/blockchain.go:255-299 - validateBlockVersion() and config/config.go:51-66 - AuxPow constants  
 **Impact:** CONSENSUS BREAKING - Will accept invalid blocks  
 **Severity:** CRITICAL  
 **Status:** ✅ **RESOLVED** (2026-01-02)  
@@ -137,9 +137,27 @@ func GetAuxPowActivationHeight(chainParams *chaincfg.Params) int32 {
 	}
 }
 
-// chain/blockchain.go:204-241
+// chain/blockchain.go:255-299
 func (bc *BlockChain) validateBlockVersion(block *btcutil.Block) error {
-	height := block.Height()
+	// Determine block height from parent block in blockchain index (for network blocks)
+	// or from block.Height() if explicitly set (for test blocks)
+	var height int32 = -1
+	prevHash := block.MsgBlock().Header.PrevBlock
+	
+	if bc.BlockChain != nil && !prevHash.IsEqual(&chainhash.Hash{}) {
+		parentHeight, err := bc.BlockChain.BlockHeightByHash(&prevHash)
+		if err == nil {
+			height = parentHeight + 1
+		}
+	}
+	
+	if height < 0 {
+		height = block.Height()
+		if height < 0 {
+			return nil  // Cannot determine height - skip validation
+		}
+	}
+
 	version := block.MsgBlock().Header.Version
 	auxPowActivationHeight := config.GetAuxPowActivationHeight(bc.chainParams)
 
