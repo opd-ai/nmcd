@@ -41,6 +41,17 @@ var (
 		0xa9, 0xc1, 0x66, 0x84, 0x20, 0x8f, 0x6a, 0x7b,
 		0xe8, 0xfa, 0x4c, 0x7b, 0x7c, 0xfa, 0xb4, 0xd4,
 	})
+
+	// mainnetBlock19200Hash is the hash of Namecoin mainnet block 19200
+	// This is the AuxPow (merged mining) activation block - a critical consensus change.
+	// Hash: d8a7c3e01e1e95bcee015e6fcc7583a2ca60b79e5a3aa0a171eddd344ada903d
+	// Source: Verified via web search from Bitcoin Wiki merged mining specification and Namecoin block explorers
+	mainnetBlock19200Hash = chainhash.Hash([chainhash.HashSize]byte{
+		0x3d, 0x90, 0xda, 0x4a, 0x34, 0xdd, 0xed, 0x71,
+		0xa1, 0xa0, 0x3a, 0x5a, 0x9e, 0xb7, 0x60, 0xca,
+		0xa2, 0x83, 0x75, 0xcc, 0x6f, 0x5e, 0x01, 0xee,
+		0xbc, 0x95, 0x1e, 0x1e, 0xe0, 0xc3, 0xa7, 0xd8,
+	})
 )
 
 // Namecoin network ports
@@ -221,14 +232,14 @@ var NamecoinMainNetParams = chaincfg.Params{
 	// 3. Add entries to the slice below, ordered by ascending height
 	//
 	// Important checkpoints to consider adding:
-	// - Block 19200: AuxPow (merged mining) activation
+	// - Block 19200: AuxPow (merged mining) activation ✅ ADDED
 	// - Block 24000: Name expiration rule change
 	// - Regular intervals (e.g., every 50,000-100,000 blocks for recent history)
 	Checkpoints: []chaincfg.Checkpoint{
 		{Height: 0, Hash: &MainNetGenesisHash},
-		// TODO: Add additional checkpoints from Namecoin Core
-		// The official checkpoint list can be found at:
-		// https://github.com/namecoin/namecoin-core/blob/master/src/chainparams.cpp
+		{Height: 19200, Hash: &mainnetBlock19200Hash}, // AuxPow activation
+		// Additional checkpoints can be added here
+		// See config/CHECKPOINT_GUIDE.md for instructions
 	},
 
 	// Consensus rule change deployments
