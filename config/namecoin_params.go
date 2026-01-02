@@ -307,7 +307,7 @@ var NamecoinTestNetParams = chaincfg.Params{
 	Checkpoints: []chaincfg.Checkpoint{
 		{Height: 0, Hash: &testNetGenesisHash},
 		// Additional testnet checkpoints should be added from Namecoin Core
-		// See config/CHECKPOINT_GUIDE.md for detailed instructions
+		// See the inline checkpoint documentation in the comments above for detailed instructions
 	},
 
 	// Consensus rule change deployments

@@ -1446,6 +1446,8 @@ func (bc *BlockChain) BestSnapshot() *blockchain.BestState {
 
 // ChainParams returns the chain parameters
 func (bc *BlockChain) ChainParams() *chaincfg.Params {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
 	return bc.chainParams
 }
 

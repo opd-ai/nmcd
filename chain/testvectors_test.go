@@ -47,18 +47,11 @@ func decodeHexData(hexStr string) ([]byte, error) {
 
 // deserializeTransaction deserializes a transaction from bytes
 func deserializeTransaction(data []byte) (*wire.MsgTx, error) {
-	var tx wire.MsgTx
-	err := tx.Deserialize(hex.NewDecoder(bytes.NewReader(data)))
-	if err != nil {
-		// Try direct deserialization if hex decoder fails
-		tx2 := wire.NewMsgTx(wire.TxVersion)
-		err2 := tx2.Deserialize(bytes.NewReader(data))
-		if err2 != nil {
-			return nil, fmt.Errorf("failed to deserialize transaction: %w (also tried: %v)", err, err2)
-		}
-		return tx2, nil
+	tx := wire.NewMsgTx(wire.TxVersion)
+	if err := tx.Deserialize(bytes.NewReader(data)); err != nil {
+		return nil, fmt.Errorf("failed to deserialize transaction: %w", err)
 	}
-	return &tx, nil
+	return tx, nil
 }
 
 // NameOperationInfo holds information about a name operation found in a transaction
