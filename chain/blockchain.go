@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/btcsuite/btcd/blockchain"
@@ -14,6 +15,7 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/opd-ai/nmcd/config"
+	"github.com/opd-ai/nmcd/metrics"
 	"github.com/opd-ai/nmcd/namedb"
 )
 
@@ -154,6 +156,9 @@ func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.Behavi
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 
+	// Track processing time for metrics
+	startTime := time.Now()
+
 	// Validate proof of work (difficulty) before processing
 	// This ensures the block hash meets the difficulty target specified in the block header.
 	// While btcd's ProcessBlock also validates this, we perform an explicit check here for:
@@ -169,6 +174,8 @@ func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.Behavi
 	// Note: This validates pre-AuxPoW blocks (< 19,200). AuxPoW blocks (>= 19,200) require
 	// additional validation of the parent Bitcoin block, which is not yet implemented.
 	if err := bc.validateProofOfWork(block); err != nil {
+		metrics.Get().RecordBlockRejected()
+		metrics.Get().RecordValidationError("proof_of_work")
 		return false, false, fmt.Errorf("invalid proof of work for block %s at height %d: %w",
 			block.Hash(), block.Height(), err)
 	}
@@ -178,6 +185,8 @@ func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.Behavi
 	// This is a consensus-critical check that must match Namecoin Core's validation.
 	// Blocks that fail this check will be rejected to prevent chain forks.
 	if err := bc.validateBlockVersion(block); err != nil {
+		metrics.Get().RecordBlockRejected()
+		metrics.Get().RecordValidationError("version")
 		return false, false, fmt.Errorf("invalid block version for block %s at height %d: %w",
 			block.Hash(), block.Height(), err)
 	}
@@ -186,18 +195,24 @@ func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.Behavi
 	// This checks if the block requires AuxPow validation based on height and version bits.
 	// AuxPow blocks (>= 19,200 on mainnet) include merged mining proof that must be validated.
 	if err := bc.validateAuxPow(block); err != nil {
+		metrics.Get().RecordBlockRejected()
+		metrics.Get().RecordValidationError("auxpow")
 		return false, false, fmt.Errorf("invalid AuxPow for block %s at height %d: %w",
 			block.Hash(), block.Height(), err)
 	}
 
 	// Validate block subsidy before processing
 	if err := bc.validateBlockSubsidy(block); err != nil {
+		metrics.Get().RecordBlockRejected()
+		metrics.Get().RecordValidationError("subsidy")
 		return false, false, fmt.Errorf("invalid block subsidy for block %s at height %d: %w",
 			block.Hash(), block.Height(), err)
 	}
 
 	// Validate name operations before processing
 	if err := bc.validateNameOperations(block); err != nil {
+		metrics.Get().RecordBlockRejected()
+		metrics.Get().RecordNameError()
 		return false, false, fmt.Errorf("invalid name operations in block %s at height %d: %w",
 			block.Hash(), block.Height(), err)
 	}
@@ -211,6 +226,7 @@ func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.Behavi
 	// - etc.
 	isMainChain, isOrphan, err := bc.BlockChain.ProcessBlock(block, flags)
 	if err != nil {
+		metrics.Get().RecordBlockRejected()
 		return isMainChain, isOrphan, err
 	}
 
@@ -221,6 +237,10 @@ func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.Behavi
 				block.Hash(), block.Height(), err)
 		}
 	}
+
+	// Record successful block processing
+	processingTime := time.Since(startTime)
+	metrics.Get().RecordBlockProcessed(block.Hash().String(), block.Height(), isMainChain, isOrphan, processingTime)
 
 	return isMainChain, isOrphan, nil
 }
