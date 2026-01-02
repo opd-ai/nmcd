@@ -634,8 +634,35 @@ func GenerateRand() ([]byte, error) {
 }
 
 // ComputeNameNewHash computes the commitment hash for NAME_NEW.
-// hash = RIPEMD160(SHA256(rand || name))
-func ComputeNameNewHash(randBytes []byte, name string) []byte {
-	data := append(randBytes, []byte(name)...)
+// The commitment is RIPEMD160(SHA256(rand || name || chainID)) to prevent
+// cross-chain replay attacks. The chain ID is derived from the network magic bytes.
+//
+// Parameters:
+//   - randBytes: Random salt value (20 bytes recommended)
+//   - name: Name to be registered
+//   - chainParams: Network parameters containing the unique network magic bytes
+//
+// Returns: 20-byte commitment hash (RIPEMD160(SHA256(data)))
+//
+// CRITICAL: This must match the computeCommitHash function in chain/blockchain.go
+// for NAME_FIRSTUPDATE validation to succeed. The chain ID prevents replay attacks
+// across different Namecoin networks (mainnet, testnet, regtest).
+func ComputeNameNewHash(randBytes []byte, name string, chainParams *chaincfg.Params) []byte {
+	nameBytes := []byte(name)
+	
+	// Extract network magic bytes as chain ID (4 bytes)
+	// This must match the logic in chain/blockchain.go:computeCommitHash
+	chainID := make([]byte, 4)
+	chainID[0] = byte(chainParams.Net)
+	chainID[1] = byte(chainParams.Net >> 8)
+	chainID[2] = byte(chainParams.Net >> 16)
+	chainID[3] = byte(chainParams.Net >> 24)
+	
+	// Concatenate: rand || name || chainID
+	data := make([]byte, len(randBytes)+len(nameBytes)+len(chainID))
+	copy(data, randBytes)
+	copy(data[len(randBytes):], nameBytes)
+	copy(data[len(randBytes)+len(nameBytes):], chainID)
+	
 	return btcutil.Hash160(data)
 }
