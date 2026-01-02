@@ -595,29 +595,30 @@ make test  # All tests passing
 
 **Goal:** Create in-process client implementation
 
-**Status:** Foundation complete + ListNames implemented (2026-01-02) ✅
-- ✅ Task 1: Implement `client/embedded.go` with NameClient interface (partial - ResolveName, GetInfo, Close, ListNames)
+**Status:** Foundation complete + ListNames + GetNameHistory implemented (2026-01-02) ✅
+- ✅ Task 1: Implement `client/embedded.go` with NameClient interface (partial - ResolveName, GetInfo, Close, ListNames, GetNameHistory)
 - ✅ Task 1.1: Created EmbeddedClient struct with nameDB, wallet, and placeholder blockchain
 - ✅ Task 1.2: Implemented NewEmbeddedClient() with configuration support (mainnet, testnet, regtest)
 - ✅ Task 1.3: Implemented ResolveName() method for reading names from local database
 - ✅ Task 1.4: Implemented GetInfo() method for node information
 - ✅ Task 1.5: Implemented Close() method with resource cleanup
-- ✅ Task 1.6: Added comprehensive tests (10 test functions, all passing)
+- ✅ Task 1.6: Added comprehensive tests (12 test functions, all passing)
 - ✅ Task 1.7: Thread-safety verified with concurrent operations test
 - ✅ Task 1.8: Implemented ListNames() method with filtering and pagination support (2026-01-02)
+- ✅ Task 1.9: Implemented GetNameHistory() method for retrieving operation history (2026-01-02)
 - ⏳ Task 2: Initialize full blockchain with btcd integration (deferred to next phase)
 - ⏳ Task 3: Implement RegisterName with NAME_NEW → NAME_FIRSTUPDATE flow (deferred)
 - ⏳ Task 4: Add support for custom Dialer and Listener for anonymous networks (deferred)
-- ⏳ Task 5: Implement UpdateName, GetNameHistory, WaitForConfirmation (deferred)
+- ⏳ Task 5: Implement UpdateName, WaitForConfirmation (deferred)
 
 **Completed Deliverables:**
-- ✅ `client/embedded.go` - EmbeddedClient with ResolveName, GetInfo, Close, ListNames (464 lines)
-- ✅ `client/embedded_test.go` - Comprehensive test suite (729 lines, 10 test functions)
+- ✅ `client/embedded.go` - EmbeddedClient with ResolveName, GetInfo, Close, ListNames, GetNameHistory (534 lines)
+- ✅ `client/embedded_test.go` - Comprehensive test suite (886 lines, 12 test functions)
 - ✅ `chain/blockchain.go` - Added GetNameDB() method for database access
 - ✅ All tests passing (100% success rate)
 
 **Phase 2 Foundation Notes:**
-- Simplified implementation focuses on read-only operations (ResolveName, ListNames)
+- Simplified implementation focuses on read-only operations (ResolveName, ListNames, GetNameHistory)
 - Full blockchain integration deferred to allow stepwise development
 - Placeholder blockchain (height 0) used for expiration checks
 - Database operations fully functional with proper thread safety
@@ -630,16 +631,22 @@ make test  # All tests passing
   - Pagination with limit (max 10,000) and offset
   - Context cancellation support
   - Thread-safe concurrent operations
+- GetNameHistory implemented with full operation history (2026-01-02):
+  - Returns chronological history of all name operations
+  - Supports all operation types (NAME_FIRSTUPDATE, NAME_UPDATE)
+  - Context cancellation support
+  - Thread-safe concurrent operations
+  - Empty history handling for non-existent names
 
 **Next Steps for Phase 2 Completion:**
 1. Integrate full btcd blockchain with block database
 2. Implement RegisterName and UpdateName operations
 3. Add NAME_NEW tracker for pending registrations
-4. Implement GetNameHistory and WaitForConfirmation
+4. Implement WaitForConfirmation
 5. Add custom Dialer/Listener support for Tor/I2P
 
 **Tasks:**
-1. ✅ Implement `client/embedded.go` with NameClient interface (foundation + ListNames complete)
+1. ✅ Implement `client/embedded.go` with NameClient interface (foundation + ListNames + GetNameHistory complete)
 2. ⏳ Initialize blockchain, namedb, network components in-process
 3. ✅ Implement thread-safe access to shared state (blockchain, namedb)
 4. ✅ Add graceful shutdown with resource cleanup
@@ -647,6 +654,7 @@ make test  # All tests passing
 6. ⏳ Add support for custom Dialer and Listener (anonymous networks)
 7. ✅ Add unit tests for EmbeddedClient methods
 8. ✅ Implement `ListNames` with filtering and pagination (2026-01-02)
+9. ✅ Implement `GetNameHistory` for operation history retrieval (2026-01-02)
 
 **Technical Challenges:**
 

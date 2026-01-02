@@ -373,9 +373,78 @@ func (c *EmbeddedClient) ListNames(ctx context.Context, filter *ListFilter) ([]*
 }
 
 // GetNameHistory returns the full history of operations for a name.
-// This is a placeholder implementation for Phase 2.
+// Includes all NAME_FIRSTUPDATE and NAME_UPDATE operations in chronological order.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - name: Name to retrieve history for (e.g., "d/example", "id/alice")
+//
+// Returns:
+//   - []*NameRecord: Slice of name records in chronological order (oldest first)
+//   - error: Error retrieving history, or nil on success. Returns empty slice if no history exists.
+//
+// Example:
+//
+//	history, err := client.GetNameHistory(ctx, "d/example")
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	for i, record := range history {
+//	    fmt.Printf("Operation %d: Height=%d, Value=%s\n",
+//	        i+1, record.Height, record.Value)
+//	}
 func (c *EmbeddedClient) GetNameHistory(ctx context.Context, name string) ([]*NameRecord, error) {
-	return nil, fmt.Errorf("GetNameHistory not yet implemented in Phase 2")
+	// Check context
+	select {
+	case <-ctx.Done():
+		return nil, ErrContextCanceled
+	default:
+	}
+
+	// Check if client is closed
+	c.mu.RLock()
+	if c.closed {
+		c.mu.RUnlock()
+		return nil, fmt.Errorf("client is closed")
+	}
+	c.mu.RUnlock()
+
+	// Validate name format
+	if name == "" {
+		return nil, ErrInvalidName
+	}
+
+	// Get history from database
+	// nameDB.GetHistory already uses RLock internally for thread safety
+	dbRecords, err := c.nameDB.GetHistory(name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get name history: %w", err)
+	}
+
+	// Convert to client NameRecord format
+	var history []*NameRecord
+	for _, record := range dbRecords {
+		// Get current blockchain height for expiration calculation
+		// For Phase 2, we use height 0 as placeholder
+		// Full blockchain integration will be added in later phases
+		bestHeight := int32(0)
+		// TODO: Get from blockchain: bestSnapshot := c.chain.BestSnapshot()
+
+		clientRecord := &NameRecord{
+			Name:      record.Name,
+			Value:     record.Value,
+			TxHash:    record.TxHash.String(),
+			Height:    record.Height,
+			ExpiresAt: record.ExpiresAt,
+			ExpiresIn: record.ExpiresAt - bestHeight,
+			Address:   record.Address,
+			UpdatedAt: record.UpdatedAt,
+		}
+
+		history = append(history, clientRecord)
+	}
+
+	return history, nil
 }
 
 // WaitForConfirmation waits for a transaction to be confirmed in a block.
