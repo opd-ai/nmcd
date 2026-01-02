@@ -104,29 +104,32 @@ func NewEmbeddedClient(cfg *Config) (*EmbeddedClient, error) {
 		return nil, fmt.Errorf("unknown network: %s", cfg.Network)
 	}
 
-	// Initialize name database directly for now
-	// In later phases, we'll integrate with full blockchain
-	dbPath := filepath.Join(cfg.DataDir, "names.db")
-	nameDB, err := namedb.NewNameDatabase(dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open name database: %w", err)
+	// Initialize blockchain with name database support
+	// The blockchain provides block validation, name operation tracking,
+	// and serves as the authoritative source for blockchain state.
+	chainCfg := &chain.Config{
+		ChainParams: chainParams,
+		NameDBPath:  filepath.Join(cfg.DataDir, "names.db"),
+		DataDir:     cfg.DataDir,
 	}
 
-	// For Phase 2, we create a minimal blockchain wrapper
-	// Full blockchain initialization will be added in later phases
-	bc := &chain.BlockChain{}
-	// TODO: Initialize full blockchain in future phases
-	// For now, we'll just use the nameDB directly
+	bc, err := chain.NewBlockChain(chainCfg, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create blockchain: %w", err)
+	}
 
 	// Initialize wallet (if not disabled)
 	var w *wallet.Wallet
 	if !cfg.DisableWallet {
 		w, err = wallet.NewWallet(cfg.DataDir, chainParams)
 		if err != nil {
-			nameDB.Close()
+			bc.Close()
 			return nil, fmt.Errorf("failed to initialize wallet: %w", err)
 		}
 	}
+
+	// Get name database from blockchain for consistent access
+	nameDB := bc.GetNameDB()
 
 	client := &EmbeddedClient{
 		chain:   bc,
@@ -197,10 +200,8 @@ func (c *EmbeddedClient) ResolveName(ctx context.Context, name string) (*NameRec
 	}
 
 	// Get current blockchain height for expiration calculation
-	// For Phase 2, we use height 0 as placeholder
-	// Full blockchain integration will be added in later phases
-	bestHeight := int32(0)
-	// TODO: Get from blockchain: bestSnapshot := c.chain.BestSnapshot()
+	// Use the blockchain's best snapshot to get the current tip
+	bestHeight := c.chain.BestSnapshot().Height
 
 	// Check if name has expired
 	if record.ExpiresAt <= bestHeight {
@@ -301,10 +302,8 @@ func (c *EmbeddedClient) ListNames(ctx context.Context, filter *ListFilter) ([]*
 	}
 
 	// Get current blockchain height for expiration calculation
-	// For Phase 2, we use height 0 as placeholder
-	// Full blockchain integration will be added in later phases
-	bestHeight := int32(0)
-	// TODO: Get from blockchain: bestSnapshot := c.chain.BestSnapshot()
+	// Use the blockchain's best snapshot to get the current tip
+	bestHeight := c.chain.BestSnapshot().Height
 
 	// Apply filtering and convert to client format
 	var filtered []*NameRecord
@@ -422,10 +421,8 @@ func (c *EmbeddedClient) GetNameHistory(ctx context.Context, name string) ([]*Na
 	}
 
 	// Get current blockchain height for expiration calculation
-	// For Phase 2, we use height 0 as placeholder
-	// Full blockchain integration will be added in later phases
-	bestHeight := int32(0)
-	// TODO: Get from blockchain: bestSnapshot := c.chain.BestSnapshot()
+	// Use the blockchain's best snapshot to get the current tip
+	bestHeight := c.chain.BestSnapshot().Height
 
 	// Convert to client NameRecord format
 	var history []*NameRecord
@@ -474,14 +471,15 @@ func (c *EmbeddedClient) GetInfo(ctx context.Context) (*NodeInfo, error) {
 	}
 	c.mu.RUnlock()
 
-	// For Phase 2, return placeholder info
-	// Full blockchain integration will be added in later phases
+	// Get current blockchain state
+	bestSnapshot := c.chain.BestSnapshot()
+
 	info := &NodeInfo{
 		Version:         "0.1.0",
 		ProtocolVersion: 70015,
-		BlockHeight:     0, // TODO: Get from blockchain
-		BestBlockHash:   "0000000000000000000000000000000000000000000000000000000000000000",
-		Connections:     0,
+		BlockHeight:     bestSnapshot.Height,
+		BestBlockHash:   bestSnapshot.Hash.String(),
+		Connections:     0, // TODO: Get from network manager when implemented
 		NetworkName:     c.network,
 		Mode:            "embedded",
 	}
@@ -511,16 +509,15 @@ func (c *EmbeddedClient) Close() error {
 	// Wait for background goroutines to finish (with timeout would be better in production)
 	c.wg.Wait()
 
-	// Close name database
+	// Close blockchain (which also closes the name database)
 	var errs []error
-	if c.nameDB != nil {
-		if err := c.nameDB.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("failed to close name database: %w", err))
+	if c.chain != nil {
+		if err := c.chain.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to close blockchain: %w", err))
 		}
 	}
 
 	// Wallet doesn't have a Close method in current implementation
-	// No need to close wallet or blockchain placeholder
 
 	c.closed = true
 

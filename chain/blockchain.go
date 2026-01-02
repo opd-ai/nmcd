@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"path/filepath"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -12,6 +13,8 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/database"
+	_ "github.com/btcsuite/btcd/database/ffldb" // Import ffldb driver
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/opd-ai/nmcd/config"
@@ -23,6 +26,7 @@ import (
 type BlockChain struct {
 	*blockchain.BlockChain
 	nameDB      *namedb.NameDatabase
+	blockDB     database.DB // Block database for blockchain storage
 	chainParams *chaincfg.Params
 	mu          sync.RWMutex
 	
@@ -39,6 +43,9 @@ type Config struct {
 	ChainParams *chaincfg.Params
 	NameDBPath  string
 	DataDir     string
+	// BlockDBPath is the path to the block database directory.
+	// If empty, blocks.db will be created in DataDir.
+	BlockDBPath string
 }
 
 // NewBlockChain creates a new blockchain with name support
@@ -49,22 +56,61 @@ func NewBlockChain(cfg *Config, indexManager blockchain.IndexManager) (*BlockCha
 		return nil, fmt.Errorf("failed to create name database: %w", err)
 	}
 
+	// Determine block database path
+	blockDBPath := cfg.BlockDBPath
+	if blockDBPath == "" {
+		blockDBPath = filepath.Join(cfg.DataDir, "blocks.db")
+	}
+
+	// Get the appropriate wire network based on chain params
+	var dbNet wire.BitcoinNet
+	switch cfg.ChainParams.Net {
+	case config.NamecoinMainNetParams.Net:
+		// Use MainNet wire protocol for Namecoin mainnet
+		dbNet = wire.MainNet
+	case config.NamecoinTestNetParams.Net:
+		// Use TestNet3 wire protocol for Namecoin testnet
+		dbNet = wire.TestNet3
+	case config.NamecoinRegTestParams.Net:
+		// Use TestNet wire protocol for Namecoin regtest (regtest reuses TestNet wire format)
+		dbNet = wire.TestNet
+	default:
+		// Default to MainNet
+		dbNet = wire.MainNet
+	}
+
+	// Create or open block database using ffldb backend
+	// ffldb is the recommended database backend for btcd
+	blockDB, err := database.Create("ffldb", blockDBPath, dbNet)
+	if err != nil {
+		// If database already exists, try to open it
+		blockDB, err = database.Open("ffldb", blockDBPath, dbNet)
+		if err != nil {
+			nameDB.Close()
+			return nil, fmt.Errorf("failed to create/open block database: %w", err)
+		}
+	}
+
 	bc := &BlockChain{
 		nameDB:      nameDB,
+		blockDB:     blockDB,
 		chainParams: cfg.ChainParams,
 		auxPowCache: make(map[chainhash.Hash]*AuxPow),
 	}
 
 	// Create blockchain config
 	bcConfig := blockchain.Config{
-		ChainParams:  cfg.ChainParams,
-		TimeSource:   blockchain.NewMedianTime(),
-		IndexManager: indexManager,
+		DB:              blockDB,
+		ChainParams:     cfg.ChainParams,
+		TimeSource:      blockchain.NewMedianTime(),
+		IndexManager:    indexManager,
+		UtxoCacheMaxSize: 250 * 1024 * 1024, // 250 MB UTXO cache (recommended default)
 	}
 
 	// Create the blockchain instance
 	chain, err := blockchain.New(&bcConfig)
 	if err != nil {
+		blockDB.Close()
 		nameDB.Close()
 		return nil, fmt.Errorf("failed to create blockchain: %w", err)
 	}
@@ -83,7 +129,34 @@ func NewBlockChain(cfg *Config, indexManager blockchain.IndexManager) (*BlockCha
 func (bc *BlockChain) Close() error {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
-	return bc.nameDB.Close()
+	
+	var errs []error
+	
+	// Close name database
+	if bc.nameDB != nil {
+		if err := bc.nameDB.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to close name database: %w", err))
+		}
+	}
+	
+	// Close block database
+	if bc.blockDB != nil {
+		if err := bc.blockDB.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to close block database: %w", err))
+		}
+	}
+	
+	// Return all errors if any occurred
+	if len(errs) > 0 {
+		// Join all errors into a single error message
+		errMsg := "failed to close blockchain resources:"
+		for _, err := range errs {
+			errMsg += fmt.Sprintf(" %v;", err)
+		}
+		return fmt.Errorf("%s", errMsg)
+	}
+	
+	return nil
 }
 
 // SetBlockAuxPowFromBytes extracts and caches AuxPow data from a serialized block.
