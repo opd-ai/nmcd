@@ -23,6 +23,7 @@ type PeerManager struct {
 	listeners   []net.Listener
 	blockchain  *chain.BlockChain
 	mempool     *Mempool
+	syncManager *SyncManager
 	chainParams *chaincfg.Params
 	maxPeers    int
 	mu          sync.RWMutex
@@ -48,6 +49,9 @@ func NewPeerManager(cfg *Config) (*PeerManager, error) {
 		maxPeers:    cfg.MaxPeers,
 		quit:        make(chan struct{}),
 	}
+	
+	// Create sync manager for Initial Block Download
+	pm.syncManager = NewSyncManager(pm)
 
 	// Start listeners
 	for _, addr := range cfg.ListenAddrs {
@@ -140,6 +144,7 @@ func (pm *PeerManager) handleInboundPeer(conn net.Conn) {
 			OnBlock:      pm.onBlock,
 			OnTx:         pm.onTx,
 			OnGetData:    pm.onGetData,
+			OnHeaders:    pm.onHeaders,
 			OnGetHeaders: pm.onGetHeaders,
 			OnGetBlocks:  pm.onGetBlocks,
 		},
@@ -199,6 +204,7 @@ func (pm *PeerManager) ConnectPeer(addr string) error {
 			OnBlock:      pm.onBlock,
 			OnTx:         pm.onTx,
 			OnGetData:    pm.onGetData,
+			OnHeaders:    pm.onHeaders,
 			OnGetHeaders: pm.onGetHeaders,
 			OnGetBlocks:  pm.onGetBlocks,
 		},
@@ -236,7 +242,10 @@ func (pm *PeerManager) ConnectPeer(addr string) error {
 
 // Message handlers
 func (pm *PeerManager) onVersion(p *peer.Peer, msg *wire.MsgVersion) *wire.MsgReject {
-	// Handle version message
+	// Handle version message - update sync manager with peer's best height
+	if pm.syncManager != nil {
+		pm.syncManager.UpdatePeerHeight(p, msg.LastBlock)
+	}
 	return nil
 }
 
@@ -266,12 +275,13 @@ func (pm *PeerManager) onBlock(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
 
 	// Convert wire.MsgBlock to btcutil.Block for processing
 	block := btcutil.NewBlock(msg)
+	blockHash := block.Hash()
 
 	// If buf is provided and block has AuxPow version bit, parse AuxPow data
 	// The buf parameter contains the complete serialized block including AuxPow (if present).
 	// We need to extract and store the AuxPow for later validation.
 	if buf != nil && len(buf) > 0 {
-		if err := pm.blockchain.SetBlockAuxPowFromBytes(block.Hash(), buf); err != nil {
+		if err := pm.blockchain.SetBlockAuxPowFromBytes(blockHash, buf); err != nil {
 			log.Printf("Warning: Failed to parse AuxPow for block %s: %v (continuing anyway)",
 				msg.BlockHash().String(), err)
 			// Don't return - continue with validation, which will catch AuxPow issues
@@ -285,6 +295,11 @@ func (pm *PeerManager) onBlock(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
 		log.Printf("Failed to process block %s from peer %s: %v",
 			msg.BlockHash().String(), p.Addr(), err)
 		return
+	}
+	
+	// Notify sync manager that block was received
+	if pm.syncManager != nil {
+		pm.syncManager.BlockReceived(blockHash)
 	}
 
 	// Log the result for debugging
@@ -328,6 +343,14 @@ func (pm *PeerManager) onGetData(p *peer.Peer, msg *wire.MsgGetData) {
 	}
 }
 
+// onHeaders handles incoming headers messages for block synchronization
+func (pm *PeerManager) onHeaders(p *peer.Peer, msg *wire.MsgHeaders) {
+	// Forward to sync manager for processing
+	if pm.syncManager != nil {
+		pm.syncManager.HandleHeaders(p, msg)
+	}
+}
+
 // onGetHeaders handles getheaders requests for block synchronization
 func (pm *PeerManager) onGetHeaders(p *peer.Peer, msg *wire.MsgGetHeaders) {
 	// Handle getheaders message - respond with block headers for sync
@@ -336,18 +359,17 @@ func (pm *PeerManager) onGetHeaders(p *peer.Peer, msg *wire.MsgGetHeaders) {
 		return
 	}
 
-	// Get the best block hash
-	bestHash := pm.blockchain.BestSnapshot().Hash
-
-	// Send headers message with our best chain
-	// In a full implementation, this would:
-	// 1. Find the common ancestor with msg.BlockLocatorHashes
-	// 2. Send headers from that point to our best block (max 2000 headers)
-	// For now, just log that we received the request
-	log.Printf("Received getheaders request from %s (best hash: %s)", p.Addr(), bestHash.String())
-
-	// Create headers message (empty for minimal implementation)
+	// Use btcd's LocateHeaders to find headers to send
+	headers := pm.blockchain.LocateHeaders(msg.BlockLocatorHashes, &msg.HashStop)
+	
+	log.Printf("Received getheaders request from %s, sending %d headers", p.Addr(), len(headers))
+	
+	// Create and send headers message
 	headersMsg := wire.NewMsgHeaders()
+	for i := range headers {
+		// Add header with empty transaction count (headers-only)
+		headersMsg.AddBlockHeader(&headers[i])
+	}
 	p.QueueMessage(headersMsg, nil)
 }
 
@@ -481,6 +503,11 @@ func (pm *PeerManager) updatePeerMetrics() {
 
 // Stop stops the peer manager
 func (pm *PeerManager) Stop() {
+	// Stop sync manager first
+	if pm.syncManager != nil {
+		pm.syncManager.Stop()
+	}
+	
 	close(pm.quit)
 
 	// Close all listeners
