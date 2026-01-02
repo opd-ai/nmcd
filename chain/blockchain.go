@@ -107,6 +107,13 @@ func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.Behavi
 		return false, false, fmt.Errorf("invalid block version: %w", err)
 	}
 
+	// Validate AuxPow for blocks at or after activation height
+	// This checks if the block requires AuxPow validation based on height and version bits.
+	// AuxPow blocks (>= 19,200 on mainnet) include merged mining proof that must be validated.
+	if err := bc.validateAuxPow(block); err != nil {
+		return false, false, fmt.Errorf("invalid AuxPow: %w", err)
+	}
+
 	// Validate block subsidy before processing
 	if err := bc.validateBlockSubsidy(block); err != nil {
 		return false, false, fmt.Errorf("invalid block subsidy: %w", err)
@@ -294,6 +301,76 @@ func (bc *BlockChain) validateBlockVersion(block *btcutil.Block) error {
 		}
 	}
 	// Pre-AuxPow blocks can have any version (no validation needed)
+
+	return nil
+}
+
+// validateAuxPow validates AuxPow (merged mining proof) for blocks that require it.
+//
+// Per Namecoin consensus rules:
+// - Blocks at or after AuxPow activation height (19,200 on mainnet) must have AuxPow
+// - AuxPow includes proof that the block was merge-mined with a parent chain (Bitcoin)
+// - Validation includes checking merkle branches, parent block PoW, and chain ID
+//
+// This function currently serves as a placeholder for full AuxPow validation.
+// The AuxPow data structures and validation functions are implemented in auxpow.go,
+// but integrating them requires extending the block deserialization to include AuxPow data.
+//
+// For now, this function:
+// 1. Checks if the block should have AuxPow (based on height and version)
+// 2. Logs a warning that full validation is not yet implemented
+// 3. Returns nil to avoid blocking development (FIXME for production)
+//
+// TODO: Integrate full AuxPow validation:
+// - Parse AuxPow data from block (extend wire protocol deserialization)
+// - Call ap.ValidateAuxPow() with block hash, chain ID, and target difficulty
+// - Return error if validation fails
+func (bc *BlockChain) validateAuxPow(block *btcutil.Block) error {
+	// Determine block height
+	var height int32 = -1
+	prevHash := block.MsgBlock().Header.PrevBlock
+
+	if bc.BlockChain != nil && !prevHash.IsEqual(&chainhash.Hash{}) {
+		parentHeight, err := bc.BlockChain.BlockHeightByHash(&prevHash)
+		if err == nil {
+			height = parentHeight + 1
+		}
+	}
+
+	if height < 0 {
+		height = block.Height()
+		if height < 0 {
+			// Cannot determine height - skip AuxPow validation
+			return nil
+		}
+	}
+
+	// Check if this block should have AuxPow
+	auxPowActivationHeight := config.GetAuxPowActivationHeight(bc.chainParams)
+	if height < auxPowActivationHeight {
+		// Pre-AuxPow block - no validation needed
+		return nil
+	}
+
+	// Block requires AuxPow validation
+	version := block.MsgBlock().Header.Version
+	hasAuxPowBit := (version & config.AuxPowVersionBit) != 0
+
+	if !hasAuxPowBit {
+		// Block version validation should have caught this, but double-check
+		return fmt.Errorf("block at height %d requires AuxPow version bit but it's not set", height)
+	}
+
+	// TODO: Full AuxPow validation
+	// This requires:
+	// 1. Deserializing AuxPow data from the block (currently not parsed)
+	// 2. Calling ValidateAuxPow() with proper parameters
+	// 3. Handling validation errors
+	//
+	// For now, we log a warning and return nil to allow development to continue.
+	// This is NOT production-ready and should be fixed before mainnet deployment.
+	log.Printf("WARNING: AuxPow validation not yet fully implemented for block at height %d (hash: %s)",
+		height, block.Hash().String())
 
 	return nil
 }
