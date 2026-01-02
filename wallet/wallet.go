@@ -649,7 +649,7 @@ func GenerateRand() ([]byte, error) {
 // across different Namecoin networks (mainnet, testnet, regtest).
 func ComputeNameNewHash(randBytes []byte, name string, chainParams *chaincfg.Params) []byte {
 	nameBytes := []byte(name)
-	
+
 	// Extract network magic bytes as chain ID (4 bytes)
 	// This must match the logic in chain/blockchain.go:computeCommitHash
 	chainID := make([]byte, 4)
@@ -657,12 +657,12 @@ func ComputeNameNewHash(randBytes []byte, name string, chainParams *chaincfg.Par
 	chainID[1] = byte(chainParams.Net >> 8)
 	chainID[2] = byte(chainParams.Net >> 16)
 	chainID[3] = byte(chainParams.Net >> 24)
-	
+
 	// Concatenate: rand || name || chainID
 	data := make([]byte, len(randBytes)+len(nameBytes)+len(chainID))
 	copy(data, randBytes)
 	copy(data[len(randBytes):], nameBytes)
 	copy(data[len(randBytes)+len(nameBytes):], chainID)
-	
+
 	return btcutil.Hash160(data)
 }
