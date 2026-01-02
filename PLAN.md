@@ -609,6 +609,7 @@ make test  # All tests passing
 - ✅ Task 2: Initialize full blockchain with btcd integration (2026-01-02) **COMPLETE**
 - ✅ Task 2.1: **CRITICAL CONSENSUS BUG FIX:** Corrected Namecoin name operation opcodes in wallet package (2026-01-02)
 - ✅ Task 2.2: Implemented BuildNameNewScript and BuildNameFirstUpdateScript with comprehensive tests (2026-01-02)
+- ✅ Task 2.3: **CRITICAL CONSENSUS BUG FIX:** Fixed NAME_NEW hash computation to include chain ID (2026-01-02)
 - ⏳ Task 3: Implement RegisterName with NAME_NEW → NAME_FIRSTUPDATE flow (in progress)
 - ⏳ Task 4: Add support for custom Dialer and Listener for anonymous networks (deferred)
 - ⏳ Task 5: Implement UpdateName, WaitForConfirmation (deferred)
@@ -644,6 +645,13 @@ make test  # All tests passing
   - This bug would have caused all name operation transactions to be rejected by the network
   - Added BuildNameNewScript and BuildNameFirstUpdateScript functions
   - All script builders now use correct opcodes matching blockchain validation
+- **CRITICAL CONSENSUS BUG FIXED:** Fixed NAME_NEW commitment hash to include chain ID (2026-01-02)
+  - ComputeNameNewHash in wallet.go was computing hash without chain ID
+  - Blockchain validation expected hash with chain ID for cross-chain replay protection
+  - This bug would have caused ALL NAME_FIRSTUPDATE transactions to fail validation
+  - Updated signature: ComputeNameNewHash(rand, name, chainParams)
+  - Hash now: RIPEMD160(SHA256(rand || name || chainID)) matching blockchain validation
+  - Added tests to verify different networks produce different hashes
 - Design allows easy integration of write operations in next iteration
 - ListNames implemented with comprehensive filtering (2026-01-02):
   - Namespace filtering (d/, id/, p/)
