@@ -1481,18 +1481,82 @@ Should implement Namecoin-specific protocol version negotiation to ensure compat
 
 ---
 
-### 19. Incomplete Error Messages
-**Location:** Various validation functions  
+### 19. Incomplete Error Messages ✅ RESOLVED
+**Location:** Various validation functions in chain/blockchain.go  
 **Severity:** LOW  
+**Status:** ✅ **RESOLVED** (2026-01-02)  
 **Expected:** Detailed error messages for debugging  
-**Actual:** Generic errors that don't help identify root cause
+**Actual:** ✅ Now includes block hash, height, and transaction hash in error messages
 
-**Example:**
+**Resolution:**
+Enhanced error messages across all validation functions to include contextual information for debugging:
+
+1. **Block-level validation errors** now include:
+   - Block hash (for identifying specific blocks)
+   - Block height (for timeline context)
+   - Wrapped original error with additional context
+
+2. **Transaction-level validation errors** now include:
+   - Transaction hash (for identifying specific transactions)
+   - Name being operated on
+   - Specific values that caused the failure
+   - Block height and transaction context
+
+**Implementation:**
 ```go
-return fmt.Errorf("invalid name operations: %w", err)  // Generic wrapper
+// Before (generic):
+return fmt.Errorf("invalid name operations: %w", err)
+
+// After (detailed):
+return fmt.Errorf("invalid name operations in block %s at height %d: %w",
+    block.Hash(), block.Height(), err)
+
+// Before (missing context):
+return fmt.Errorf("name_new commitment already exists")
+
+// After (with transaction hash):
+return fmt.Errorf("name_new commitment already exists (tx: %s)", txHash)
+
+// Before (missing specific values):
+return fmt.Errorf("name expired: %s", name)
+
+// After (with expiration details):
+return fmt.Errorf("name expired: %s (expires at block %d, current %d, tx: %s)",
+    name, record.ExpiresAt, height, txHash)
 ```
 
-Should include block height, transaction hash, specific validation rule violated.
+**Error Message Improvements:**
+- `ProcessBlock()` validation errors now include block hash and height
+- `validateNameOperations()` errors now include transaction hash
+- NAME_NEW, NAME_FIRSTUPDATE, and NAME_UPDATE errors include operation-specific details
+- Dust limit errors include actual value vs. limit
+- Timing window errors include blocks elapsed vs. required
+- Expiration errors include expiration block vs. current block
+- UTXO validation errors include UTXO details
+
+**Benefits:**
+1. **Easier Debugging**: Developers can immediately identify which block or transaction caused an error
+2. **Better Logging**: Error messages in logs provide complete context without additional lookups
+3. **Improved Monitoring**: Automated systems can extract specific information from error messages
+4. **Root Cause Analysis**: Detailed errors help trace issues back to their source
+5. **Backwards Compatible**: Maintained existing error message patterns for test compatibility
+
+**Test Coverage:**
+- ✅ All 181 chain package tests pass with enhanced error messages
+- ✅ Error messages maintain backwards compatibility with existing substring matching tests
+- ✅ Build succeeds with all new error formatting
+
+**Example Enhanced Errors:**
+```
+// Generic before:
+"invalid name operations"
+
+// Detailed after:
+"invalid name operations in block 000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f at height 19200: name_firstupdate too early: 5 blocks since name_new, minimum 12 required (name: 'd/example', tx: 54823792cf84cea9d4e41b44cdbee67d7fe71963bdb762a6c5278de4a1b0b2f5)"
+```
+
+**Description (original):**
+Generic errors that don't help identify root cause. Should include block height, transaction hash, and specific validation rule violated.
 
 ---
 
