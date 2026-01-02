@@ -287,64 +287,6 @@ func TestAuxPowDeserializeInvalidData(t *testing.T) {
 	}
 }
 
-// TestAuxPowValidatePlaceholder tests that the ValidateAuxPow placeholder returns an error.
-func TestAuxPowValidatePlaceholder(t *testing.T) {
-	auxpow := &AuxPow{}
-	blockHash := mustDecodeHash("0000000000000000000000000000000000000000000000000000000000000001")
-	targetDifficulty := mustDecodeHash("0000000000000000000000000000000000000000000000000000000000000002")
-
-	err := auxpow.ValidateAuxPow(&blockHash, NamecoinChainID, &targetDifficulty)
-	if err == nil {
-		t.Error("ValidateAuxPow() expected error for unimplemented validation, got nil")
-	}
-
-	// Verify error message indicates Phase 2
-	if err.Error() != "AuxPow validation not yet implemented (Phase 2)" {
-		t.Errorf("ValidateAuxPow() unexpected error message: %v", err)
-	}
-}
-
-// TestExtractChainIDPlaceholder tests that the ExtractChainID placeholder returns an error.
-func TestExtractChainIDPlaceholder(t *testing.T) {
-	auxpow := &AuxPow{}
-
-	_, err := auxpow.ExtractChainID()
-	if err == nil {
-		t.Error("ExtractChainID() expected error for unimplemented extraction, got nil")
-	}
-
-	// Verify error message indicates Phase 2
-	if err.Error() != "chain ID extraction not yet implemented (Phase 2)" {
-		t.Errorf("ExtractChainID() unexpected error message: %v", err)
-	}
-}
-
-// TestCheckMerkleBranchPlaceholder tests that the CheckMerkleBranch placeholder returns false.
-func TestCheckMerkleBranchPlaceholder(t *testing.T) {
-	leaf := mustDecodeHash("0000000000000000000000000000000000000000000000000000000000000001")
-	root := mustDecodeHash("0000000000000000000000000000000000000000000000000000000000000002")
-	branch := &MerkleBranch{
-		Branch: []chainhash.Hash{
-			mustDecodeHash("0000000000000000000000000000000000000000000000000000000000000003"),
-		},
-		SideMask: 0,
-	}
-
-	result := CheckMerkleBranch(&leaf, branch, &root)
-	if result {
-		t.Error("CheckMerkleBranch() expected false for unimplemented verification, got true")
-	}
-}
-
-// TestNamecoinChainID tests that the Namecoin chain ID constant is correct.
-func TestNamecoinChainID(t *testing.T) {
-	// Per Namecoin Core: Namecoin uses chain ID 1
-	expectedChainID := uint32(1)
-	if NamecoinChainID != expectedChainID {
-		t.Errorf("NamecoinChainID = %d, want %d", NamecoinChainID, expectedChainID)
-	}
-}
-
 // TestMerkleBranchRoundTrip tests multiple round trips to ensure stability.
 func TestMerkleBranchRoundTrip(t *testing.T) {
 	original := MerkleBranch{
@@ -458,4 +400,247 @@ func TestAuxPowStructSize(t *testing.T) {
 		t.Errorf("ChainMerkleBranch depth mismatch: got %d, want 3",
 			len(deserialized.ChainMerkleBranch.Branch))
 	}
+}
+
+// TestCheckMerkleBranch tests merkle branch verification with known good and bad proofs.
+func TestCheckMerkleBranch(t *testing.T) {
+tests := []struct {
+name     string
+leaf     string
+branch   MerkleBranch
+root     string
+expected bool
+}{
+{
+name: "empty branch - leaf equals root",
+leaf: "0000000000000000000000000000000000000000000000000000000000000001",
+branch: MerkleBranch{
+Branch:   []chainhash.Hash{},
+SideMask: 0,
+},
+root:     "0000000000000000000000000000000000000000000000000000000000000001",
+expected: true,
+},
+{
+name: "empty branch - leaf not equal to root",
+leaf: "0000000000000000000000000000000000000000000000000000000000000001",
+branch: MerkleBranch{
+Branch:   []chainhash.Hash{},
+SideMask: 0,
+},
+root:     "0000000000000000000000000000000000000000000000000000000000000002",
+expected: false,
+},
+{
+name: "single level - sibling on right",
+leaf: "0000000000000000000000000000000000000000000000000000000000000001",
+branch: MerkleBranch{
+Branch: []chainhash.Hash{
+mustDecodeHash("0000000000000000000000000000000000000000000000000000000000000002"),
+},
+SideMask: 0, // sibling on right, leaf on left
+},
+// root = Hash(leaf || sibling)
+root:     computeMerkleRoot("0000000000000000000000000000000000000000000000000000000000000001", "0000000000000000000000000000000000000000000000000000000000000002", false),
+expected: true,
+},
+{
+name: "single level - sibling on left",
+leaf: "0000000000000000000000000000000000000000000000000000000000000001",
+branch: MerkleBranch{
+Branch: []chainhash.Hash{
+mustDecodeHash("0000000000000000000000000000000000000000000000000000000000000002"),
+},
+SideMask: 1, // sibling on left, leaf on right
+},
+// root = Hash(sibling || leaf)
+root:     computeMerkleRoot("0000000000000000000000000000000000000000000000000000000000000001", "0000000000000000000000000000000000000000000000000000000000000002", true),
+expected: true,
+},
+{
+name: "single level - wrong root",
+leaf: "0000000000000000000000000000000000000000000000000000000000000001",
+branch: MerkleBranch{
+Branch: []chainhash.Hash{
+mustDecodeHash("0000000000000000000000000000000000000000000000000000000000000002"),
+},
+SideMask: 0,
+},
+root:     "0000000000000000000000000000000000000000000000000000000000000999",
+expected: false,
+},
+}
+
+for _, tt := range tests {
+t.Run(tt.name, func(t *testing.T) {
+leaf := mustDecodeHash(tt.leaf)
+root := mustDecodeHash(tt.root)
+
+result := CheckMerkleBranch(&leaf, &tt.branch, &root)
+if result != tt.expected {
+t.Errorf("CheckMerkleBranch() = %v, want %v", result, tt.expected)
+}
+})
+}
+}
+
+// TestExtractChainID tests chain ID extraction from parent block nonce.
+func TestExtractChainID(t *testing.T) {
+tests := []struct {
+name            string
+parentNonce     uint32
+expectedChainID uint32
+}{
+{
+name:            "Namecoin chain ID (1)",
+parentNonce:     0x00010000, // chain ID in bits 16-23
+expectedChainID: 1,
+},
+{
+name:            "chain ID 0",
+parentNonce:     0x00000000,
+expectedChainID: 0,
+},
+{
+name:            "chain ID 255 (max)",
+parentNonce:     0x00FF0000,
+expectedChainID: 255,
+},
+{
+name:            "chain ID with other bits set",
+parentNonce:     0x12345678, // chain ID = 0x34
+expectedChainID: 0x34,
+},
+}
+
+for _, tt := range tests {
+t.Run(tt.name, func(t *testing.T) {
+auxpow := &AuxPow{
+ParentBlock: wire.BlockHeader{
+Nonce: tt.parentNonce,
+},
+}
+
+chainID, err := auxpow.ExtractChainID()
+if err != nil {
+t.Fatalf("ExtractChainID() unexpected error: %v", err)
+}
+if chainID != tt.expectedChainID {
+t.Errorf("ExtractChainID() = %d, want %d", chainID, tt.expectedChainID)
+}
+})
+}
+}
+
+// TestValidateAuxPow tests full AuxPow validation.
+func TestValidateAuxPow(t *testing.T) {
+t.Run("chain ID mismatch", func(t *testing.T) {
+auxpow := &AuxPow{
+ParentBlock: wire.BlockHeader{
+Nonce: 0x00020000, // chain ID = 2
+},
+}
+
+blockHash := mustDecodeHash("0000000000000000000000000000000000000000000000000000000000000abc")
+targetDiff := mustDecodeHash("00000000ffff0000000000000000000000000000000000000000000000000000")
+
+err := auxpow.ValidateAuxPow(&blockHash, NamecoinChainID, &targetDiff)
+if err == nil {
+t.Fatal("ValidateAuxPow() expected error for chain ID mismatch, got nil")
+}
+if !strings.Contains(err.Error(), "chain ID mismatch") {
+t.Errorf("ValidateAuxPow() error = %v, want error containing 'chain ID mismatch'", err)
+}
+})
+
+t.Run("parent block hash exceeds difficulty", func(t *testing.T) {
+auxpow := &AuxPow{
+ParentBlock: wire.BlockHeader{
+Nonce:   0x00010000, // chain ID = 1
+Version: 1,
+Bits:    0x1d00ffff,
+// BlockHash will be very high (many leading zeros when viewed as big endian)
+},
+}
+
+blockHash := mustDecodeHash("0000000000000000000000000000000000000000000000000000000000000abc")
+// Very restrictive target - parent hash will exceed it
+targetDiff := mustDecodeHash("0000000000000001000000000000000000000000000000000000000000000000")
+
+err := auxpow.ValidateAuxPow(&blockHash, NamecoinChainID, &targetDiff)
+if err == nil {
+t.Fatal("ValidateAuxPow() expected error for difficulty not met, got nil")
+}
+if !strings.Contains(err.Error(), "does not meet difficulty target") {
+t.Errorf("ValidateAuxPow() error = %v, want error containing 'does not meet difficulty target'", err)
+}
+})
+
+t.Run("coinbase merkle branch verification failed", func(t *testing.T) {
+// Create a coinbase transaction
+coinbaseTx := wire.MsgTx{
+Version: 1,
+TxIn: []*wire.TxIn{
+{
+PreviousOutPoint: wire.OutPoint{
+Hash:  chainhash.Hash{},
+Index: 0xffffffff,
+},
+SignatureScript: []byte("test coinbase"),
+Sequence:        0xffffffff,
+},
+},
+TxOut: []*wire.TxOut{
+{
+Value:    5000000000,
+PkScript: []byte{0x76, 0xa9, 0x14}, // partial P2PKH
+},
+},
+}
+
+auxpow := &AuxPow{
+CoinbaseTx: coinbaseTx,
+ParentBlock: wire.BlockHeader{
+Nonce:      0x00010000, // chain ID = 1
+Version:    1,
+Bits:       0x1d00ffff,
+MerkleRoot: mustDecodeHash("0000000000000000000000000000000000000000000000000000000000000999"), // Wrong merkle root
+},
+CoinbaseBranch: MerkleBranch{
+Branch:   []chainhash.Hash{},
+SideMask: 0,
+},
+}
+
+blockHash := mustDecodeHash("0000000000000000000000000000000000000000000000000000000000000abc")
+		// Use a very high target (easy difficulty) so parent block hash will pass PoW check
+		targetDiff := mustDecodeHash("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+
+err := auxpow.ValidateAuxPow(&blockHash, NamecoinChainID, &targetDiff)
+if err == nil {
+t.Fatal("ValidateAuxPow() expected error for invalid coinbase merkle branch, got nil")
+}
+if !strings.Contains(err.Error(), "coinbase merkle branch verification failed") {
+t.Errorf("ValidateAuxPow() error = %v, want error containing 'coinbase merkle branch verification failed'", err)
+}
+})
+}
+
+// Helper function to compute merkle root for testing
+// siblingOnLeft determines if sibling hash goes on left (true) or right (false)
+func computeMerkleRoot(hash1Str, hash2Str string, siblingOnLeft bool) string {
+hash1 := mustDecodeHash(hash1Str)
+hash2 := mustDecodeHash(hash2Str)
+
+var combined [64]byte
+if siblingOnLeft {
+copy(combined[:32], hash2[:])   // sibling on left
+copy(combined[32:], hash1[:])   // leaf on right
+} else {
+copy(combined[:32], hash1[:])   // leaf on left
+copy(combined[32:], hash2[:])   // sibling on right
+}
+
+result := chainhash.DoubleHashH(combined[:])
+return result.String()
 }
