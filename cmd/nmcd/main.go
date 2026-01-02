@@ -6,118 +6,28 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
-	"github.com/opd-ai/nmcd/chain"
 	"github.com/opd-ai/nmcd/config"
-	"github.com/opd-ai/nmcd/network"
-	"github.com/opd-ai/nmcd/rpc"
-	"github.com/opd-ai/nmcd/wallet"
+	"github.com/opd-ai/nmcd/internal/server"
 )
 
 func main() {
 	// Parse command line flags
 	cfg := parseFlags()
 
-	// Ensure data directory exists
-	if err := cfg.EnsureDataDir(); err != nil {
-		log.Fatalf("Failed to create data directory: %v", err)
-	}
-
-	// Create blockchain
-	chainCfg := &chain.Config{
-		ChainParams: cfg.ChainParams(),
-		NameDBPath:  cfg.NameDBPath(),
-		DataDir:     cfg.DataDir,
-	}
-
-	bc, err := chain.NewBlockChain(chainCfg, nil)
+	// Create and initialize server
+	srv, err := server.NewServer(cfg)
 	if err != nil {
-		log.Fatalf("Failed to create blockchain: %v", err)
+		log.Fatalf("Failed to create server: %v", err)
 	}
-	defer bc.Close()
+	defer srv.Stop()
 
-	log.Printf("Blockchain initialized")
-
-	// Create peer manager
-	netCfg := &network.Config{
-		ChainParams: cfg.ChainParams(),
-		Blockchain:  bc,
-		ListenAddrs: cfg.ListenAddrs,
-		MaxPeers:    cfg.MaxPeers,
-	}
-
-	peerMgr, err := network.NewPeerManager(netCfg)
+	// Start server components
+	rpcErrCh, err := srv.Start()
 	if err != nil {
-		log.Fatalf("Failed to create peer manager: %v", err)
+		log.Fatalf("Failed to start server: %v", err)
 	}
-	defer peerMgr.Stop()
-
-	log.Printf("Network listening on %v", cfg.ListenAddrs)
-
-	// Connect to initial peers (from -addpeer flag or DNS seeds)
-	peersToConnect := cfg.AddPeers
-	if len(peersToConnect) == 0 {
-		// No peers specified, try DNS seed discovery
-		seeds := config.DNSSeeds(cfg.Network)
-		if len(seeds) > 0 {
-			log.Printf("No peers specified, resolving DNS seeds for %s...", cfg.Network)
-			seedAddrs := network.ResolveSeedNodes(seeds, config.DefaultPort(cfg.Network))
-			if len(seedAddrs) > 0 {
-				log.Printf("Discovered %d peer addresses from DNS seeds", len(seedAddrs))
-				peersToConnect = seedAddrs
-			} else {
-				log.Printf("Warning: No peers discovered from DNS seeds")
-			}
-		}
-	}
-
-	for _, addr := range peersToConnect {
-		if err := peerMgr.ConnectPeer(addr); err != nil {
-			log.Printf("Failed to connect to %s: %v", addr, err)
-		} else {
-			log.Printf("Connected to peer %s", addr)
-		}
-	}
-
-	// Create wallet
-	w, err := wallet.NewWallet(cfg.DataDir, cfg.ChainParams())
-	if err != nil {
-		log.Printf("Warning: Failed to initialize wallet: %v", err)
-		log.Printf("Wallet functionality will be disabled")
-	} else {
-		log.Printf("Wallet initialized")
-	}
-
-	// Create RPC server
-	rpcCfg := &rpc.Config{
-		Blockchain:  bc,
-		PeerMgr:     peerMgr,
-		Wallet:      w,
-		ListenAddr:  cfg.RPCAddr,
-		RPCUser:     cfg.RPCUser,
-		RPCPassword: cfg.RPCPassword,
-	}
-
-	// Warn if only one of rpcuser/rpcpassword is set
-	if (cfg.RPCUser != "" && cfg.RPCPassword == "") || (cfg.RPCUser == "" && cfg.RPCPassword != "") {
-		log.Printf("Warning: Both -rpcuser and -rpcpassword must be set for RPC authentication. Authentication is disabled.")
-	}
-
-	// Security warning about command-line credentials
-	if cfg.RPCUser != "" && cfg.RPCPassword != "" {
-		log.Printf("Warning: RPC credentials passed via command-line are visible in process listings. For production, consider using environment variables or a config file.")
-	}
-
-	rpcServer, err := rpc.NewServer(rpcCfg)
-	if err != nil {
-		log.Fatalf("Failed to create RPC server: %v", err)
-	}
-	defer rpcServer.Stop()
-
-	rpcErrCh := rpcServer.Start()
-	log.Printf("RPC server listening on %s", cfg.RPCAddr)
 
 	// Wait for shutdown signal or RPC error
 	sigChan := make(chan os.Signal, 1)
@@ -125,7 +35,7 @@ func main() {
 
 	select {
 	case <-sigChan:
-		log.Printf("Shutting down...")
+		log.Printf("Shutdown signal received...")
 	case err := <-rpcErrCh:
 		if err != nil {
 			log.Printf("RPC server error: %v", err)
@@ -154,29 +64,15 @@ func parseFlags() *config.Config {
 
 	// Parse listen addresses (comma-separated)
 	if listenAddrs != "" {
-		cfg.ListenAddrs = splitAndTrim(listenAddrs)
+		cfg.ListenAddrs = server.SplitAndTrim(listenAddrs)
 	}
 
 	// Parse add peers (comma-separated)
 	if addPeers != "" {
-		cfg.AddPeers = splitAndTrim(addPeers)
+		cfg.AddPeers = server.SplitAndTrim(addPeers)
 	}
 
 	return cfg
-}
-
-// splitAndTrim splits a comma-separated string and trims whitespace from each element.
-// Empty elements are filtered out.
-func splitAndTrim(s string) []string {
-	parts := strings.Split(s, ",")
-	result := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
-		if trimmed != "" {
-			result = append(result, trimmed)
-		}
-	}
-	return result
 }
 
 func init() {
