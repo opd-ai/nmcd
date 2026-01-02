@@ -1426,13 +1426,57 @@ The audit initially classified this as MEDIUM because it stated "need verificati
 
 ## LOW PRIORITY (code quality and maintainability)
 
-### 18. No Protocol Version Negotiation
-**Location:** network/peermgr.go:114-128  
+### 18. No Protocol Version Negotiation ✅ RESOLVED
+**Location:** network/peermgr.go:114-128, config/config.go  
 **Severity:** LOW  
+**Status:** ✅ **RESOLVED** (2026-01-02)  
 **Expected:** Negotiate protocol version with peers  
-**Actual:** Uses fixed version from btcd
+**Actual:** ✅ Now uses Namecoin-specific protocol version 70015
 
-**Description:**
+**Resolution:**
+Implemented Namecoin-specific protocol version negotiation with the following changes:
+1. Added `NamecoinProtocolVersion` constant (70015) in `config/config.go` matching Namecoin Core's protocol version
+2. Updated both inbound and outbound peer configurations in `network/peermgr.go` to set `ProtocolVersion` field
+3. Added comprehensive documentation explaining the protocol version choice
+
+**Implementation:**
+```go
+// config/config.go
+const (
+    // NamecoinProtocolVersion is the protocol version used by nmcd
+    // This matches Namecoin Core's protocol version for network compatibility
+    // Namecoin Core uses protocol version 70015 (similar to Bitcoin Core 0.13.x)
+    // See: https://github.com/namecoin/namecoin-core/blob/master/src/version.h
+    NamecoinProtocolVersion = 70015
+)
+
+// network/peermgr.go - Applied to both handleInboundPeer and ConnectPeer
+peerCfg := &peer.Config{
+    UserAgentName:    "nmcd",
+    UserAgentVersion: "0.1.0",
+    ChainParams:      pm.chainParams,
+    Services:         wire.SFNodeNetwork,
+    ProtocolVersion:  config.NamecoinProtocolVersion, // Use Namecoin-specific protocol version
+    // ... other fields
+}
+```
+
+Per Namecoin Core (src/version.h):
+- **Protocol version**: 70015 (matches Namecoin Core for network compatibility)
+- **Previous behavior**: Used btcd's default protocol version (70016) which is Bitcoin-specific
+- **Impact**: Ensures proper protocol negotiation with Namecoin Core nodes
+
+**Benefits:**
+1. **Network Compatibility**: Peers now correctly identify as Namecoin nodes using protocol version 70015
+2. **Proper Handshake**: Version message negotiation follows Namecoin protocol standards
+3. **Future Compatibility**: Positioned to handle protocol upgrades specific to Namecoin
+
+**Test Coverage:**
+- ✅ All existing network tests pass with new protocol version
+- ✅ Build succeeds with new configuration
+- ✅ No regression in peer connection functionality
+
+**Description (original):**
 Should implement Namecoin-specific protocol version negotiation to ensure compatibility.
 
 ---

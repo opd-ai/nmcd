@@ -13,6 +13,7 @@ import (
 	"github.com/btcsuite/btcd/peer"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/opd-ai/nmcd/chain"
+	"github.com/opd-ai/nmcd/config"
 )
 
 // PeerManager manages network peers using btcd/peer
@@ -129,6 +130,7 @@ func (pm *PeerManager) handleInboundPeer(conn net.Conn) {
 		UserAgentVersion: "0.1.0",
 		ChainParams:      pm.chainParams,
 		Services:         wire.SFNodeNetwork,
+		ProtocolVersion:  config.NamecoinProtocolVersion, // Use Namecoin-specific protocol version
 		TrickleInterval:  time.Second * 10,
 		Listeners: peer.MessageListeners{
 			OnVersion:    pm.onVersion,
@@ -182,6 +184,7 @@ func (pm *PeerManager) ConnectPeer(addr string) error {
 		UserAgentVersion: "0.1.0",
 		ChainParams:      pm.chainParams,
 		Services:         wire.SFNodeNetwork,
+		ProtocolVersion:  config.NamecoinProtocolVersion, // Use Namecoin-specific protocol version
 		TrickleInterval:  time.Second * 10,
 		Listeners: peer.MessageListeners{
 			OnVersion:    pm.onVersion,

@@ -64,6 +64,12 @@ const (
 	// For regtest, we set this very high since AuxPow is not typically used in local testing
 	// This allows regtest to operate without AuxPow indefinitely for development purposes
 	RegTestAuxPowActivationHeight = 999999999
+
+	// NamecoinProtocolVersion is the protocol version used by nmcd
+	// This matches Namecoin Core's protocol version for network compatibility
+	// Namecoin Core uses protocol version 70015 (similar to Bitcoin Core 0.13.x)
+	// See: https://github.com/namecoin/namecoin-core/blob/master/src/version.h
+	NamecoinProtocolVersion = 70015
 )
 
 // ValidNamespaces defines the allowed namespace prefixes for Namecoin names
