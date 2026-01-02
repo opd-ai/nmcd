@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 )
@@ -277,8 +278,12 @@ func (ap *AuxPow) ValidateAuxPow(blockHash *chainhash.Hash, expectedChainID uint
 
 	// Step 2: Verify parent block meets proof-of-work difficulty target
 	// The parent block's hash must be less than or equal to the target difficulty
+	// Convert both hash and target to big.Int for comparison
 	parentHash := ap.ParentBlock.BlockHash()
-	if parentHash.Compare(targetDifficulty) > 0 {
+	parentHashBig := blockchain.HashToBig(&parentHash)
+	targetBig := blockchain.HashToBig(targetDifficulty)
+	
+	if parentHashBig.Cmp(targetBig) > 0 {
 		return fmt.Errorf("parent block hash %s does not meet difficulty target %s",
 			parentHash.String(), targetDifficulty.String())
 	}
