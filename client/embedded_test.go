@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -412,6 +413,234 @@ func TestEmbeddedClient_Close(t *testing.T) {
 	}
 }
 
+func TestEmbeddedClient_ListNames(t *testing.T) {
+	// Create temporary directory for test
+	tmpDir := t.TempDir()
+
+	// Initialize client
+	cfg := &Config{
+		DataDir: tmpDir,
+		Network: "regtest",
+	}
+	client, err := NewEmbeddedClient(cfg)
+	if err != nil {
+		t.Fatalf("NewEmbeddedClient() error: %v", err)
+	}
+	defer client.Close()
+
+	// Insert test names
+	testNames := []struct {
+		name      string
+		value     string
+		address   string
+		expiresAt int32
+	}{
+		{"d/example1", `{"ip":"1.2.3.4"}`, "NAddr1", 36000},
+		{"d/example2", `{"ip":"5.6.7.8"}`, "NAddr1", 36000},
+		{"id/alice", `{"email":"alice@example.com"}`, "NAddr2", 36000},
+		{"id/bob", `{"email":"bob@example.com"}`, "NAddr2", 36000},
+		{"p/project1", `{"desc":"Project 1"}`, "NAddr3", 36000},
+		{"d/expired", `{"ip":"9.9.9.9"}`, "NAddr4", -100}, // Expired name
+	}
+
+	for i, tn := range testNames {
+		txHash, _ := chainhash.NewHashFromStr(fmt.Sprintf("%064x", i+1))
+		nameRecord := &namedb.NameRecord{
+			Value:     tn.value,
+			TxHash:    *txHash,
+			Height:    0,
+			ExpiresAt: tn.expiresAt,
+			Address:   tn.address,
+			UpdatedAt: time.Now(),
+		}
+		if err := client.nameDB.PutName(tn.name, nameRecord); err != nil {
+			t.Fatalf("PutName(%s) error: %v", tn.name, err)
+		}
+	}
+
+	ctx := context.Background()
+
+	tests := []struct {
+		name       string
+		filter     *ListFilter
+		wantCount  int
+		wantNames  []string
+		wantError  bool
+	}{
+		{
+			name:      "nil filter returns default limit",
+			filter:    nil,
+			wantCount: 5, // All non-expired names
+		},
+		{
+			name:      "empty filter returns all non-expired names",
+			filter:    &ListFilter{},
+			wantCount: 5,
+		},
+		{
+			name: "filter by d/ namespace",
+			filter: &ListFilter{
+				Namespace: "d/",
+			},
+			wantCount: 2,
+			wantNames: []string{"d/example1", "d/example2"},
+		},
+		{
+			name: "filter by id/ namespace",
+			filter: &ListFilter{
+				Namespace: "id/",
+			},
+			wantCount: 2,
+			wantNames: []string{"id/alice", "id/bob"},
+		},
+		{
+			name: "filter by p/ namespace",
+			filter: &ListFilter{
+				Namespace: "p/",
+			},
+			wantCount: 1,
+			wantNames: []string{"p/project1"},
+		},
+		{
+			name: "filter by address",
+			filter: &ListFilter{
+				Address: "NAddr1",
+			},
+			wantCount: 2,
+			wantNames: []string{"d/example1", "d/example2"},
+		},
+		{
+			name: "filter by name pattern",
+			filter: &ListFilter{
+				NamePattern: "d/example",
+			},
+			wantCount: 2,
+			wantNames: []string{"d/example1", "d/example2"},
+		},
+		{
+			name: "include expired names",
+			filter: &ListFilter{
+				Namespace:      "d/",
+				IncludeExpired: true,
+			},
+			wantCount: 3,
+			wantNames: []string{"d/example1", "d/example2", "d/expired"},
+		},
+		{
+			name: "pagination with limit",
+			filter: &ListFilter{
+				Limit: 2,
+			},
+			wantCount: 2,
+		},
+		{
+			name: "pagination with offset",
+			filter: &ListFilter{
+				Namespace: "d/",
+				Offset:    1,
+			},
+			wantCount: 1,
+			wantNames: []string{"d/example2"},
+		},
+		{
+			name: "pagination with limit and offset",
+			filter: &ListFilter{
+				Limit:  1,
+				Offset: 1,
+			},
+			wantCount: 1,
+		},
+		{
+			name: "offset beyond results",
+			filter: &ListFilter{
+				Namespace: "d/",
+				Offset:    100,
+			},
+			wantCount: 0,
+		},
+		{
+			name: "combined filters",
+			filter: &ListFilter{
+				Namespace: "id/",
+				Address:   "NAddr2",
+			},
+			wantCount: 2,
+			wantNames: []string{"id/alice", "id/bob"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			records, err := client.ListNames(ctx, tt.filter)
+			if tt.wantError {
+				if err == nil {
+					t.Error("ListNames() expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("ListNames() error: %v", err)
+			}
+
+			if len(records) != tt.wantCount {
+				t.Errorf("ListNames() returned %d records, want %d", len(records), tt.wantCount)
+			}
+
+			// If specific names are expected, verify them
+			if tt.wantNames != nil {
+				gotNames := make(map[string]bool)
+				for _, record := range records {
+					gotNames[record.Name] = true
+				}
+				for _, name := range tt.wantNames {
+					if !gotNames[name] {
+						t.Errorf("ListNames() missing expected name: %s", name)
+					}
+				}
+			}
+
+			// Verify all records have required fields
+			for _, record := range records {
+				if record.Name == "" {
+					t.Error("ListNames() returned record with empty Name")
+				}
+				if record.Value == "" {
+					t.Error("ListNames() returned record with empty Value")
+				}
+				if record.Address == "" {
+					t.Error("ListNames() returned record with empty Address")
+				}
+			}
+		})
+	}
+}
+
+func TestEmbeddedClient_ListNames_ContextCancellation(t *testing.T) {
+	// Create temporary directory for test
+	tmpDir := t.TempDir()
+
+	// Initialize client
+	cfg := &Config{
+		DataDir: tmpDir,
+		Network: "regtest",
+	}
+	client, err := NewEmbeddedClient(cfg)
+	if err != nil {
+		t.Fatalf("NewEmbeddedClient() error: %v", err)
+	}
+	defer client.Close()
+
+	// Create cancelled context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = client.ListNames(ctx, nil)
+	if err != ErrContextCanceled {
+		t.Errorf("ListNames() with cancelled context error = %v, want %v", err, ErrContextCanceled)
+	}
+}
+
 func TestEmbeddedClient_NotImplementedMethods(t *testing.T) {
 	// Create temporary directory for test
 	tmpDir := t.TempDir()
@@ -438,11 +667,6 @@ func TestEmbeddedClient_NotImplementedMethods(t *testing.T) {
 	_, err = client.UpdateName(ctx, "d/test", "value", nil)
 	if err == nil {
 		t.Error("UpdateName() should return not implemented error")
-	}
-
-	_, err = client.ListNames(ctx, nil)
-	if err == nil {
-		t.Error("ListNames() should return not implemented error")
 	}
 
 	_, err = client.GetNameHistory(ctx, "d/test")
