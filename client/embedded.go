@@ -421,15 +421,15 @@ func (c *EmbeddedClient) GetNameHistory(ctx context.Context, name string) ([]*Na
 		return nil, fmt.Errorf("failed to get name history: %w", err)
 	}
 
+	// Get current blockchain height for expiration calculation
+	// For Phase 2, we use height 0 as placeholder
+	// Full blockchain integration will be added in later phases
+	bestHeight := int32(0)
+	// TODO: Get from blockchain: bestSnapshot := c.chain.BestSnapshot()
+
 	// Convert to client NameRecord format
 	var history []*NameRecord
 	for _, record := range dbRecords {
-		// Get current blockchain height for expiration calculation
-		// For Phase 2, we use height 0 as placeholder
-		// Full blockchain integration will be added in later phases
-		bestHeight := int32(0)
-		// TODO: Get from blockchain: bestSnapshot := c.chain.BestSnapshot()
-
 		clientRecord := &NameRecord{
 			Name:      record.Name,
 			Value:     record.Value,
