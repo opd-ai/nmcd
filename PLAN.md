@@ -319,6 +319,39 @@ type Config struct {
     // Default: false
     DisableWallet bool
 
+    // Dialer is a custom dialer for outgoing network connections in embedded mode.
+    // Allows routing traffic through anonymous networks like Tor or I2P.
+    // The dialer should return net.Conn compatible connections.
+    // If nil, uses standard net.Dial for clearnet connections.
+    //
+    // Example (Tor):
+    //   Dialer: func(ctx context.Context, network, addr string) (net.Conn, error) {
+    //       proxy, _ := proxy.SOCKS5("tcp", "127.0.0.1:9050", nil, proxy.Direct)
+    //       return proxy.Dial(network, addr)
+    //   }
+    //
+    // Example (I2P):
+    //   Dialer: func(ctx context.Context, network, addr string) (net.Conn, error) {
+    //       return i2p.Dial(network, addr) // Using custom I2P dialer
+    //   }
+    Dialer func(ctx context.Context, network, addr string) (net.Conn, error)
+
+    // Listener is a custom listener for incoming network connections in embedded mode.
+    // Allows accepting connections through anonymous networks like Tor or I2P.
+    // The listener should return net.Listener compatible listener.
+    // If nil, uses standard net.Listen for clearnet connections.
+    //
+    // Example (Tor hidden service):
+    //   Listener: func(network, addr string) (net.Listener, error) {
+    //       return tor.Listen(network, addr) // Using Tor hidden service
+    //   }
+    //
+    // Example (I2P):
+    //   Listener: func(network, addr string) (net.Listener, error) {
+    //       return i2p.Listen(network, addr) // Using I2P SAM listener
+    //   }
+    Listener func(network, addr string) (net.Listener, error)
+
     // Logger is a custom logger for client operations.
     // If nil, uses default logger.
     Logger *log.Logger
@@ -378,6 +411,71 @@ client, err := nmcd.NewClient(&nmcd.Config{
     BootstrapPeers: []string{
         "peer1.example.com:8334",
         "peer2.example.com:8334",
+    },
+})
+
+// Example 5: Embedded mode over Tor network (anonymous connections)
+import "golang.org/x/net/proxy"
+
+torDialer, err := proxy.SOCKS5("tcp", "127.0.0.1:9050", nil, proxy.Direct)
+if err != nil {
+    log.Fatal(err)
+}
+
+client, err := nmcd.NewClient(&nmcd.Config{
+    Mode:    nmcd.ModeEmbedded,
+    Network: "mainnet",
+    // Route all outgoing connections through Tor
+    Dialer: func(ctx context.Context, network, addr string) (net.Conn, error) {
+        return torDialer.Dial(network, addr)
+    },
+    // Accept incoming connections as Tor hidden service
+    Listener: func(network, addr string) (net.Listener, error) {
+        // Use onion service listener (implementation depends on Tor library)
+        return torOnionListener.Listen(network, addr)
+    },
+    BootstrapPeers: []string{
+        // Onion addresses of Namecoin peers
+        "nmc2exampleonion.onion:8334",
+    },
+})
+
+// Example 6: Embedded mode over I2P network (anonymous peer-to-peer)
+import "github.com/eyedeekay/sam3"
+
+samConn, err := sam3.NewSAM("127.0.0.1:7656")
+if err != nil {
+    log.Fatal(err)
+}
+
+client, err := nmcd.NewClient(&nmcd.Config{
+    Mode:    nmcd.ModeEmbedded,
+    Network: "mainnet",
+    // Route connections through I2P
+    Dialer: func(ctx context.Context, network, addr string) (net.Conn, error) {
+        // Convert clearnet address to I2P destination if needed
+        return samConn.Dial(network, addr)
+    },
+    Listener: func(network, addr string) (net.Listener, error) {
+        // Create I2P destination and listen
+        return samConn.Listen(network, addr)
+    },
+    BootstrapPeers: []string{
+        // I2P addresses of Namecoin peers
+        "nmc.i2p:8334",
+    },
+})
+
+// Example 7: Hybrid mode - Tor for outgoing, clearnet for incoming
+client, err := nmcd.NewClient(&nmcd.Config{
+    Mode: nmcd.ModeEmbedded,
+    // Tor for outgoing (privacy)
+    Dialer: func(ctx context.Context, network, addr string) (net.Conn, error) {
+        return torDialer.Dial(network, addr)
+    },
+    // Standard clearnet for incoming (availability)
+    Listener: func(network, addr string) (net.Listener, error) {
+        return net.Listen(network, addr)
     },
 })
 ```
@@ -498,7 +596,8 @@ make test
 3. Implement thread-safe access to shared state (blockchain, namedb)
 4. Add graceful shutdown with resource cleanup
 5. Implement `RegisterName` with NAME_NEW → NAME_FIRSTUPDATE flow
-6. Add unit tests for EmbeddedClient methods
+6. Add support for custom Dialer and Listener (anonymous networks)
+7. Add unit tests for EmbeddedClient methods
 
 **Technical Challenges:**
 
@@ -742,6 +841,7 @@ docs/
 2. **Name Registry CLI:** Command-line tool using library (like `namecoin-cli`)
 3. **Web Dashboard:** Simple web UI for name management
 4. **Domain Monitor:** Background service monitoring name expirations
+5. **Tor/I2P Bridge:** Anonymous Namecoin client over Tor or I2P networks
 
 **Deliverables:**
 - ✅ Complete API documentation
@@ -855,7 +955,221 @@ func tryLockDataDir(dataDir string) (*os.File, error) {
 
 **Recommendation:** Use Option 2 (auto-detection) for most cases. Only expert users should manage database locks manually.
 
-### 4.3 Blockchain Sync Strategy
+### 4.3 Network Abstraction for Anonymous Networks
+
+**Requirement:** Support for anonymous networks (Tor, I2P) and custom network implementations via pluggable Dialer and Listener interfaces.
+
+**Design Principle:** Use interface types (net.Conn, net.Listener) consistently, never concrete types (*net.TCPConn, *net.UDPConn). This enables transparent network abstraction.
+
+**Implementation Strategy:**
+
+**1. Dialer Interface for Outgoing Connections:**
+
+```go
+// EmbeddedClient uses custom dialer if provided, falls back to net.Dialer
+type EmbeddedClient struct {
+    dialer func(ctx context.Context, network, addr string) (net.Conn, error)
+    // ... other fields
+}
+
+// Connect to peer using custom dialer
+func (c *EmbeddedClient) connectPeer(ctx context.Context, addr string) (net.Conn, error) {
+    if c.dialer != nil {
+        // Use custom dialer (Tor, I2P, etc.)
+        return c.dialer(ctx, "tcp", addr)
+    }
+    
+    // Fallback to standard clearnet dialer
+    var d net.Dialer
+    return d.DialContext(ctx, "tcp", addr)
+}
+```
+
+**2. Listener Interface for Incoming Connections:**
+
+```go
+// Accept incoming peer connections using custom listener
+func (c *EmbeddedClient) startListener(network, addr string) (net.Listener, error) {
+    if c.listener != nil {
+        // Use custom listener (Tor hidden service, I2P SAM, etc.)
+        return c.listener(network, addr)
+    }
+    
+    // Fallback to standard clearnet listener
+    return net.Listen(network, addr)
+}
+```
+
+**3. Integration with btcd/peer:**
+
+The btcd/peer package already uses interface types for network connections, making it compatible with custom dialers:
+
+```go
+// btcd/peer.Config accepts net.Conn, not concrete TCP connections
+peerCfg := &peer.Config{
+    // ... configuration
+}
+
+// Connect using custom dialer
+conn, err := c.connectPeer(ctx, peerAddr)
+if err != nil {
+    return err
+}
+
+// btcd/peer.NewOutboundPeer accepts any net.Conn
+p, err := peer.NewOutboundPeer(peerCfg, peerAddr)
+p.AssociateConnection(conn)
+```
+
+**4. DNS Resolution for Anonymous Networks:**
+
+Different networks have different naming conventions:
+- **Clearnet:** DNS names (peer.example.com)
+- **Tor:** Onion addresses (xyz.onion)
+- **I2P:** Base32 addresses (xyz.b32.i2p) or addressbook names (peer.i2p)
+
+```go
+// Network-aware peer resolution
+func (c *EmbeddedClient) resolvePeer(addr string) ([]string, error) {
+    if c.dialer == nil {
+        // Clearnet: use DNS
+        return net.LookupHost(addr)
+    }
+    
+    // Anonymous network: assume address is already resolved
+    // (Tor .onion, I2P .i2p addresses don't use DNS)
+    return []string{addr}, nil
+}
+```
+
+**5. Bootstrap Peers for Anonymous Networks:**
+
+Allow mixed clearnet and anonymous bootstrap peers:
+
+```go
+cfg := &nmcd.Config{
+    Mode: nmcd.ModeEmbedded,
+    Dialer: torDialer, // Routes through Tor
+    BootstrapPeers: []string{
+        // Mix of clearnet and onion addresses
+        "peer1.example.com:8334",           // Clearnet (accessed via Tor exit)
+        "nmc2exampleonion.onion:8334",      // Tor hidden service
+        "nmci2pexample.b32.i2p:8334",       // I2P eepsite
+    },
+}
+```
+
+**6. Network Type Detection:**
+
+Automatically detect network type from address format:
+
+```go
+func detectNetworkType(addr string) string {
+    switch {
+    case strings.HasSuffix(addr, ".onion"):
+        return "tor"
+    case strings.HasSuffix(addr, ".i2p"):
+        return "i2p"
+    default:
+        return "clearnet"
+    }
+}
+```
+
+**7. Thread Safety for Network Operations:**
+
+All network operations must respect context cancellation:
+
+```go
+func (c *EmbeddedClient) connectPeer(ctx context.Context, addr string) (net.Conn, error) {
+    // Check context before dialing
+    select {
+    case <-ctx.Done():
+        return nil, ctx.Err()
+    default:
+    }
+    
+    // Dial with context (respects timeout and cancellation)
+    conn, err := c.dialer(ctx, "tcp", addr)
+    if err != nil {
+        return nil, err
+    }
+    
+    return conn, nil
+}
+```
+
+**8. Testing with Mock Networks:**
+
+Custom dialers enable comprehensive testing without real network:
+
+```go
+// Test with in-memory pipe network
+func TestEmbeddedClientWithMockNetwork(t *testing.T) {
+    server, client := net.Pipe()
+    
+    cfg := &nmcd.Config{
+        Mode: nmcd.ModeEmbedded,
+        Dialer: func(ctx context.Context, network, addr string) (net.Conn, error) {
+            return client, nil
+        },
+    }
+    
+    nc, err := nmcd.NewClient(cfg)
+    // ... test network operations
+}
+```
+
+**Security Considerations:**
+
+- **DNS Leaks:** When using Tor/I2P, ensure DNS resolution also goes through the network (use SOCKS5 DNS or local resolution)
+- **Connection Metadata:** Custom dialers should preserve connection privacy (no clearnet fallback)
+- **Peer Discovery:** Disable DNS seed discovery when using anonymous networks (use manual bootstrap peers only)
+- **Network Isolation:** Consider separate data directories for different network modes to prevent correlation
+
+**Example: Complete Tor Configuration**
+
+```go
+import (
+    "context"
+    "net"
+    "golang.org/x/net/proxy"
+)
+
+// Create Tor SOCKS5 dialer with DNS resolution through Tor
+torDialer, err := proxy.SOCKS5("tcp", "127.0.0.1:9050", nil, proxy.Direct)
+if err != nil {
+    log.Fatal(err)
+}
+
+client, err := nmcd.NewClient(&nmcd.Config{
+    Mode:    nmcd.ModeEmbedded,
+    Network: "mainnet",
+    DataDir: "~/.nmcd-tor", // Separate data directory
+    
+    // All outgoing connections through Tor
+    Dialer: func(ctx context.Context, network, addr string) (net.Conn, error) {
+        return torDialer.Dial(network, addr)
+    },
+    
+    // Listen as Tor hidden service (requires torrc configuration)
+    Listener: func(network, addr string) (net.Listener, error) {
+        // Tor control library creates hidden service
+        return torControl.CreateHiddenService(addr)
+    },
+    
+    // Use only onion bootstrap peers (no clearnet, no DNS seeds)
+    BootstrapPeers: []string{
+        "nmc1exampleonion.onion:8334",
+        "nmc2exampleonion.onion:8334",
+    },
+    
+    // Disable DNS seeds (would leak to clearnet)
+    MaxPeers: 8,
+})
+```
+
+### 4.4 Blockchain Sync Strategy
 
 **Challenge:** Full blockchain sync takes hours/days. Embedded clients need faster startup.
 
@@ -896,7 +1210,7 @@ cfg := &nmcd.Config{
 - Phase 1-4 will use Full Sync mode only
 - SPV modes can be added as enhancement in future phases
 
-### 4.4 Resource Management
+### 4.5 Resource Management
 
 **Requirements:**
 1. Graceful shutdown releases all resources
@@ -974,7 +1288,7 @@ func (c *EmbeddedClient) RegisterName(ctx context.Context, name, value string, o
 }
 ```
 
-### 4.5 btcd Composition Principles
+### 4.6 btcd Composition Principles
 
 **Design Principle:** Compose with btcd libraries, don't reimplement or fork.
 
@@ -1540,6 +1854,8 @@ nmcd/
 │   ├── update_name.go     # Name update flow
 │   ├── list_names.go      # Name listing
 │   ├── dns_bridge.go      # DNS protocol bridge
+│   ├── tor_client.go      # NEW: Tor anonymous client
+│   ├── i2p_client.go      # NEW: I2P anonymous client
 │   └── namedb_example.go  # Existing database example
 │
 ├── namedb/                # UNCHANGED: Existing package
@@ -1553,6 +1869,7 @@ nmcd/
 │   ├── API.md
 │   ├── EMBEDDING.md
 │   ├── MODES.md
+│   ├── ANONYMOUS_NETWORKS.md  # NEW: Tor/I2P configuration guide
 │   └── PERFORMANCE.md
 │
 ├── README.md              # MODIFIED: Library-first documentation
