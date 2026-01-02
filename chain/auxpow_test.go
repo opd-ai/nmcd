@@ -613,7 +613,8 @@ SideMask: 0,
 }
 
 blockHash := mustDecodeHash("0000000000000000000000000000000000000000000000000000000000000abc")
-targetDiff := mustDecodeHash("00000000ffff0000000000000000000000000000000000000000000000000000")
+		// Use a very high target (easy difficulty) so parent block hash will pass PoW check
+		targetDiff := mustDecodeHash("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
 
 err := auxpow.ValidateAuxPow(&blockHash, NamecoinChainID, &targetDiff)
 if err == nil {
