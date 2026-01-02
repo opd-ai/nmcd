@@ -23,6 +23,13 @@ type BlockChain struct {
 	nameDB      *namedb.NameDatabase
 	chainParams *chaincfg.Params
 	mu          sync.RWMutex
+	
+	// auxPowCache stores AuxPow data temporarily keyed by block hash
+	// This is needed because btcd's blockchain package works with btcutil.Block
+	// which doesn't have AuxPow fields, but we need to validate AuxPow.
+	// The cache is populated when blocks arrive from the network and cleared after validation.
+	auxPowCache map[chainhash.Hash]*AuxPow
+	auxPowMu    sync.RWMutex
 }
 
 // Config holds blockchain configuration
@@ -43,6 +50,7 @@ func NewBlockChain(cfg *Config, indexManager blockchain.IndexManager) (*BlockCha
 	bc := &BlockChain{
 		nameDB:      nameDB,
 		chainParams: cfg.ChainParams,
+		auxPowCache: make(map[chainhash.Hash]*AuxPow),
 	}
 
 	// Create blockchain config
@@ -74,6 +82,71 @@ func (bc *BlockChain) Close() error {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 	return bc.nameDB.Close()
+}
+
+// SetBlockAuxPowFromBytes extracts and caches AuxPow data from a serialized block.
+// This is called by the network layer when blocks arrive from peers.
+//
+// The function:
+// 1. Checks if the block version has the AuxPow bit set
+// 2. If so, deserializes the entire block including AuxPow
+// 3. Caches the AuxPow for later validation
+//
+// Arguments:
+//   - blockHash: Hash of the block (used as cache key)
+//   - serializedBlock: Complete serialized block bytes including AuxPow
+//
+// Returns:
+//   - nil if successful or if block doesn't have AuxPow
+//   - error if deserialization fails for a block that should have AuxPow
+func (bc *BlockChain) SetBlockAuxPowFromBytes(blockHash *chainhash.Hash, serializedBlock []byte) error {
+	// Quick check: does the block version indicate AuxPow?
+	// Block version is in bytes 0-3 (little-endian int32)
+	if len(serializedBlock) < 80 {
+		// Block header is incomplete, skip AuxPow parsing
+		return nil
+	}
+	
+	// Extract version from header (bytes 0-3, little-endian)
+	version := int32(serializedBlock[0]) | int32(serializedBlock[1])<<8 |
+		int32(serializedBlock[2])<<16 | int32(serializedBlock[3])<<24
+	
+	hasAuxPowBit := (version & config.AuxPowVersionBit) != 0
+	if !hasAuxPowBit {
+		// No AuxPow for this block
+		return nil
+	}
+	
+	// Deserialize the full block including AuxPow
+	block, err := NewBlockFromBytes(serializedBlock)
+	if err != nil {
+		return fmt.Errorf("failed to deserialize block with AuxPow: %w", err)
+	}
+	
+	// Cache the AuxPow for validation
+	if block.AuxPow() != nil {
+		bc.auxPowMu.Lock()
+		bc.auxPowCache[*blockHash] = block.AuxPow()
+		bc.auxPowMu.Unlock()
+	}
+	
+	return nil
+}
+
+// getBlockAuxPow retrieves cached AuxPow data for a block.
+// Returns nil if no AuxPow is cached for this block.
+func (bc *BlockChain) getBlockAuxPow(blockHash *chainhash.Hash) *AuxPow {
+	bc.auxPowMu.RLock()
+	defer bc.auxPowMu.RUnlock()
+	return bc.auxPowCache[*blockHash]
+}
+
+// clearBlockAuxPow removes AuxPow data from the cache after validation.
+// This prevents unbounded memory growth.
+func (bc *BlockChain) clearBlockAuxPow(blockHash *chainhash.Hash) {
+	bc.auxPowMu.Lock()
+	defer bc.auxPowMu.Unlock()
+	delete(bc.auxPowCache, *blockHash)
 }
 
 // ProcessBlock processes a block and validates name operations
@@ -312,19 +385,15 @@ func (bc *BlockChain) validateBlockVersion(block *btcutil.Block) error {
 // - AuxPow includes proof that the block was merge-mined with a parent chain (Bitcoin)
 // - Validation includes checking merkle branches, parent block PoW, and chain ID
 //
-// This function currently serves as a placeholder for full AuxPow validation.
-// The AuxPow data structures and validation functions are implemented in auxpow.go,
-// but integrating them requires extending the block deserialization to include AuxPow data.
-//
-// For now, this function:
+// This function:
 // 1. Checks if the block should have AuxPow (based on height and version)
-// 2. Logs a warning that full validation is not yet implemented
-// 3. Returns nil to avoid blocking development (FIXME for production)
+// 2. Retrieves cached AuxPow data (set by SetBlockAuxPowFromBytes)
+// 3. Calls ValidateAuxPow() to verify the proof
+// 4. Clears the cache entry after validation
 //
-// TODO: Integrate full AuxPow validation:
-// - Parse AuxPow data from block (extend wire protocol deserialization)
-// - Call ap.ValidateAuxPow() with block hash, chain ID, and target difficulty
-// - Return error if validation fails
+// Returns:
+//   - nil if validation succeeds or block doesn't require AuxPow
+//   - error if AuxPow is missing or validation fails
 func (bc *BlockChain) validateAuxPow(block *btcutil.Block) error {
 	// Determine block height
 	var height int32 = -1
@@ -361,17 +430,46 @@ func (bc *BlockChain) validateAuxPow(block *btcutil.Block) error {
 		return fmt.Errorf("block at height %d requires AuxPow version bit but it's not set", height)
 	}
 
-	// TODO: Full AuxPow validation
-	// This requires:
-	// 1. Deserializing AuxPow data from the block (currently not parsed)
-	// 2. Calling ValidateAuxPow() with proper parameters
-	// 3. Handling validation errors
-	//
-	// For now, we log a warning and return nil to allow development to continue.
-	// This is NOT production-ready and should be fixed before mainnet deployment.
-	log.Printf("WARNING: AuxPow validation not yet fully implemented for block at height %d (hash: %s)",
-		height, block.Hash().String())
+	// Retrieve cached AuxPow data
+	blockHash := block.Hash()
+	auxPow := bc.getBlockAuxPow(blockHash)
+	
+	// Ensure we clean up the cache entry when done (success or failure)
+	defer bc.clearBlockAuxPow(blockHash)
+	
+	if auxPow == nil {
+		return fmt.Errorf("block at height %d requires AuxPow but no AuxPow data was provided", height)
+	}
 
+	// Get the target difficulty for the parent block
+	// For merged mining, the parent block (Bitcoin) must meet a difficulty target.
+	// We use the current block's difficulty target from its Bits field.
+	targetDifficulty := blockchain.CompactToBig(block.MsgBlock().Header.Bits)
+	
+	// Validate the AuxPow proof
+	// This checks:
+	// 1. Chain ID matches Namecoin (NamecoinChainID = 1)
+	// 2. Parent block hash meets difficulty target
+	// 3. Coinbase merkle branch proves coinbase is in parent block
+	// 4. Chain merkle branch proves aux block hash is committed in coinbase
+	//
+	// Note: We pass targetDifficulty as a big.Int, but ValidateAuxPow expects a Hash.
+	// We need to convert the target to a hash for comparison.
+	var targetHash chainhash.Hash
+	targetBytes := targetDifficulty.Bytes()
+	
+	// Copy bytes to hash in reverse order (big-endian to little-endian)
+	for i := 0; i < len(targetBytes); i++ {
+		targetHash[chainhash.HashSize-len(targetBytes)+i] = targetBytes[i]
+	}
+	
+	if err := auxPow.ValidateAuxPow(blockHash, NamecoinChainID, &targetHash); err != nil {
+		return fmt.Errorf("AuxPow validation failed for block %s at height %d: %w",
+			blockHash.String(), height, err)
+	}
+
+	// All AuxPow validations passed
+	log.Printf("Successfully validated AuxPow for block %s at height %d", blockHash.String(), height)
 	return nil
 }
 
