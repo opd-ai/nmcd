@@ -243,9 +243,6 @@ func (pm *PeerManager) onInv(p *peer.Peer, msg *wire.MsgInv) {
 }
 
 func (pm *PeerManager) onBlock(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
-	// buf is part of the peer.MessageListeners interface but not used here.
-	_ = buf
-
 	// Check if blockchain is available for processing
 	if pm.blockchain == nil {
 		log.Printf("Cannot process block %s: blockchain not initialized",
@@ -255,6 +252,17 @@ func (pm *PeerManager) onBlock(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
 
 	// Convert wire.MsgBlock to btcutil.Block for processing
 	block := btcutil.NewBlock(msg)
+
+	// If buf is provided and block has AuxPow version bit, parse AuxPow data
+	// The buf parameter contains the complete serialized block including AuxPow (if present).
+	// We need to extract and store the AuxPow for later validation.
+	if buf != nil && len(buf) > 0 {
+		if err := pm.blockchain.SetBlockAuxPowFromBytes(block.Hash(), buf); err != nil {
+			log.Printf("Warning: Failed to parse AuxPow for block %s: %v (continuing anyway)",
+				msg.BlockHash().String(), err)
+			// Don't return - continue with validation, which will catch AuxPow issues
+		}
+	}
 
 	// Process the block through the blockchain
 	// BFNone means no special behavior flags
