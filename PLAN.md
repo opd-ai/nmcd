@@ -607,7 +607,9 @@ make test  # All tests passing
 - ✅ Task 1.8: Implemented ListNames() method with filtering and pagination support (2026-01-02)
 - ✅ Task 1.9: Implemented GetNameHistory() method for retrieving operation history (2026-01-02)
 - ✅ Task 2: Initialize full blockchain with btcd integration (2026-01-02) **COMPLETE**
-- ⏳ Task 3: Implement RegisterName with NAME_NEW → NAME_FIRSTUPDATE flow (next)
+- ✅ Task 2.1: **CRITICAL CONSENSUS BUG FIX:** Corrected Namecoin name operation opcodes in wallet package (2026-01-02)
+- ✅ Task 2.2: Implemented BuildNameNewScript and BuildNameFirstUpdateScript with comprehensive tests (2026-01-02)
+- ⏳ Task 3: Implement RegisterName with NAME_NEW → NAME_FIRSTUPDATE flow (in progress)
 - ⏳ Task 4: Add support for custom Dialer and Listener for anonymous networks (deferred)
 - ⏳ Task 5: Implement UpdateName, WaitForConfirmation (deferred)
 
@@ -616,6 +618,8 @@ make test  # All tests passing
 - ✅ `client/embedded_test.go` - Comprehensive test suite (886 lines, 12 test functions)
 - ✅ `chain/blockchain.go` - Full blockchain integration with ffldb database (2026-01-02)
 - ✅ `config/namecoin_params.go` - Fixed CRITICAL consensus bug: added TargetTimePerBlock and TargetTimespan (2026-01-02)
+- ✅ `wallet/wallet.go` - Fixed CRITICAL consensus bug: corrected name operation opcodes + added script builders (2026-01-02)
+- ✅ `wallet/wallet_test.go` - Comprehensive tests for all script builders (2026-01-02)
 - ✅ All tests passing (100% success rate)
 
 **Phase 2 Integration Notes:**
@@ -633,6 +637,13 @@ make test  # All tests passing
   - This bug would have caused divide-by-zero panic and prevented difficulty adjustment
   - All three networks (mainnet, testnet, regtest) now have correct consensus timing parameters
   - TargetTimePerBlock: 10 minutes, TargetTimespan: 2 weeks, RetargetAdjustmentFactor: 4
+- **CRITICAL CONSENSUS BUG FIXED:** Corrected Namecoin name operation opcodes in wallet package (2026-01-02)
+  - opNameNew: 0xd1 → 0xd0 (CONSENSUS BREAKING)
+  - opNameFirstUpdate: 0xd2 → 0xd1 (CONSENSUS BREAKING)
+  - opNameUpdate: 0xd3 → 0xd2 (CONSENSUS BREAKING)
+  - This bug would have caused all name operation transactions to be rejected by the network
+  - Added BuildNameNewScript and BuildNameFirstUpdateScript functions
+  - All script builders now use correct opcodes matching blockchain validation
 - Design allows easy integration of write operations in next iteration
 - ListNames implemented with comprehensive filtering (2026-01-02):
   - Namespace filtering (d/, id/, p/)
