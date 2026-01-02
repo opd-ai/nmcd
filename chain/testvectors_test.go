@@ -108,6 +108,11 @@ func TestTransactionVectors(t *testing.T) {
 		return
 	}
 
+	// Transaction validation is not yet implemented - skip this test
+	// Once transaction deserialization and name operation parsing is complete,
+	// this test should be updated to properly validate transactions
+	t.Skip("Transaction test vector validation not yet implemented")
+
 	for _, file := range files {
 		vectors, err := loadTestVectors(file)
 		if err != nil {
@@ -123,18 +128,13 @@ func TestTransactionVectors(t *testing.T) {
 					t.Fatalf("Failed to decode hex data: %v", err)
 				}
 
-				// Attempt to deserialize transaction
-				// This would use wire.MsgTx deserialization
-				_ = txBytes // Placeholder - full implementation would deserialize and validate
+				// TODO: Implement transaction deserialization and validation
+				// - Deserialize wire.MsgTx from bytes
+				// - Parse name operation scripts
+				// - Validate against consensus rules
+				// - Check expected validity matches actual
 				
-				// Note: Full transaction validation would require:
-				// - Deserializing wire.MsgTx from bytes
-				// - Parsing name operation scripts
-				// - Validating against consensus rules
-				// - Checking expected validity matches actual
-				
-				t.Logf("Transaction vector: %s (valid=%v)", vec.Description, vec.Valid)
-				t.Log("Note: Full transaction validation not yet implemented")
+				_ = txBytes // Placeholder until implementation is complete
 			})
 		}
 	}

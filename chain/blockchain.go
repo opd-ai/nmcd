@@ -790,6 +790,8 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 		if err := bc.nameDB.DeleteHistory(name); err != nil {
 			return err
 		}
+		// Record name expiration metric
+		metrics.Get().RecordNameExpired()
 	}
 
 	// Process name operations and track UTXOs
@@ -845,6 +847,8 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 				if err := bc.nameDB.PutNameNew(extra, height); err != nil {
 					return err
 				}
+				// Record name operation metric
+				metrics.Get().RecordNameOperation("NAME_NEW")
 
 			case namedb.NameFirstUpdate:
 				// Extract the owner address from the script
@@ -890,6 +894,8 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 				if err := bc.nameDB.DeleteNameNew(commitHash); err != nil {
 					return err
 				}
+				// Record name operation metric
+				metrics.Get().RecordNameOperation("NAME_FIRSTUPDATE")
 
 			case namedb.NameUpdate:
 				// Extract the owner address from the script
@@ -920,6 +926,8 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 				if err := bc.nameDB.AddHistory(*txHash, record); err != nil {
 					return err
 				}
+				// Record name operation metric
+				metrics.Get().RecordNameOperation("NAME_UPDATE")
 			}
 		}
 	}
@@ -1474,6 +1482,9 @@ func (bc *BlockChain) HandleBlockchainNotification(notification *blockchain.Noti
 			return
 		}
 		bc.rollbackNameOperations(block)
+		// Record blockchain reorganization metric
+		// Count this as 1 block rolled back (in a multi-block reorg, this will be called multiple times)
+		metrics.Get().RecordReorg(1)
 	}
 }
 

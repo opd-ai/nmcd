@@ -14,6 +14,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/opd-ai/nmcd/chain"
 	"github.com/opd-ai/nmcd/config"
+	"github.com/opd-ai/nmcd/metrics"
 )
 
 // PeerManager manages network peers using btcd/peer
@@ -150,6 +151,8 @@ func (pm *PeerManager) handleInboundPeer(conn net.Conn) {
 	// Add to peer list
 	pm.mu.Lock()
 	pm.peers[p.Addr()] = p
+	// Update peer count metrics
+	pm.updatePeerMetrics()
 	pm.mu.Unlock()
 
 	// Wait for disconnect
@@ -158,6 +161,9 @@ func (pm *PeerManager) handleInboundPeer(conn net.Conn) {
 	// Remove from peer list
 	pm.mu.Lock()
 	delete(pm.peers, p.Addr())
+	// Update peer count metrics and record disconnect
+	pm.updatePeerMetrics()
+	metrics.Get().RecordPeerDisconnect()
 	pm.mu.Unlock()
 }
 
@@ -208,6 +214,8 @@ func (pm *PeerManager) ConnectPeer(addr string) error {
 	// Add to peer list
 	pm.mu.Lock()
 	pm.peers[p.Addr()] = p
+	// Update peer count metrics
+	pm.updatePeerMetrics()
 	pm.mu.Unlock()
 
 	pm.wg.Add(1)
@@ -217,6 +225,9 @@ func (pm *PeerManager) ConnectPeer(addr string) error {
 
 		pm.mu.Lock()
 		delete(pm.peers, p.Addr())
+		// Update peer count metrics and record disconnect
+		pm.updatePeerMetrics()
+		metrics.Get().RecordPeerDisconnect()
 		pm.mu.Unlock()
 	}()
 
@@ -451,6 +462,21 @@ type PeerInfo struct {
 	Addr      string
 	Connected bool
 	Inbound   bool
+}
+
+// updatePeerMetrics updates peer count metrics
+// Must be called with pm.mu held
+func (pm *PeerManager) updatePeerMetrics() {
+	total := uint32(len(pm.peers))
+	var inbound, outbound uint32
+	for _, p := range pm.peers {
+		if p.Inbound() {
+			inbound++
+		} else {
+			outbound++
+		}
+	}
+	metrics.Get().UpdatePeerCount(total, inbound, outbound)
 }
 
 // Stop stops the peer manager
