@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/opd-ai/nmcd/chain"
+	"github.com/opd-ai/nmcd/metrics"
 	"github.com/opd-ai/nmcd/network"
 	"github.com/opd-ai/nmcd/wallet"
 )
@@ -169,6 +170,8 @@ func (s *Server) processRequest(req *Request) *Response {
 		return s.getConnectionCount(req)
 	case "getpeerinfo":
 		return s.getPeerInfo(req)
+	case "getmetrics":
+		return s.getMetrics(req)
 	case "name_show":
 		return s.nameShow(req)
 	case "name_update":
@@ -251,6 +254,17 @@ func (s *Server) getPeerInfo(req *Request) *Response {
 	return &Response{
 		Jsonrpc: "2.0",
 		Result:  peers,
+		ID:      req.ID,
+	}
+}
+
+// getMetrics returns node metrics for monitoring
+func (s *Server) getMetrics(req *Request) *Response {
+	snapshot := metrics.Get().Snapshot()
+
+	return &Response{
+		Jsonrpc: "2.0",
+		Result:  snapshot,
 		ID:      req.ID,
 	}
 }
