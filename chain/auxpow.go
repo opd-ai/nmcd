@@ -1,6 +1,7 @@
 package chain
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
 
@@ -206,11 +207,7 @@ func DeserializeMerkleBranch(r io.Reader) (*MerkleBranch, error) {
 	if _, err := io.ReadFull(r, sideMaskBytes[:]); err != nil {
 		return nil, fmt.Errorf("failed to read side mask: %w", err)
 	}
-	// Convert little-endian bytes to uint32
-	branch.SideMask = uint32(sideMaskBytes[0]) |
-		uint32(sideMaskBytes[1])<<8 |
-		uint32(sideMaskBytes[2])<<16 |
-		uint32(sideMaskBytes[3])<<24
+	branch.SideMask = binary.LittleEndian.Uint32(sideMaskBytes[:])
 
 	return branch, nil
 }
@@ -222,6 +219,11 @@ func DeserializeMerkleBranch(r io.Reader) (*MerkleBranch, error) {
 // 2. Branch hashes (32 bytes each)
 // 3. Side mask (4 bytes, little-endian uint32)
 func (mb *MerkleBranch) SerializeMerkleBranch(w io.Writer) error {
+	// Validate branch depth doesn't exceed maximum
+	if len(mb.Branch) > 32 {
+		return fmt.Errorf("merkle branch too deep: %d levels (max 32)", len(mb.Branch))
+	}
+
 	// Write branch size
 	if err := wire.WriteVarInt(w, 0, uint64(len(mb.Branch))); err != nil {
 		return fmt.Errorf("failed to write branch size: %w", err)
@@ -235,12 +237,8 @@ func (mb *MerkleBranch) SerializeMerkleBranch(w io.Writer) error {
 	}
 
 	// Write side mask (4 bytes, little-endian)
-	sideMaskBytes := [4]byte{
-		byte(mb.SideMask),
-		byte(mb.SideMask >> 8),
-		byte(mb.SideMask >> 16),
-		byte(mb.SideMask >> 24),
-	}
+	var sideMaskBytes [4]byte
+	binary.LittleEndian.PutUint32(sideMaskBytes[:], mb.SideMask)
 	if _, err := w.Write(sideMaskBytes[:]); err != nil {
 		return fmt.Errorf("failed to write side mask: %w", err)
 	}

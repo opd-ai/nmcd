@@ -2,6 +2,7 @@ package chain
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,7 +17,6 @@ func TestMerkleBranchSerializeDeserialize(t *testing.T) {
 		name    string
 		branch  MerkleBranch
 		wantErr bool
-		errMsg  string
 	}{
 		{
 			name: "empty branch",
@@ -127,6 +127,24 @@ func TestMerkleBranchDeserializeTooDeep(t *testing.T) {
 	}
 }
 
+// TestMerkleBranchSerializeTooDeep tests that serialization rejects branches with >32 levels.
+func TestMerkleBranchSerializeTooDeep(t *testing.T) {
+	// Create a merkle branch with 33 levels (exceeds maximum of 32)
+	branch := MerkleBranch{
+		Branch:   make([]chainhash.Hash, 33),
+		SideMask: 0,
+	}
+
+	var buf bytes.Buffer
+	err := branch.SerializeMerkleBranch(&buf)
+	if err == nil {
+		t.Error("SerializeMerkleBranch() expected error for 33 levels, got nil")
+	}
+	if !strings.Contains(err.Error(), "merkle branch too deep") {
+		t.Errorf("SerializeMerkleBranch() error = %v, want error containing 'merkle branch too deep'", err)
+	}
+}
+
 // TestAuxPowSerializeDeserialize tests serialization and deserialization
 // of complete AuxPow structures.
 func TestAuxPowSerializeDeserialize(t *testing.T) {
@@ -159,7 +177,7 @@ func TestAuxPowSerializeDeserialize(t *testing.T) {
 			mustDecodeHash("0000000000000000000000000000000000000000000000000000000000000001"),
 			mustDecodeHash("0000000000000000000000000000000000000000000000000000000000000002"),
 		},
-		SideMask: 0b10, // left, right
+		SideMask: 0b10, // bit 0 = 0 (left at level 0), bit 1 = 1 (right at level 1)
 	}
 
 	chainBranch := MerkleBranch{
@@ -262,6 +280,9 @@ func TestAuxPowDeserializeInvalidData(t *testing.T) {
 			if err == nil {
 				t.Error("DeserializeAuxPow() expected error, got nil")
 			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("DeserializeAuxPow() error = %v, want substring %q", err, tt.wantErr)
+			}
 		})
 	}
 }
@@ -332,7 +353,7 @@ func TestMerkleBranchRoundTrip(t *testing.T) {
 			mustDecodeHash("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
 			mustDecodeHash("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"),
 		},
-		SideMask: 0b110, // right, right, left
+		SideMask: 0b110, // bit0=0 (level 0: left), bit1=1 (level 1: right), bit2=1 (level 2: right)
 	}
 
 	// Perform 3 round trips
