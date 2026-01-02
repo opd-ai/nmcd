@@ -80,6 +80,11 @@ func (sm *SyncManager) syncTick() {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	
+	// Skip if blockchain is not initialized
+	if sm.blockchain == nil {
+		return
+	}
+	
 	// Get our current best block height
 	bestSnapshot := sm.blockchain.BestSnapshot()
 	ourHeight := bestSnapshot.Height
@@ -112,6 +117,16 @@ func (sm *SyncManager) startSync(p *peer.Peer) {
 
 // requestHeaders sends a getheaders request to a peer
 func (sm *SyncManager) requestHeaders(p *peer.Peer) {
+	// Ensure blockchain is initialized before using it
+	if sm.blockchain == nil {
+		if p != nil {
+			log.Printf("Cannot request headers from %s: blockchain is not initialized", p.Addr())
+		} else {
+			log.Printf("Cannot request headers: blockchain is not initialized")
+		}
+		return
+	}
+	
 	// Get our latest block locator
 	locator, err := sm.blockchain.LatestBlockLocator()
 	if err != nil {
@@ -185,6 +200,7 @@ func (sm *SyncManager) HandleHeaders(p *peer.Peer, msg *wire.MsgHeaders) {
 }
 
 // requestBlock requests a full block from a peer
+// This method must be called while holding sm.mu lock
 func (sm *SyncManager) requestBlock(p *peer.Peer, hash *chainhash.Hash) {
 	// Mark as requested
 	sm.requestedBlocks[*hash] = time.Now()
@@ -222,6 +238,7 @@ func (sm *SyncManager) IsSyncing() bool {
 }
 
 // cleanupOldRequests removes block requests older than 2 minutes
+// This method must be called while holding sm.mu lock
 func (sm *SyncManager) cleanupOldRequests() {
 	now := time.Now()
 	for hash, requestTime := range sm.requestedBlocks {
