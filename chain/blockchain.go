@@ -72,8 +72,8 @@ func NewBlockChain(cfg *Config, indexManager blockchain.IndexManager) (*BlockCha
 		// Use TestNet3 wire protocol for Namecoin testnet
 		dbNet = wire.TestNet3
 	case config.NamecoinRegTestParams.Net:
-		// Use RegTest wire protocol for Namecoin regtest
-		dbNet = wire.TestNet // RegTest uses TestNet wire format
+		// Use TestNet wire protocol for Namecoin regtest (regtest reuses TestNet wire format)
+		dbNet = wire.TestNet
 	default:
 		// Default to MainNet
 		dbNet = wire.MainNet
@@ -133,8 +133,10 @@ func (bc *BlockChain) Close() error {
 	var errs []error
 	
 	// Close name database
-	if err := bc.nameDB.Close(); err != nil {
-		errs = append(errs, fmt.Errorf("failed to close name database: %w", err))
+	if bc.nameDB != nil {
+		if err := bc.nameDB.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to close name database: %w", err))
+		}
 	}
 	
 	// Close block database
@@ -144,9 +146,14 @@ func (bc *BlockChain) Close() error {
 		}
 	}
 	
-	// Return first error if any
+	// Return all errors if any occurred
 	if len(errs) > 0 {
-		return errs[0]
+		// Join all errors into a single error message
+		errMsg := "failed to close blockchain resources:"
+		for _, err := range errs {
+			errMsg += fmt.Sprintf(" %v;", err)
+		}
+		return fmt.Errorf("%s", errMsg)
 	}
 	
 	return nil
