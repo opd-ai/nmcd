@@ -1,9 +1,7 @@
-package main
+package server
 
 import (
 	"testing"
-
-	"github.com/opd-ai/nmcd/internal/server"
 )
 
 func TestSplitAndTrim(t *testing.T) {
@@ -56,7 +54,7 @@ func TestSplitAndTrim(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := server.SplitAndTrim(tt.input)
+			result := SplitAndTrim(tt.input)
 
 			if len(result) != len(tt.expected) {
 				t.Errorf("expected %d elements, got %d", len(tt.expected), len(result))
