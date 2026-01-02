@@ -1,175 +1,132 @@
 # nmcd Development Status
 
-**Last Updated:** 2026-01-02  
-**Status:** ✅ PRODUCTION READY
+**Last Updated:** 2024-12-15 (roadmap; not all items implemented yet)  
+**Status:** 🚧 EXPERIMENTAL – NOT PRODUCTION READY
 
 ---
 
 ## Executive Summary
 
-The nmcd Namecoin daemon implementation has achieved **99% protocol compliance** with Namecoin Core. All critical consensus-breaking bugs have been resolved, and the implementation is ready for production use on mainnet.
+The nmcd Namecoin daemon is an experimental, lightweight Namecoin implementation built on btcd libraries. This document tracks **planned protocol-compliance work and milestones**; many items below are still incomplete and nmcd is **not suitable for production mainnet use**.
 
 ---
 
-## Completed Work
+## Planned Work and Status
 
-### Protocol Compliance Audit ✅ COMPLETE
+### Protocol Compliance Audit – Planned Items
 
-All 21 identified issues have been resolved:
+The following items represent the intended scope of protocol-compliance work. Many of these are **not yet implemented** or only partially implemented in nmcd. For detailed implementation status, see PROTOCOL_COMPLIANCE_AUDIT.md.
 
-**Critical Issues (3):**
-- ✅ AuxPow (Merged Mining) Support - Full implementation with wire protocol and validation
-- ✅ Block Version Validation - AuxPow version bit (0x100) enforcement
-- ✅ Subsidy Calculation - Namecoin halving schedule (50 NMC → 25 NMC every 210k blocks)
+**Critical Issues (3) – Status Unknown:**
+- ◻ AuxPow (Merged Mining) Support - Planned full implementation with wire protocol and validation
+- ◻ Block Version Validation - Planned AuxPow version bit (0x100) enforcement
+- ◻ Subsidy Calculation - Planned Namecoin halving schedule (50 NMC → 25 NMC every 210k blocks)
 
-**High Priority Issues (6):**
-- ✅ NAME_NEW Fee Requirements - Dust limit (546 satoshis) validation
-- ✅ NAME_FIRSTUPDATE Timing Window - 12-36,000 block enforcement
-- ✅ Transaction Fee Validation - 1000 sat for NAME_NEW, 0.01 NMC for NAME_FIRSTUPDATE/UPDATE
-- ✅ Chain ID in NAME_NEW Commitment - Cross-chain replay protection
-- ✅ Namespace Validation - Enforce d/, id/, p/ prefixes
-- ✅ Script Validation - Strict drop opcode and P2PKH suffix enforcement
+**High Priority Issues (6) – Status Unknown:**
+- ◻ NAME_NEW Fee Requirements - Planned dust limit (546 satoshis) validation
+- ◻ NAME_FIRSTUPDATE Timing Window - Planned 12-36,000 block enforcement
+- ◻ Transaction Fee Validation - Planned 1000 sat for NAME_NEW, 0.01 NMC for NAME_FIRSTUPDATE/UPDATE
+- ◻ Chain ID in NAME_NEW Commitment - Planned cross-chain replay protection
+- ◻ Namespace Validation - Planned enforcement of d/, id/, p/ prefixes
+- ◻ Script Validation - Planned strict drop opcode and P2PKH suffix enforcement
 
-**Medium Priority Issues (8):**
-- ✅ Name Transfer Validation - UTXO chain verification for NAME_UPDATE
-- ✅ Reorg Handling - Exact NAME_NEW height restoration
-- ✅ Value Encoding Validation - UTF-8 and JSON validation
-- ✅ Double-Spend Detection - Prevent duplicate name operations per block
-- ✅ Name Expiration Cleanup - History deletion for expired names
-- ✅ Network Magic Bytes - Corrected testnet (0xfabfb5fe) and regtest (0xfabfb5da)
-- ✅ Checkpoint System - AuxPow activation checkpoint (block 19,200)
-- ✅ Block Difficulty Validation - PoW validation with Namecoin parameters
-- ✅ Initial Block Download (IBD) - Full getheaders/headers/getdata protocol
+**Medium Priority Issues (8) – Status Unknown:**
+- ◻ Name Transfer Validation - Planned UTXO chain verification for NAME_UPDATE
+- ◻ Reorg Handling - Planned exact NAME_NEW height restoration
+- ◻ Value Encoding Validation - Planned UTF-8 and JSON validation
+- ◻ Double-Spend Detection - Planned prevention of duplicate name operations per block
+- ◻ Name Expiration Cleanup - Planned history deletion for expired names
+- ◻ Network Magic Bytes - Planned corrections for testnet (0xfabfb5fe) and regtest (0xfabfb5da)
+- ◻ Checkpoint System - Planned AuxPow activation checkpoint (block 19,200)
+- ◻ Block Difficulty Validation - Planned PoW validation with Namecoin parameters
+- ◻ Initial Block Download (IBD) - Planned full getheaders/headers/getdata protocol
 
-**Low Priority Issues (4):**
-- ✅ Protocol Version Negotiation - Namecoin version 70015
-- ✅ Error Messages - Enhanced with block hash, height, transaction context
-- ✅ Metrics/Monitoring - Comprehensive metrics with RPC endpoint
-- ✅ Test Vectors - Infrastructure for Namecoin Core test vectors
+**Low Priority Issues (4) – Status Unknown:**
+- ◻ Protocol Version Negotiation - Planned Namecoin version 70015 support
+- ◻ Error Messages - Planned enhancements with block hash, height, transaction context
+- ◻ Metrics/Monitoring - Planned comprehensive metrics with RPC endpoint
+- ◻ Test Vectors - Planned infrastructure for Namecoin Core test vectors
 
 ### Missing Features Status
 
-**Resolved (M1-M8):**
-- ✅ M1: AuxPow Block Validation
-- ✅ M2: Subsidy Calculation
-- ✅ M3: Fee Validation
-- ✅ M4: Namespace Validation
-- ✅ M5: UTXO Chain Validation
-- ✅ M6: Checkpoint System
-- ✅ M7: Difficulty Retargeting Validation
-- ✅ M8: Initial Block Download (IBD)
-
-**Optional Enhancements (M9-M12):**
-- ⏳ M9: Mempool - Transaction relay (2 weeks effort, not required for basic operation)
-- ⏳ M10: Name Transfer Script Support - Enhanced transfer capabilities
-- ⏳ M11: Name Renewal Optimization - UX improvement
-- ⏳ M12: Witness Support - Future SegWit compatibility
+**Planned (M1-M12):**
+- ◻ M1: AuxPow Block Validation
+- ◻ M2: Subsidy Calculation
+- ◻ M3: Fee Validation
+- ◻ M4: Namespace Validation
+- ◻ M5: UTXO Chain Validation
+- ◻ M6: Checkpoint System
+- ◻ M7: Difficulty Retargeting Validation
+- ◻ M8: Initial Block Download (IBD)
+- ◻ M9: Mempool - Transaction relay
+- ◻ M10: Name Transfer Script Support
+- ◻ M11: Name Renewal Optimization
+- ◻ M12: Witness Support - Future SegWit compatibility
 
 ---
 
 ## Current Capabilities
 
-### ✅ Consensus Rules
-- Full AuxPow validation for merged-mined blocks
-- Correct block subsidy calculation with halving
-- Comprehensive transaction fee validation
-- Name operation validation (NAME_NEW, NAME_FIRSTUPDATE, NAME_UPDATE)
-- Namespace enforcement (d/, id/, p/)
-- Timing window enforcement (12-36,000 blocks)
-- Cross-chain replay protection
-- UTXO chain validation for name ownership
-- Blockchain reorganization handling
-- Name expiration (36,000 blocks ≈ 250 days)
+### Basic Name Operations (Partially Implemented)
+- NAME_NEW: Pre-registration with commitment (implementation status unknown)
+- NAME_FIRSTUPDATE: First registration with name reveal (implementation status unknown)
+- NAME_UPDATE: Update name value and extend expiration (implementation status unknown)
+- Name expiration tracking (implementation status unknown)
+- Thread-safe name database using bbolt
 
-### ✅ Network Protocol
-- P2P networking with btcd/peer
-- DNS seed discovery
-- Initial Block Download (IBD) with headers-first sync
-- Block request management
-- Protocol version 70015 (Namecoin compatible)
-- Correct network magic bytes for all networks
-
-### ✅ Name Operations
-- NAME_NEW: Pre-registration with commitment
-- NAME_FIRSTUPDATE: First registration with name reveal
-- NAME_UPDATE: Update name value and extend expiration
-- Name expiration tracking and cleanup
-- Full name operation history
-- Thread-safe name database (bbolt)
-
-### ✅ Networks Supported
-- Mainnet (production ready)
-- Testnet (full support)
+### Network Support (Experimental)
+- Mainnet (⚠️ NOT production ready)
+- Testnet (experimental)
 - Regtest (development/testing)
 
-### ✅ Monitoring
-- Comprehensive metrics system
-- Block processing metrics
-- Name operation counters
-- Validation error tracking
-- Peer connection stats
-- RPC endpoint: `getmetrics`
+### Limitations
+- ⚠️ Consensus rule implementation status uncertain - see PROTOCOL_COMPLIANCE_AUDIT.md for details
+- ⚠️ No mempool/transaction relay support
+- ⚠️ Limited network participation capabilities
+- ⚠️ Not suitable for production blockchain validation
 
 ---
 
 ## Test Coverage
 
-- **Chain Package:** 181+ tests passing ✅
-- **NameDB Package:** All tests passing ✅
-- **Network Package:** 25+ tests passing ✅
-- **RPC Package:** All tests passing ✅
-- **Wallet Package:** All tests passing ✅
-- **Config Package:** All tests passing ✅
-- **Overall:** 100% test pass rate ✅
+Tests exist for various components but comprehensive validation against Namecoin Core behavior is incomplete. See PROTOCOL_COMPLIANCE_AUDIT.md for detailed analysis.
 
 ---
 
-## Production Readiness
+## Development Status
 
-### ✅ Ready For:
-- Mainnet node operation
-- Blockchain synchronization from network
-- Name registration and management
-- Block validation (including AuxPow)
-- Mining on mainnet (can validate merged-mined blocks)
-- Full node services
+### ⚠️ NOT Ready For:
+- Production mainnet operation
+- Critical blockchain validation
+- Mining operations
+- Transaction relay services
+- Full node services requiring complete consensus rule implementation
 
-### ⚠️ Not Yet Implemented:
-- Mempool/transaction relay (optional, not required for basic operation)
-- Multiple name operations in single transaction
-- Automatic name renewal
-- SegWit support (if/when Namecoin activates)
+### Suitable For:
+- Development and testing
+- Learning about Namecoin protocol
+- Experimental regtest environments
+- Research purposes
+
+**Note:** This is an experimental implementation. For production use, consider using Namecoin Core instead.
 
 ---
 
-## Future Development
+## Future Development Plans
 
 ### PLAN.md - Embedded Library API
-**Status:** Planning Phase  
-**Effort:** 4-6 weeks  
-**Priority:** Post-audit (strategic enhancement)
+**Status:** Planning Phase (not started)  
+**Effort:** Estimated 4-6 weeks  
+**Priority:** Post-protocol compliance work
 
-Convert nmcd from standalone daemon to dual-purpose:
-1. Embedded mode: In-process library for Go applications
-2. Daemon mode: Traditional RPC server
-
-**Phases:**
-1. Extract reusable components (1 week)
-2. Implement EmbeddedClient (2-3 weeks)
-3. Implement DaemonClient (1-2 weeks)
-4. Auto-detection and integration (1 week)
-5. Documentation and examples (1 week)
+See PLAN.md for detailed architectural plans to convert nmcd into a reusable library.
 
 ### ROADMAP.md - Permamail Implementation
-**Status:** Blocked until PLAN.md complete  
-**Effort:** 4 weeks  
+**Status:** Planning Phase (blocked)  
+**Effort:** Estimated 4 weeks  
 **Priority:** Future feature
 
-Decentralized email forwarding using Namecoin names:
-- Bridge adapter for Namecoin integration
-- Mail routing logic
-- SMTP relay server
-- CLI for registration and management
+See ROADMAP.md for details on planned decentralized email forwarding feature.
 
 ---
 
@@ -179,23 +136,22 @@ Decentralized email forwarding using Namecoin names:
 
 ```
 nmcd/
-├── chain/           - Blockchain validation with AuxPow support
-├── namedb/          - Name database (bbolt) with UTXO tracking
-├── network/         - P2P networking and IBD (btcd/peer)
-├── rpc/             - JSON-RPC server (HTTP)
-├── wallet/          - Basic wallet with ECDSA keys
+├── chain/           - Blockchain validation (status: see PROTOCOL_COMPLIANCE_AUDIT.md)
+├── namedb/          - Name database using bbolt
+├── network/         - P2P networking using btcd/peer
+├── rpc/             - JSON-RPC server
+├── wallet/          - Basic wallet functionality
 ├── config/          - Network parameters and constants
-├── metrics/         - Monitoring and instrumentation
+├── metrics/         - Monitoring infrastructure
 └── cmd/nmcd/        - Main binary
 ```
 
-### Key Design Principles
+### Design Principles
 
-1. **Composition over reimplementation** - Leverage btcd libraries
+1. **Composition over reimplementation** - Leverage btcd libraries where possible
 2. **Interface-based networking** - Use net.Conn, not concrete types
 3. **Thread-safe operations** - Mutex protection for shared state
-4. **Standard library first** - Minimize external dependencies
-5. **Minimal custom code** - ~3,000 production lines (excluding tests)
+4. **Standard library preference** - Minimize external dependencies
 
 ---
 
@@ -207,69 +163,28 @@ nmcd/
 - github.com/btcsuite/btcd/btcutil v1.1.5 (Bitcoin utilities)
 - go.etcd.io/bbolt v1.4.3 (Embedded database)
 
-**No external runtime dependencies** - Single binary deployment
-
----
-
-## Usage
-
-### Start Node
-```bash
-# Mainnet
-./nmcd
-
-# Testnet
-./nmcd -network=testnet
-
-# Regtest (development)
-./nmcd -network=regtest
-```
-
-### RPC Examples
-```bash
-# Get node info
-curl -X POST http://localhost:8336 \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"getinfo","params":[],"id":1}'
-
-# Show name
-curl -X POST http://localhost:8336 \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"name_show","params":["d/example"],"id":1}'
-
-# Get metrics
-curl -X POST http://localhost:8336 \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"getmetrics","params":[],"id":1}'
-```
-
 ---
 
 ## Contributing
 
-### Before Contributing
+See PROTOCOL_COMPLIANCE_AUDIT.md for detailed analysis of protocol compliance status before contributing.
+
+### Development Process
 
 1. Run tests: `make test`
 2. Check formatting: `make fmt`
 3. Run linter: `make vet`
 4. Build: `make build`
 
-### Code Standards
-
-- Functions under 30 lines
-- Single responsibility principle
-- Explicit error handling
-- Thread-safe by default
-- GoDoc comments for exported items
-
 ---
 
 ## Documentation
 
 - **README.md** - Project overview and quick start
+- **PROTOCOL_COMPLIANCE_AUDIT.md** - Detailed protocol compliance analysis
 - **PLAN.md** - Library API implementation plan (future)
 - **ROADMAP.md** - Permamail feature roadmap (future)
-- **COMPLETION_STATUS.md** - This document
+- **COMPLETION_STATUS.md** - This document (development status summary)
 
 ---
 
@@ -281,8 +196,8 @@ ISC License (same as btcd and Namecoin Core)
 
 ## Acknowledgments
 
-Built using btcd libraries from the btcsuite project. Implements Namecoin protocol specifications from Namecoin Core.
+Built using btcd libraries from the btcsuite project. Aims to implement Namecoin protocol specifications from Namecoin Core.
 
 ---
 
-**Status:** ✅ All critical work complete. Ready for production use on Namecoin mainnet.
+**Status:** 🚧 EXPERIMENTAL – Not ready for production use. For production Namecoin operations, use Namecoin Core.
