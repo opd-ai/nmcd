@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -412,6 +413,440 @@ func TestEmbeddedClient_Close(t *testing.T) {
 	}
 }
 
+func TestEmbeddedClient_ListNames(t *testing.T) {
+	// Create temporary directory for test
+	tmpDir := t.TempDir()
+
+	// Initialize client
+	cfg := &Config{
+		DataDir: tmpDir,
+		Network: "regtest",
+	}
+	client, err := NewEmbeddedClient(cfg)
+	if err != nil {
+		t.Fatalf("NewEmbeddedClient() error: %v", err)
+	}
+	defer client.Close()
+
+	// Insert test names
+	testNames := []struct {
+		name      string
+		value     string
+		address   string
+		expiresAt int32
+	}{
+		{"d/example1", `{"ip":"1.2.3.4"}`, "NAddr1", 36000},
+		{"d/example2", `{"ip":"5.6.7.8"}`, "NAddr1", 36000},
+		{"id/alice", `{"email":"alice@example.com"}`, "NAddr2", 36000},
+		{"id/bob", `{"email":"bob@example.com"}`, "NAddr2", 36000},
+		{"p/project1", `{"desc":"Project 1"}`, "NAddr3", 36000},
+		{"d/expired", `{"ip":"9.9.9.9"}`, "NAddr4", -100}, // Expired name
+	}
+
+	for i, tn := range testNames {
+		txHash, _ := chainhash.NewHashFromStr(fmt.Sprintf("%064x", i+1))
+		nameRecord := &namedb.NameRecord{
+			Value:     tn.value,
+			TxHash:    *txHash,
+			Height:    0,
+			ExpiresAt: tn.expiresAt,
+			Address:   tn.address,
+			UpdatedAt: time.Now(),
+		}
+		if err := client.nameDB.PutName(tn.name, nameRecord); err != nil {
+			t.Fatalf("PutName(%s) error: %v", tn.name, err)
+		}
+	}
+
+	ctx := context.Background()
+
+	tests := []struct {
+		name       string
+		filter     *ListFilter
+		wantCount  int
+		wantNames  []string
+		wantError  bool
+	}{
+		{
+			name:      "nil filter returns default limit",
+			filter:    nil,
+			wantCount: 5, // All non-expired names
+		},
+		{
+			name:      "empty filter returns all non-expired names",
+			filter:    &ListFilter{},
+			wantCount: 5,
+		},
+		{
+			name: "filter by d/ namespace",
+			filter: &ListFilter{
+				Namespace: "d/",
+			},
+			wantCount: 2,
+			wantNames: []string{"d/example1", "d/example2"},
+		},
+		{
+			name: "filter by id/ namespace",
+			filter: &ListFilter{
+				Namespace: "id/",
+			},
+			wantCount: 2,
+			wantNames: []string{"id/alice", "id/bob"},
+		},
+		{
+			name: "filter by p/ namespace",
+			filter: &ListFilter{
+				Namespace: "p/",
+			},
+			wantCount: 1,
+			wantNames: []string{"p/project1"},
+		},
+		{
+			name: "filter by address",
+			filter: &ListFilter{
+				Address: "NAddr1",
+			},
+			wantCount: 2,
+			wantNames: []string{"d/example1", "d/example2"},
+		},
+		{
+			name: "filter by name pattern",
+			filter: &ListFilter{
+				NamePattern: "d/example",
+			},
+			wantCount: 2,
+			wantNames: []string{"d/example1", "d/example2"},
+		},
+		{
+			name: "include expired names",
+			filter: &ListFilter{
+				Namespace:      "d/",
+				IncludeExpired: true,
+			},
+			wantCount: 3,
+			wantNames: []string{"d/example1", "d/example2", "d/expired"},
+		},
+		{
+			name: "pagination with limit",
+			filter: &ListFilter{
+				Limit: 2,
+			},
+			wantCount: 2,
+		},
+		{
+			name: "pagination with offset",
+			filter: &ListFilter{
+				Namespace: "d/",
+				Offset:    1,
+			},
+			wantCount: 1,
+			wantNames: []string{"d/example2"},
+		},
+		{
+			name: "pagination with limit and offset",
+			filter: &ListFilter{
+				Limit:  1,
+				Offset: 1,
+			},
+			wantCount: 1,
+		},
+		{
+			name: "offset beyond results",
+			filter: &ListFilter{
+				Namespace: "d/",
+				Offset:    100,
+			},
+			wantCount: 0,
+		},
+		{
+			name: "combined filters",
+			filter: &ListFilter{
+				Namespace: "id/",
+				Address:   "NAddr2",
+			},
+			wantCount: 2,
+			wantNames: []string{"id/alice", "id/bob"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			records, err := client.ListNames(ctx, tt.filter)
+			if tt.wantError {
+				if err == nil {
+					t.Error("ListNames() expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("ListNames() error: %v", err)
+			}
+
+			if len(records) != tt.wantCount {
+				t.Errorf("ListNames() returned %d records, want %d", len(records), tt.wantCount)
+			}
+
+			// If specific names are expected, verify them
+			if tt.wantNames != nil {
+				gotNames := make(map[string]bool)
+				for _, record := range records {
+					gotNames[record.Name] = true
+				}
+				for _, name := range tt.wantNames {
+					if !gotNames[name] {
+						t.Errorf("ListNames() missing expected name: %s", name)
+					}
+				}
+			}
+
+			// Verify all records have required fields
+			for _, record := range records {
+				if record.Name == "" {
+					t.Error("ListNames() returned record with empty Name")
+				}
+				if record.Value == "" {
+					t.Error("ListNames() returned record with empty Value")
+				}
+				if record.Address == "" {
+					t.Error("ListNames() returned record with empty Address")
+				}
+			}
+		})
+	}
+}
+
+func TestEmbeddedClient_ListNames_ContextCancellation(t *testing.T) {
+	// Create temporary directory for test
+	tmpDir := t.TempDir()
+
+	// Initialize client
+	cfg := &Config{
+		DataDir: tmpDir,
+		Network: "regtest",
+	}
+	client, err := NewEmbeddedClient(cfg)
+	if err != nil {
+		t.Fatalf("NewEmbeddedClient() error: %v", err)
+	}
+	defer client.Close()
+
+	// Create cancelled context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = client.ListNames(ctx, nil)
+	if err != ErrContextCanceled {
+		t.Errorf("ListNames() with cancelled context error = %v, want %v", err, ErrContextCanceled)
+	}
+}
+
+func TestEmbeddedClient_GetNameHistory(t *testing.T) {
+	// Create temporary directory for test
+	tmpDir := t.TempDir()
+
+	// Initialize client
+	cfg := &Config{
+		DataDir: tmpDir,
+		Network: "regtest",
+	}
+	client, err := NewEmbeddedClient(cfg)
+	if err != nil {
+		t.Fatalf("NewEmbeddedClient() error: %v", err)
+	}
+	defer client.Close()
+
+	ctx := context.Background()
+
+	// Test 1: Non-existent name returns empty history
+	t.Run("non-existent name", func(t *testing.T) {
+		history, err := client.GetNameHistory(ctx, "d/nonexistent")
+		if err != nil {
+			t.Fatalf("GetNameHistory() error: %v", err)
+		}
+		if len(history) != 0 {
+			t.Errorf("GetNameHistory() for non-existent name returned %d records, want 0", len(history))
+		}
+	})
+
+	// Test 2: Name with single operation
+	testName := "d/example"
+	txHash1, _ := chainhash.NewHashFromStr("1111111111111111111111111111111111111111111111111111111111111111")
+	nameRecord1 := &namedb.NameRecord{
+		Name:      testName, // Set name field for history
+		Value:     `{"ip":"1.2.3.4"}`,
+		TxHash:    *txHash1,
+		Height:    100,
+		ExpiresAt: 36100,
+		Address:   "NAddr1",
+		UpdatedAt: time.Now(),
+	}
+
+	// Add to current names
+	if err := client.nameDB.PutName(testName, nameRecord1); err != nil {
+		t.Fatalf("PutName() error: %v", err)
+	}
+
+	// Add to history
+	if err := client.nameDB.AddHistory(*txHash1, nameRecord1); err != nil {
+		t.Fatalf("AddHistory() error: %v", err)
+	}
+
+	t.Run("single operation history", func(t *testing.T) {
+		history, err := client.GetNameHistory(ctx, testName)
+		if err != nil {
+			t.Fatalf("GetNameHistory() error: %v", err)
+		}
+		if len(history) != 1 {
+			t.Errorf("GetNameHistory() returned %d records, want 1", len(history))
+		}
+		if len(history) > 0 {
+			if history[0].Name != testName {
+				t.Errorf("GetNameHistory() Name = %s, want %s", history[0].Name, testName)
+			}
+			if history[0].Value != nameRecord1.Value {
+				t.Errorf("GetNameHistory() Value = %s, want %s", history[0].Value, nameRecord1.Value)
+			}
+			if history[0].Height != nameRecord1.Height {
+				t.Errorf("GetNameHistory() Height = %d, want %d", history[0].Height, nameRecord1.Height)
+			}
+		}
+	})
+
+	// Test 3: Name with multiple operations (updates)
+	testName2 := "d/updated"
+	
+	// First update
+	txHash2, _ := chainhash.NewHashFromStr("2222222222222222222222222222222222222222222222222222222222222222")
+	nameRecord2 := &namedb.NameRecord{
+		Value:     `{"ip":"1.1.1.1"}`,
+		TxHash:    *txHash2,
+		Height:    200,
+		ExpiresAt: 36200,
+		Address:   "NAddr2",
+		UpdatedAt: time.Now(),
+	}
+	nameRecord2.Name = testName2
+	if err := client.nameDB.AddHistory(*txHash2, nameRecord2); err != nil {
+		t.Fatalf("AddHistory() error: %v", err)
+	}
+
+	// Second update
+	txHash3, _ := chainhash.NewHashFromStr("3333333333333333333333333333333333333333333333333333333333333333")
+	nameRecord3 := &namedb.NameRecord{
+		Value:     `{"ip":"2.2.2.2"}`,
+		TxHash:    *txHash3,
+		Height:    300,
+		ExpiresAt: 36300,
+		Address:   "NAddr2",
+		UpdatedAt: time.Now(),
+	}
+	nameRecord3.Name = testName2
+	if err := client.nameDB.AddHistory(*txHash3, nameRecord3); err != nil {
+		t.Fatalf("AddHistory() error: %v", err)
+	}
+
+	// Third update
+	txHash4, _ := chainhash.NewHashFromStr("4444444444444444444444444444444444444444444444444444444444444444")
+	nameRecord4 := &namedb.NameRecord{
+		Value:     `{"ip":"3.3.3.3"}`,
+		TxHash:    *txHash4,
+		Height:    400,
+		ExpiresAt: 36400,
+		Address:   "NAddr2",
+		UpdatedAt: time.Now(),
+	}
+	nameRecord4.Name = testName2
+	if err := client.nameDB.AddHistory(*txHash4, nameRecord4); err != nil {
+		t.Fatalf("AddHistory() error: %v", err)
+	}
+
+	// Add latest to current names
+	if err := client.nameDB.PutName(testName2, nameRecord4); err != nil {
+		t.Fatalf("PutName() error: %v", err)
+	}
+
+	t.Run("multiple operations history", func(t *testing.T) {
+		history, err := client.GetNameHistory(ctx, testName2)
+		if err != nil {
+			t.Fatalf("GetNameHistory() error: %v", err)
+		}
+		if len(history) != 3 {
+			t.Errorf("GetNameHistory() returned %d records, want 3", len(history))
+		}
+
+		// Verify chronological order (oldest first)
+		if len(history) == 3 {
+			if history[0].Height != 200 {
+				t.Errorf("GetNameHistory() first record Height = %d, want 200", history[0].Height)
+			}
+			if history[1].Height != 300 {
+				t.Errorf("GetNameHistory() second record Height = %d, want 300", history[1].Height)
+			}
+			if history[2].Height != 400 {
+				t.Errorf("GetNameHistory() third record Height = %d, want 400", history[2].Height)
+			}
+
+			// Verify values
+			if history[0].Value != `{"ip":"1.1.1.1"}` {
+				t.Errorf("GetNameHistory() first record Value = %s, want %s", history[0].Value, `{"ip":"1.1.1.1"}`)
+			}
+			if history[1].Value != `{"ip":"2.2.2.2"}` {
+				t.Errorf("GetNameHistory() second record Value = %s, want %s", history[1].Value, `{"ip":"2.2.2.2"}`)
+			}
+			if history[2].Value != `{"ip":"3.3.3.3"}` {
+				t.Errorf("GetNameHistory() third record Value = %s, want %s", history[2].Value, `{"ip":"3.3.3.3"}`)
+			}
+
+			// Verify all records have required fields
+			for i, record := range history {
+				if record.Name != testName2 {
+					t.Errorf("GetNameHistory() record %d Name = %s, want %s", i, record.Name, testName2)
+				}
+				if record.TxHash == "" {
+					t.Errorf("GetNameHistory() record %d has empty TxHash", i)
+				}
+				if record.Address == "" {
+					t.Errorf("GetNameHistory() record %d has empty Address", i)
+				}
+			}
+		}
+	})
+
+	// Test 4: Empty name error
+	t.Run("empty name error", func(t *testing.T) {
+		_, err := client.GetNameHistory(ctx, "")
+		if err != ErrInvalidName {
+			t.Errorf("GetNameHistory() with empty name error = %v, want %v", err, ErrInvalidName)
+		}
+	})
+}
+
+func TestEmbeddedClient_GetNameHistory_ContextCancellation(t *testing.T) {
+	// Create temporary directory for test
+	tmpDir := t.TempDir()
+
+	// Initialize client
+	cfg := &Config{
+		DataDir: tmpDir,
+		Network: "regtest",
+	}
+	client, err := NewEmbeddedClient(cfg)
+	if err != nil {
+		t.Fatalf("NewEmbeddedClient() error: %v", err)
+	}
+	defer client.Close()
+
+	// Create cancelled context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = client.GetNameHistory(ctx, "d/test")
+	if err != ErrContextCanceled {
+		t.Errorf("GetNameHistory() with cancelled context error = %v, want %v", err, ErrContextCanceled)
+	}
+}
+
 func TestEmbeddedClient_NotImplementedMethods(t *testing.T) {
 	// Create temporary directory for test
 	tmpDir := t.TempDir()
@@ -438,16 +873,6 @@ func TestEmbeddedClient_NotImplementedMethods(t *testing.T) {
 	_, err = client.UpdateName(ctx, "d/test", "value", nil)
 	if err == nil {
 		t.Error("UpdateName() should return not implemented error")
-	}
-
-	_, err = client.ListNames(ctx, nil)
-	if err == nil {
-		t.Error("ListNames() should return not implemented error")
-	}
-
-	_, err = client.GetNameHistory(ctx, "d/test")
-	if err == nil {
-		t.Error("GetNameHistory() should return not implemented error")
 	}
 
 	err = client.WaitForConfirmation(ctx, "txhash", 1)

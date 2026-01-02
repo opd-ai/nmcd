@@ -235,15 +235,216 @@ func (c *EmbeddedClient) UpdateName(ctx context.Context, name, value string, opt
 }
 
 // ListNames returns all registered names, optionally filtered.
-// This is a placeholder implementation for Phase 2.
+// Supports filtering by namespace, name pattern, address, and expiration status.
+// Also supports pagination with limit and offset.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - filter: Optional filter configuration. If nil, returns all names with default limit.
+//
+// Returns:
+//   - []*NameRecord: Slice of name records matching the filter criteria
+//   - error: Error retrieving names, or nil on success
+//
+// Example:
+//
+//	// List all domain names (d/ namespace) with pagination
+//	records, err := client.ListNames(ctx, &ListFilter{
+//	    Namespace: "d/",
+//	    Limit:     100,
+//	    Offset:    0,
+//	})
+//
+//	// List names owned by a specific address
+//	records, err := client.ListNames(ctx, &ListFilter{
+//	    Address: "N1A2B3C4...",
+//	    IncludeExpired: false,
+//	})
 func (c *EmbeddedClient) ListNames(ctx context.Context, filter *ListFilter) ([]*NameRecord, error) {
-	return nil, fmt.Errorf("ListNames not yet implemented in Phase 2")
+	// Check context
+	select {
+	case <-ctx.Done():
+		return nil, ErrContextCanceled
+	default:
+	}
+
+	// Check if client is closed
+	c.mu.RLock()
+	if c.closed {
+		c.mu.RUnlock()
+		return nil, fmt.Errorf("client is closed")
+	}
+	c.mu.RUnlock()
+
+	// Set default filter if nil
+	if filter == nil {
+		filter = &ListFilter{
+			Limit: 100,
+		}
+	}
+
+	// Set default limit if not specified
+	if filter.Limit == 0 {
+		filter.Limit = 100
+	}
+
+	// Cap limit at maximum
+	if filter.Limit > 10000 {
+		filter.Limit = 10000
+	}
+
+	// Get all names from database
+	// nameDB.ListNames already uses RLock internally for thread safety
+	dbRecords, err := c.nameDB.ListNames()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list names: %w", err)
+	}
+
+	// Get current blockchain height for expiration calculation
+	// For Phase 2, we use height 0 as placeholder
+	// Full blockchain integration will be added in later phases
+	bestHeight := int32(0)
+	// TODO: Get from blockchain: bestSnapshot := c.chain.BestSnapshot()
+
+	// Apply filtering and convert to client format
+	var filtered []*NameRecord
+	for _, record := range dbRecords {
+		// Check expiration
+		if !filter.IncludeExpired && record.ExpiresAt <= bestHeight {
+			continue
+		}
+
+		// Filter by namespace (e.g., "d/", "id/", "p/")
+		if filter.Namespace != "" {
+			if len(record.Name) < len(filter.Namespace) {
+				continue
+			}
+			if record.Name[:len(filter.Namespace)] != filter.Namespace {
+				continue
+			}
+		}
+
+		// Filter by name pattern (simple prefix matching for now)
+		// More advanced pattern matching (glob) can be added later
+		if filter.NamePattern != "" {
+			if len(record.Name) < len(filter.NamePattern) {
+				continue
+			}
+			// Simple prefix matching
+			if record.Name[:len(filter.NamePattern)] != filter.NamePattern {
+				continue
+			}
+		}
+
+		// Filter by address
+		if filter.Address != "" && record.Address != filter.Address {
+			continue
+		}
+
+		// Convert to client NameRecord format
+		clientRecord := &NameRecord{
+			Name:      record.Name,
+			Value:     record.Value,
+			TxHash:    record.TxHash.String(),
+			Height:    record.Height,
+			ExpiresAt: record.ExpiresAt,
+			ExpiresIn: record.ExpiresAt - bestHeight,
+			Address:   record.Address,
+			UpdatedAt: record.UpdatedAt,
+		}
+
+		filtered = append(filtered, clientRecord)
+	}
+
+	// Apply offset
+	if filter.Offset > 0 {
+		if filter.Offset >= len(filtered) {
+			return []*NameRecord{}, nil
+		}
+		filtered = filtered[filter.Offset:]
+	}
+
+	// Apply limit
+	if len(filtered) > filter.Limit {
+		filtered = filtered[:filter.Limit]
+	}
+
+	return filtered, nil
 }
 
 // GetNameHistory returns the full history of operations for a name.
-// This is a placeholder implementation for Phase 2.
+// Includes all NAME_FIRSTUPDATE and NAME_UPDATE operations in chronological order.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - name: Name to retrieve history for (e.g., "d/example", "id/alice")
+//
+// Returns:
+//   - []*NameRecord: Slice of name records in chronological order (oldest first)
+//   - error: Error retrieving history, or nil on success. Returns empty slice if no history exists.
+//
+// Example:
+//
+//	history, err := client.GetNameHistory(ctx, "d/example")
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	for i, record := range history {
+//	    fmt.Printf("Operation %d: Height=%d, Value=%s\n",
+//	        i+1, record.Height, record.Value)
+//	}
 func (c *EmbeddedClient) GetNameHistory(ctx context.Context, name string) ([]*NameRecord, error) {
-	return nil, fmt.Errorf("GetNameHistory not yet implemented in Phase 2")
+	// Check context
+	select {
+	case <-ctx.Done():
+		return nil, ErrContextCanceled
+	default:
+	}
+
+	// Check if client is closed
+	c.mu.RLock()
+	if c.closed {
+		c.mu.RUnlock()
+		return nil, fmt.Errorf("client is closed")
+	}
+	c.mu.RUnlock()
+
+	// Validate name format
+	if name == "" {
+		return nil, ErrInvalidName
+	}
+
+	// Get history from database
+	// nameDB.GetHistory already uses RLock internally for thread safety
+	dbRecords, err := c.nameDB.GetHistory(name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get name history: %w", err)
+	}
+
+	// Get current blockchain height for expiration calculation
+	// For Phase 2, we use height 0 as placeholder
+	// Full blockchain integration will be added in later phases
+	bestHeight := int32(0)
+	// TODO: Get from blockchain: bestSnapshot := c.chain.BestSnapshot()
+
+	// Convert to client NameRecord format
+	var history []*NameRecord
+	for _, record := range dbRecords {
+		clientRecord := &NameRecord{
+			Name:      record.Name,
+			Value:     record.Value,
+			TxHash:    record.TxHash.String(),
+			Height:    record.Height,
+			ExpiresAt: record.ExpiresAt,
+			ExpiresIn: record.ExpiresAt - bestHeight,
+			Address:   record.Address,
+			UpdatedAt: record.UpdatedAt,
+		}
+
+		history = append(history, clientRecord)
+	}
+
+	return history, nil
 }
 
 // WaitForConfirmation waits for a transaction to be confirmed in a block.
