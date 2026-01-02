@@ -1444,6 +1444,13 @@ func (bc *BlockChain) BestSnapshot() *blockchain.BestState {
 	return bc.BlockChain.BestSnapshot()
 }
 
+// ChainParams returns the chain parameters
+func (bc *BlockChain) ChainParams() *chaincfg.Params {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	return bc.chainParams
+}
+
 // GetBlockByHash returns a block by hash
 func (bc *BlockChain) GetBlockByHash(hash *chainhash.Hash) (*btcutil.Block, error) {
 	bc.mu.RLock()

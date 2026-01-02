@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/opd-ai/nmcd/chain"
 	"github.com/opd-ai/nmcd/metrics"
 	"github.com/opd-ai/nmcd/network"
@@ -349,6 +350,37 @@ func (s *Server) nameUpdate(req *Request) *Response {
 
 	name := params[0]
 	newValue := params[1]
+	
+	// Parse optional destination address (third parameter)
+	// This enables name ownership transfer. If not provided, the name stays at the current address.
+	// Format: name_update "d/example" "new value" "N1Address..."
+	var destAddress btcutil.Address
+	if len(params) >= 3 && params[2] != "" {
+		// Decode and validate the destination address
+		addr, err := btcutil.DecodeAddress(params[2], s.blockchain.ChainParams())
+		if err != nil {
+			return &Response{
+				Jsonrpc: "2.0",
+				Error: &Error{
+					Code:    -5,
+					Message: fmt.Sprintf("Invalid destination address: %v", err),
+				},
+				ID: req.ID,
+			}
+		}
+		// Ensure it's a P2PKH address (Namecoin only supports P2PKH for name operations)
+		if _, ok := addr.(*btcutil.AddressPubKeyHash); !ok {
+			return &Response{
+				Jsonrpc: "2.0",
+				Error: &Error{
+					Code:    -5,
+					Message: fmt.Sprintf("Destination address must be P2PKH, got: %T", addr),
+				},
+				ID: req.ID,
+			}
+		}
+		destAddress = addr
+	}
 
 	// Validate name format
 	if len(name) == 0 || len(name) > 255 {
@@ -400,10 +432,8 @@ func (s *Server) nameUpdate(req *Request) *Response {
 		}
 	}
 
-	// TODO: Support changing the destination address (third parameter)
-	// For now, the name remains at the same address
-
 	// Check if wallet has the key for the current owner
+	// (needed to sign the transaction spending the name UTXO)
 	if !s.wallet.HasKey(record.Address) {
 		return &Response{
 			Jsonrpc: "2.0",
@@ -474,7 +504,7 @@ func (s *Server) nameUpdate(req *Request) *Response {
 	// Use a fee rate of 1 satoshi/byte (1000 satoshis/KB)
 	// This is a reasonable fee for Namecoin transactions
 	feeRate := int64(1) // satoshis per byte
-	tx, err := s.wallet.CreateNameUpdateTx(name, newValue, utxos, nameUtxoIndex, feeRate)
+	tx, err := s.wallet.CreateNameUpdateTx(name, newValue, utxos, nameUtxoIndex, feeRate, destAddress)
 	if err != nil {
 		return &Response{
 			Jsonrpc: "2.0",
@@ -514,6 +544,11 @@ func (s *Server) nameUpdate(req *Request) *Response {
 		"name":   name,
 		"value":  newValue,
 		"status": "mempool",
+	}
+	
+	// Include destination address in response if specified
+	if destAddress != nil {
+		result["address"] = destAddress.EncodeAddress()
 	}
 
 	return &Response{

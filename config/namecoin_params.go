@@ -287,10 +287,27 @@ var NamecoinTestNetParams = chaincfg.Params{
 	SubsidyReductionInterval: 210000,
 
 	// Checkpoints ordered by height for testnet
-	// See mainnet checkpoints for documentation on how to add more
+	// These protect against long-range reorg attacks and enable faster initial sync.
+	// Additional checkpoints should be added from Namecoin Core's src/chainparams.cpp
+	//
+	// To add testnet checkpoints:
+	// 1. Clone Namecoin Core: https://github.com/namecoin/namecoin-core
+	// 2. Look in src/chainparams.cpp for CTestNetParams::checkpointData
+	// 3. Convert block hashes to chainhash.Hash format (see mainnet examples)
+	// 4. Add entries below in ascending height order
+	//
+	// Important testnet milestones:
+	// - Block 0: Genesis block ✅ ADDED
+	// - Block 19200: AuxPow activation (needs hash from Namecoin Core)
+	// - Regular intervals for recent blocks (every 50,000-100,000 blocks)
+	//
+	// To get a checkpoint hash from a running Namecoin Core testnet node:
+	//   namecoin-cli -testnet getblockhash <height>
+	//   namecoin-cli -testnet getblock <hash> 0
 	Checkpoints: []chaincfg.Checkpoint{
 		{Height: 0, Hash: &testNetGenesisHash},
-		// TODO: Add additional testnet checkpoints from Namecoin Core
+		// Additional testnet checkpoints should be added from Namecoin Core
+		// See the inline checkpoint documentation in the comments above for detailed instructions
 	},
 
 	// Consensus rule change deployments
