@@ -49,7 +49,7 @@ func NewPeerManager(cfg *Config) (*PeerManager, error) {
 		maxPeers:    cfg.MaxPeers,
 		quit:        make(chan struct{}),
 	}
-	
+
 	// Create sync manager for Initial Block Download
 	pm.syncManager = NewSyncManager(pm)
 
@@ -296,7 +296,7 @@ func (pm *PeerManager) onBlock(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
 			msg.BlockHash().String(), p.Addr(), err)
 		return
 	}
-	
+
 	// Notify sync manager that block was received
 	if pm.syncManager != nil {
 		pm.syncManager.BlockReceived(blockHash)
@@ -361,9 +361,9 @@ func (pm *PeerManager) onGetHeaders(p *peer.Peer, msg *wire.MsgGetHeaders) {
 
 	// Use btcd's LocateHeaders to find headers to send
 	headers := pm.blockchain.LocateHeaders(msg.BlockLocatorHashes, &msg.HashStop)
-	
+
 	log.Printf("Received getheaders request from %s, sending %d headers", p.Addr(), len(headers))
-	
+
 	// Create and send headers message
 	headersMsg := wire.NewMsgHeaders()
 	for i := range headers {
@@ -507,7 +507,7 @@ func (pm *PeerManager) Stop() {
 	if pm.syncManager != nil {
 		pm.syncManager.Stop()
 	}
-	
+
 	close(pm.quit)
 
 	// Close all listeners

@@ -70,7 +70,7 @@ func (n *NameOperationInfo) String() string {
 // This is a simplified version that just identifies name operations without full validation
 func parseNameOperationsFromTx(tx *wire.MsgTx) []NameOperationInfo {
 	var operations []NameOperationInfo
-	
+
 	for i, txOut := range tx.TxOut {
 		// Try to parse as name operation script
 		opType, name, _, err := parseNameScript(txOut.PkScript)
@@ -82,7 +82,7 @@ func parseNameOperationsFromTx(tx *wire.MsgTx) []NameOperationInfo {
 			})
 		}
 	}
-	
+
 	return operations
 }
 
@@ -113,7 +113,7 @@ func TestBlockVectors(t *testing.T) {
 
 				// Attempt to deserialize block
 				block, err := NewBlockFromBytes(blockBytes)
-				
+
 				// Check if deserialization matches expected validity
 				isValid := (err == nil)
 				if isValid != vec.Valid {
@@ -127,12 +127,12 @@ func TestBlockVectors(t *testing.T) {
 				// If block is valid and we have height information, verify it
 				if isValid && vec.Height >= 0 {
 					block.SetHeight(vec.Height)
-					
+
 					// Additional validation could be added here:
 					// - Verify block hash matches vec.Hash
 					// - Validate block structure
 					// - Check AuxPow if height >= 19200
-					
+
 					if block.Hash().String() != vec.Hash {
 						t.Logf("Note: Block hash mismatch (may be normal for some test vectors)")
 						t.Logf("  Expected: %s", vec.Hash)
@@ -171,7 +171,7 @@ func TestTransactionVectors(t *testing.T) {
 
 				// Deserialize transaction
 				tx, err := deserializeTransaction(txBytes)
-				
+
 				// Check if deserialization matches expected validity
 				isValid := (err == nil)
 				if vec.Valid {
@@ -180,13 +180,13 @@ func TestTransactionVectors(t *testing.T) {
 						t.Errorf("Expected valid transaction but got deserialization error: %v", err)
 						return
 					}
-					
+
 					// For valid transactions, verify basic structure
 					if tx == nil {
 						t.Errorf("Transaction is nil despite successful deserialization")
 						return
 					}
-					
+
 					// Verify transaction hash if provided
 					if vec.Hash != "" {
 						txHash := tx.TxHash()
@@ -196,7 +196,7 @@ func TestTransactionVectors(t *testing.T) {
 							t.Logf("  Got:      %s", txHash.String())
 						}
 					}
-					
+
 					// Parse name operation scripts from outputs
 					nameOps := parseNameOperationsFromTx(tx)
 					if len(nameOps) > 0 {
@@ -205,7 +205,7 @@ func TestTransactionVectors(t *testing.T) {
 							t.Logf("  Output %d: %s", i, op.String())
 						}
 					}
-					
+
 				} else {
 					// Expected to be invalid
 					if isValid {

@@ -350,7 +350,7 @@ func (s *Server) nameUpdate(req *Request) *Response {
 
 	name := params[0]
 	newValue := params[1]
-	
+
 	// Parse optional destination address (third parameter)
 	// This enables name ownership transfer. If not provided, the name stays at the current address.
 	// Format: name_update "d/example" "new value" "N1Address..."
@@ -545,7 +545,7 @@ func (s *Server) nameUpdate(req *Request) *Response {
 		"value":  newValue,
 		"status": "mempool",
 	}
-	
+
 	// Include destination address in response if specified
 	if destAddress != nil {
 		result["address"] = destAddress.EncodeAddress()

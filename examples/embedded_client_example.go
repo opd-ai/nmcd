@@ -14,7 +14,8 @@ import (
 // The embedded client runs in-process without requiring an external daemon.
 //
 // Usage:
-//   go run embedded_client_example.go [datadir]
+//
+//	go run embedded_client_example.go [datadir]
 //
 // If datadir is not provided, uses a temporary directory.
 func main() {
