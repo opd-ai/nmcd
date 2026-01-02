@@ -156,3 +156,87 @@ func TestIsValidNamespace(t *testing.T) {
 		})
 	}
 }
+
+// TestGetAuxPowActivationHeight tests the helper function that returns
+// the block height at which AuxPow (merged mining) becomes mandatory
+// for each network.
+func TestGetAuxPowActivationHeight(t *testing.T) {
+	tests := []struct {
+		name           string
+		network        string
+		expectedHeight int32
+		description    string
+	}{
+		{
+			name:           "mainnet activation height",
+			network:        "mainnet",
+			expectedHeight: 19200,
+			description:    "Mainnet activated AuxPow at block 19,200 (circa 2011)",
+		},
+		{
+			name:           "testnet activation height",
+			network:        "testnet",
+			expectedHeight: 19200,
+			description:    "Testnet uses same activation height as mainnet",
+		},
+		{
+			name:           "regtest activation height",
+			network:        "regtest",
+			expectedHeight: 999999999,
+			description:    "Regtest has very high activation for testing flexibility",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Get chain params for the network
+			cfg := &Config{Network: tt.network}
+			params := cfg.ChainParams()
+
+			// Get activation height
+			height := GetAuxPowActivationHeight(params)
+
+			// Verify it matches expected height
+			if height != tt.expectedHeight {
+				t.Errorf("%s: expected activation height %d, got %d",
+					tt.description, tt.expectedHeight, height)
+			}
+		})
+	}
+}
+
+// TestAuxPowConstants validates the AuxPow-related constants are correct
+func TestAuxPowConstants(t *testing.T) {
+	// Test AuxPow version bit constant
+	if AuxPowVersionBit != 0x100 {
+		t.Errorf("AuxPowVersionBit should be 0x100, got 0x%x", AuxPowVersionBit)
+	}
+
+	// Test mainnet activation height
+	if MainNetAuxPowActivationHeight != 19200 {
+		t.Errorf("MainNetAuxPowActivationHeight should be 19200, got %d", MainNetAuxPowActivationHeight)
+	}
+
+	// Test testnet activation height
+	if TestNetAuxPowActivationHeight != 19200 {
+		t.Errorf("TestNetAuxPowActivationHeight should be 19200, got %d", TestNetAuxPowActivationHeight)
+	}
+
+	// Test regtest activation height is very high (for testing)
+	if RegTestAuxPowActivationHeight < 1000000 {
+		t.Errorf("RegTestAuxPowActivationHeight should be very high for testing, got %d", RegTestAuxPowActivationHeight)
+	}
+
+	// Verify that the version bit is within valid range
+	// Block version is int32, so bit must be < 31
+	bitPosition := 0
+	for i := 0; i < 32; i++ {
+		if (AuxPowVersionBit >> uint(i)) == 1 {
+			bitPosition = i
+			break
+		}
+	}
+	if bitPosition >= 31 {
+		t.Errorf("AuxPowVersionBit position %d is too high for int32", bitPosition)
+	}
+}
