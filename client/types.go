@@ -220,5 +220,5 @@ var (
 	ErrInsufficientFunds = errors.New("insufficient funds for operation")
 	ErrNoWallet          = errors.New("wallet not initialized")
 	ErrDaemonUnavailable = errors.New("daemon unavailable")
-	ErrContextCanceled   = errors.New("context canceled")
+	ErrContextCanceled   = context.Canceled // Use standard library error for context cancellation
 )

@@ -21,7 +21,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
 	}
-	defer srv.Stop()
+	defer func() {
+		if err := srv.Stop(); err != nil {
+			log.Printf("Failed to stop server: %v", err)
+		}
+	}()
 
 	// Start server components
 	rpcErrCh, err := srv.Start()

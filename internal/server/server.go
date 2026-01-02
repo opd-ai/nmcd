@@ -53,7 +53,10 @@ func NewServer(cfg *config.Config) (*Server, error) {
 
 	peerMgr, err := network.NewPeerManager(netCfg)
 	if err != nil {
-		bc.Close() // Clean up blockchain on failure
+		if closeErr := bc.Close(); closeErr != nil {
+			log.Printf("Error while closing blockchain after peer manager creation failure: %v", closeErr)
+			return nil, fmt.Errorf("failed to create peer manager: %v; additionally failed to close blockchain: %w", err, closeErr)
+		}
 		return nil, fmt.Errorf("failed to create peer manager: %w", err)
 	}
 
@@ -92,7 +95,10 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	rpcServer, err := rpc.NewServer(rpcCfg)
 	if err != nil {
 		peerMgr.Stop() // Clean up peer manager on failure
-		bc.Close()     // Clean up blockchain on failure
+		if closeErr := bc.Close(); closeErr != nil {
+			log.Printf("Error while closing blockchain after RPC server creation failure: %v", closeErr)
+			return nil, fmt.Errorf("failed to create RPC server: %v; additionally failed to close blockchain: %w", err, closeErr)
+		}
 		return nil, fmt.Errorf("failed to create RPC server: %w", err)
 	}
 
