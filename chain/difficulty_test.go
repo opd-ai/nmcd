@@ -34,7 +34,7 @@ func TestValidateProofOfWork(t *testing.T) {
 				Bits:       0x21000000, // Invalid: decodes to target > PowLimit
 				Nonce:      0,
 			},
-			Transactions: []*wire.MsgTx{&wire.MsgTx{}},
+			Transactions: []*wire.MsgTx{{}},
 		})
 		invalidBlock.SetHeight(100)
 
@@ -59,7 +59,7 @@ func TestValidateProofOfWork(t *testing.T) {
 				Bits:       0x1d00ffff, // Difficult target
 				Nonce:      0,          // Wrong nonce
 			},
-			Transactions: []*wire.MsgTx{&wire.MsgTx{}},
+			Transactions: []*wire.MsgTx{{}},
 		})
 		difficultBlock.SetHeight(100)
 

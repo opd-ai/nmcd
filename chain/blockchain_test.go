@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/opd-ai/nmcd/config"
@@ -4263,5 +4264,283 @@ func TestValidateBlockSubsidyMultipleOutputs(t *testing.T) {
 	err = bc.validateBlockSubsidy(block2)
 	if err == nil {
 		t.Error("Expected error for multiple outputs totaling more than 50 NMC, got nil")
+	}
+}
+
+// TestValidateBlockVersion tests block version validation for AuxPow compliance
+func TestValidateBlockVersion(t *testing.T) {
+	tests := []struct {
+		name        string
+		chainParams *chaincfg.Params
+		height      int32
+		version     int32
+		wantErr     bool
+		description string
+	}{
+		// Mainnet tests
+		{
+			name:        "mainnet pre-AuxPow block with version 1",
+			chainParams: &config.NamecoinMainNetParams,
+			height:      1000,
+			version:     1,
+			wantErr:     false,
+			description: "Blocks before height 19,200 can have any version",
+		},
+		{
+			name:        "mainnet pre-AuxPow block at height 19199 with version 1",
+			chainParams: &config.NamecoinMainNetParams,
+			height:      19199,
+			version:     1,
+			wantErr:     false,
+			description: "Block just before activation can have version 1",
+		},
+		{
+			name:        "mainnet AuxPow activation block with AuxPow bit set",
+			chainParams: &config.NamecoinMainNetParams,
+			height:      19200,
+			version:     0x100,
+			wantErr:     false,
+			description: "Block 19,200 must have AuxPow version bit (0x100)",
+		},
+		{
+			name:        "mainnet AuxPow activation block without AuxPow bit",
+			chainParams: &config.NamecoinMainNetParams,
+			height:      19200,
+			version:     1,
+			wantErr:     true,
+			description: "Block 19,200 without AuxPow bit should be rejected",
+		},
+		{
+			name:        "mainnet post-AuxPow block with AuxPow bit set",
+			chainParams: &config.NamecoinMainNetParams,
+			height:      100000,
+			version:     0x100,
+			wantErr:     false,
+			description: "Blocks after 19,200 must have AuxPow version bit",
+		},
+		{
+			name:        "mainnet post-AuxPow block with combined version bits",
+			chainParams: &config.NamecoinMainNetParams,
+			height:      100000,
+			version:     0x100 | 0x20000000, // AuxPow bit + BIP 9 bit
+			wantErr:     false,
+			description: "AuxPow bit can be combined with other version bits",
+		},
+		{
+			name:        "mainnet post-AuxPow block without AuxPow bit",
+			chainParams: &config.NamecoinMainNetParams,
+			height:      100000,
+			version:     1,
+			wantErr:     true,
+			description: "Blocks after 19,200 without AuxPow bit should be rejected",
+		},
+		{
+			name:        "mainnet current height block without AuxPow bit",
+			chainParams: &config.NamecoinMainNetParams,
+			height:      500000,
+			version:     2,
+			wantErr:     true,
+			description: "Modern blocks without AuxPow bit should be rejected",
+		},
+
+		// Testnet tests (same activation height as mainnet)
+		{
+			name:        "testnet pre-AuxPow block with version 1",
+			chainParams: &config.NamecoinTestNetParams,
+			height:      10000,
+			version:     1,
+			wantErr:     false,
+			description: "Testnet pre-AuxPow blocks can have any version",
+		},
+		{
+			name:        "testnet AuxPow activation block with AuxPow bit set",
+			chainParams: &config.NamecoinTestNetParams,
+			height:      19200,
+			version:     0x100,
+			wantErr:     false,
+			description: "Testnet activation at same height as mainnet",
+		},
+		{
+			name:        "testnet AuxPow activation block without AuxPow bit",
+			chainParams: &config.NamecoinTestNetParams,
+			height:      19200,
+			version:     1,
+			wantErr:     true,
+			description: "Testnet enforces AuxPow bit at height 19,200",
+		},
+		{
+			name:        "testnet post-AuxPow block with AuxPow bit set",
+			chainParams: &config.NamecoinTestNetParams,
+			height:      50000,
+			version:     0x100,
+			wantErr:     false,
+			description: "Testnet post-AuxPow blocks require the bit",
+		},
+
+		// Regtest tests (AuxPow effectively disabled with very high activation height)
+		{
+			name:        "regtest low height block with version 1",
+			chainParams: &config.NamecoinRegTestParams,
+			height:      100,
+			version:     1,
+			wantErr:     false,
+			description: "Regtest blocks at normal heights don't need AuxPow",
+		},
+		{
+			name:        "regtest medium height block with version 1",
+			chainParams: &config.NamecoinRegTestParams,
+			height:      10000,
+			version:     1,
+			wantErr:     false,
+			description: "Regtest allows any version for testing",
+		},
+		{
+			name:        "regtest high height block with version 1",
+			chainParams: &config.NamecoinRegTestParams,
+			height:      1000000,
+			version:     1,
+			wantErr:     false,
+			description: "Regtest doesn't enforce AuxPow for practical heights",
+		},
+		{
+			name:        "regtest block with AuxPow bit (optional)",
+			chainParams: &config.NamecoinRegTestParams,
+			height:      100,
+			version:     0x100,
+			wantErr:     false,
+			description: "Regtest can use AuxPow bit if desired for testing",
+		},
+
+		// Edge cases
+		{
+			name:        "genesis block (height 0) on mainnet",
+			chainParams: &config.NamecoinMainNetParams,
+			height:      0,
+			version:     1,
+			wantErr:     false,
+			description: "Genesis block predates AuxPow",
+		},
+		{
+			name:        "version with only AuxPow bit set",
+			chainParams: &config.NamecoinMainNetParams,
+			height:      19200,
+			version:     0x100,
+			wantErr:     false,
+			description: "Minimal valid version for AuxPow blocks",
+		},
+		{
+			name:        "version with high bits and AuxPow bit",
+			chainParams: &config.NamecoinMainNetParams,
+			height:      19200,
+			version:     0x20000100, // BIP 9 top bits + AuxPow bit
+			wantErr:     false,
+			description: "AuxPow bit with BIP 9 version signaling",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create minimal BlockChain with chain params
+			bc := &BlockChain{
+				chainParams: tt.chainParams,
+			}
+
+			// Create test block with specified version
+			block := createTestBlockWithVersion(tt.height, tt.version)
+
+			// Validate block version
+			err := bc.validateBlockVersion(block)
+
+			// Check result
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("%s: expected error but got nil", tt.description)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("%s: unexpected error: %v", tt.description, err)
+				}
+			}
+		})
+	}
+}
+
+// createTestBlockWithVersion creates a minimal test block with the specified version
+func createTestBlockWithVersion(height int32, version int32) *btcutil.Block {
+	// Create coinbase transaction
+	coinbaseTx := wire.NewMsgTx(1)
+
+	// Add coinbase input
+	coinbaseTx.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: wire.OutPoint{
+			Hash:  chainhash.Hash{},
+			Index: 0xffffffff,
+		},
+		SignatureScript: []byte{0x04, 0xff, 0xff, 0x00, 0x1d, 0x01, 0x04},
+		Sequence:        0xffffffff,
+	})
+
+	// Add coinbase output
+	coinbaseTx.AddTxOut(&wire.TxOut{
+		Value:    50 * config.CoinValue,
+		PkScript: makeP2PKHScript(),
+	})
+
+	// Create block header with specified version
+	header := wire.BlockHeader{
+		Version:   version,
+		PrevBlock: chainhash.Hash{},
+		Timestamp: time.Now(),
+		Bits:      0x207fffff,
+		Nonce:     0,
+	}
+
+	// Create block
+	msgBlock := wire.NewMsgBlock(&header)
+	msgBlock.AddTransaction(coinbaseTx)
+
+	// Wrap in btcutil.Block
+	block := btcutil.NewBlock(msgBlock)
+	block.SetHeight(height)
+
+	return block
+}
+
+// TestGetAuxPowActivationHeight tests the helper function for getting activation heights
+func TestGetAuxPowActivationHeight(t *testing.T) {
+	tests := []struct {
+		name           string
+		chainParams    *chaincfg.Params
+		expectedHeight int32
+		description    string
+	}{
+		{
+			name:           "mainnet activation height",
+			chainParams:    &config.NamecoinMainNetParams,
+			expectedHeight: 19200,
+			description:    "Mainnet activated AuxPow at block 19,200",
+		},
+		{
+			name:           "testnet activation height",
+			chainParams:    &config.NamecoinTestNetParams,
+			expectedHeight: 19200,
+			description:    "Testnet uses same activation height as mainnet",
+		},
+		{
+			name:           "regtest activation height",
+			chainParams:    &config.NamecoinRegTestParams,
+			expectedHeight: 999999999,
+			description:    "Regtest has very high activation for testing flexibility",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			height := config.GetAuxPowActivationHeight(tt.chainParams)
+			if height != tt.expectedHeight {
+				t.Errorf("%s: expected height %d, got %d",
+					tt.description, tt.expectedHeight, height)
+			}
+		})
 	}
 }

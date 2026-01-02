@@ -99,6 +99,14 @@ func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.Behavi
 		return false, false, fmt.Errorf("invalid proof of work: %w", err)
 	}
 
+	// Validate block version (AuxPow version bit) before processing
+	// This ensures blocks at or after AuxPow activation height have the required version bit set.
+	// This is a consensus-critical check that must match Namecoin Core's validation.
+	// Blocks that fail this check will be rejected to prevent chain forks.
+	if err := bc.validateBlockVersion(block); err != nil {
+		return false, false, fmt.Errorf("invalid block version: %w", err)
+	}
+
 	// Validate block subsidy before processing
 	if err := bc.validateBlockSubsidy(block); err != nil {
 		return false, false, fmt.Errorf("invalid block subsidy: %w", err)
@@ -200,6 +208,44 @@ func (bc *BlockChain) validateProofOfWork(block *btcutil.Block) error {
 	// This uses the PowLimit from our Namecoin chain parameters, ensuring
 	// Namecoin-specific limits are enforced.
 	return blockchain.CheckProofOfWork(block, bc.chainParams.PowLimit)
+}
+
+// validateBlockVersion validates that the block version conforms to Namecoin
+// consensus rules, specifically for AuxPow (merged mining) support.
+//
+// Per Namecoin protocol (from Namecoin Core src/validation.cpp):
+// - Blocks before AuxPow activation can have any version (typically version 1)
+// - Blocks at or after AuxPow activation MUST have the AuxPow version bit (0x100) set
+// - The version bit indicates the block uses merged mining with Bitcoin
+//
+// Activation heights:
+//   - Mainnet: block 19,200 (circa 2011)
+//   - Testnet: block 19,200 (same as mainnet)
+//   - Regtest: block 999,999,999 (effectively disabled for local testing)
+//
+// This is a consensus-critical validation. Blocks that don't follow these rules
+// will be rejected by Namecoin Core nodes, causing a chain fork.
+//
+// Note: This function only validates the VERSION BIT. It does NOT validate the
+// full AuxPow structure (parent block, merkle proof, etc.) which is not yet
+// implemented. See PROTOCOL_COMPLIANCE_AUDIT.md Issue #1.
+func (bc *BlockChain) validateBlockVersion(block *btcutil.Block) error {
+	height := block.Height()
+	version := block.MsgBlock().Header.Version
+	auxPowActivationHeight := config.GetAuxPowActivationHeight(bc.chainParams)
+
+	// Check if this block is at or after AuxPow activation
+	if height >= auxPowActivationHeight {
+		// Block must have AuxPow version bit set
+		// Per Namecoin Core: if (!(nVersion & BLOCK_VERSION_AUXPOW)) return error
+		if (version & config.AuxPowVersionBit) == 0 {
+			return fmt.Errorf("block version 0x%x at height %d missing required AuxPow version bit 0x%x (activation height: %d)",
+				version, height, config.AuxPowVersionBit, auxPowActivationHeight)
+		}
+	}
+	// Pre-AuxPow blocks can have any version (no validation needed)
+
+	return nil
 }
 
 // validateNameOperations validates name operations in a block

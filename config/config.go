@@ -44,6 +44,26 @@ const (
 	// transactions (in satoshis). This follows Bitcoin's minimum relay fee.
 	// NAME_NEW operations only need to pay standard transaction fees to miners.
 	MinRelayTxFee = 1000 // Standard minimum relay fee
+
+	// AuxPow (Auxiliary Proof of Work) constants
+	// Namecoin switched to merged mining at these block heights
+
+	// AuxPowVersionBit is the bit that must be set in block version for AuxPow blocks
+	// Per Namecoin Core: nVersion & 0x100 must be non-zero for blocks >= AuxPowActivationHeight
+	AuxPowVersionBit = 0x100
+
+	// MainNetAuxPowActivationHeight is the block height where AuxPow became mandatory on mainnet
+	// After this block, all blocks must have the AuxPow version bit set
+	MainNetAuxPowActivationHeight = 19200
+
+	// TestNetAuxPowActivationHeight is the block height where AuxPow became mandatory on testnet
+	// Testnet follows the same activation height as mainnet
+	TestNetAuxPowActivationHeight = 19200
+
+	// RegTestAuxPowActivationHeight is the block height where AuxPow becomes mandatory on regtest
+	// For regtest, we set this very high since AuxPow is not typically used in local testing
+	// This allows regtest to operate without AuxPow indefinitely for development purposes
+	RegTestAuxPowActivationHeight = 999999999
 )
 
 // ValidNamespaces defines the allowed namespace prefixes for Namecoin names
@@ -116,4 +136,26 @@ func IsValidNamespace(name string) bool {
 		}
 	}
 	return false
+}
+
+// GetAuxPowActivationHeight returns the block height at which AuxPow becomes
+// mandatory for the given network. Blocks at or above this height must have
+// the AuxPow version bit (0x100) set in their version field.
+//
+// Returns:
+//   - mainnet: 19,200 (circa 2011, when Namecoin activated merged mining)
+//   - testnet: 19,200 (same as mainnet)
+//   - regtest: 999,999,999 (effectively never for local testing)
+func GetAuxPowActivationHeight(chainParams *chaincfg.Params) int32 {
+	switch chainParams.Net {
+	case MainNetMagic:
+		return MainNetAuxPowActivationHeight
+	case TestNetMagic:
+		return TestNetAuxPowActivationHeight
+	case RegTestMagic:
+		return RegTestAuxPowActivationHeight
+	default:
+		// Unknown network - assume mainnet behavior for safety
+		return MainNetAuxPowActivationHeight
+	}
 }
