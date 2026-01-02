@@ -2,6 +2,38 @@
 
 This directory contains example programs demonstrating how to use nmcd components.
 
+## Embedded Client Example (NEW)
+
+The `embedded_client_example.go` demonstrates using the embedded Namecoin client:
+
+- Creating an in-process embedded client
+- Resolving names from the local database
+- Getting node information
+- Proper resource cleanup
+
+Run it with:
+
+```bash
+go run examples/embedded_client_example.go [datadir]
+```
+
+**Example output:**
+```
+Using data directory: /tmp/nmcd-example
+
+Initializing embedded Namecoin client...
+✓ Client initialized successfully
+
+Node Information:
+  Version: 0.1.0
+  Network: regtest
+  Mode: embedded
+  Block Height: 0
+  ...
+```
+
+**Phase 2 Foundation Note:** The current implementation supports read-only operations (ResolveName, GetInfo). Full blockchain sync, name registration (RegisterName), and name updates (UpdateName) will be added in future phases.
+
 ## Name Database Example
 
 The `namedb_example.go` demonstrates basic name database operations:
@@ -21,6 +53,40 @@ go run examples/namedb_example.go
 ## Using nmcd Components
 
 The examples show how to use nmcd as a library in your own Go programs.
+
+### Embedded Client (Recommended)
+
+```go
+import "github.com/opd-ai/nmcd/client"
+
+// Create embedded client
+cfg := &client.Config{
+    Mode:    client.ModeEmbedded,
+    DataDir: "/path/to/data",
+    Network: "mainnet",
+}
+
+nc, err := client.NewEmbeddedClient(cfg)
+if err != nil {
+    log.Fatal(err)
+}
+defer nc.Close()
+
+// Resolve a name
+ctx := context.Background()
+record, err := nc.ResolveName(ctx, "d/example")
+if err == client.ErrNameNotFound {
+    fmt.Println("Name not found")
+} else if err != nil {
+    log.Fatal(err)
+} else {
+    fmt.Printf("Value: %s\nOwner: %s\n", record.Value, record.Address)
+}
+
+// Get node info
+info, err := nc.GetInfo(ctx)
+fmt.Printf("Network: %s\nHeight: %d\n", info.NetworkName, info.BlockHeight)
+```
 
 ### Import Packages
 

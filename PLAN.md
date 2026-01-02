@@ -591,18 +591,52 @@ make build
 make test  # All tests passing
 ```
 
-### Phase 2: Implement EmbeddedClient (Week 2-3) ⏳ **NEXT**
+### Phase 2: Implement EmbeddedClient (Week 2-3) ⏳ **IN PROGRESS**
 
 **Goal:** Create in-process client implementation
 
+**Status:** Foundation complete (2026-01-02) ✅
+- ✅ Task 1: Implement `client/embedded.go` with NameClient interface (partial - ResolveName, GetInfo, Close)
+- ✅ Task 1.1: Created EmbeddedClient struct with nameDB, wallet, and placeholder blockchain
+- ✅ Task 1.2: Implemented NewEmbeddedClient() with configuration support (mainnet, testnet, regtest)
+- ✅ Task 1.3: Implemented ResolveName() method for reading names from local database
+- ✅ Task 1.4: Implemented GetInfo() method for node information
+- ✅ Task 1.5: Implemented Close() method with resource cleanup
+- ✅ Task 1.6: Added comprehensive tests (8 test functions, all passing)
+- ✅ Task 1.7: Thread-safety verified with concurrent operations test
+- ⏳ Task 2: Initialize full blockchain with btcd integration (deferred to next phase)
+- ⏳ Task 3: Implement RegisterName with NAME_NEW → NAME_FIRSTUPDATE flow (deferred)
+- ⏳ Task 4: Add support for custom Dialer and Listener for anonymous networks (deferred)
+- ⏳ Task 5: Implement UpdateName, ListNames, GetNameHistory, WaitForConfirmation (deferred)
+
+**Completed Deliverables:**
+- ✅ `client/embedded.go` - EmbeddedClient with ResolveName, GetInfo, Close (334 lines)
+- ✅ `client/embedded_test.go` - Comprehensive test suite (535 lines)
+- ✅ `chain/blockchain.go` - Added GetNameDB() method for database access
+- ✅ All tests passing (100% success rate)
+
+**Phase 2 Foundation Notes:**
+- Simplified implementation focuses on ResolveName (read-only) operations
+- Full blockchain integration deferred to allow stepwise development
+- Placeholder blockchain (height 0) used for expiration checks
+- Database operations fully functional with proper thread safety
+- Design allows easy integration of full blockchain in next iteration
+
+**Next Steps for Phase 2 Completion:**
+1. Integrate full btcd blockchain with block database
+2. Implement RegisterName and UpdateName operations
+3. Add NAME_NEW tracker for pending registrations
+4. Implement ListNames and GetNameHistory
+5. Add custom Dialer/Listener support for Tor/I2P
+
 **Tasks:**
-1. Implement `client/embedded.go` with NameClient interface
-2. Initialize blockchain, namedb, network components in-process
-3. Implement thread-safe access to shared state (blockchain, namedb)
-4. Add graceful shutdown with resource cleanup
-5. Implement `RegisterName` with NAME_NEW → NAME_FIRSTUPDATE flow
-6. Add support for custom Dialer and Listener (anonymous networks)
-7. Add unit tests for EmbeddedClient methods
+1. ✅ Implement `client/embedded.go` with NameClient interface (foundation complete)
+2. ⏳ Initialize blockchain, namedb, network components in-process
+3. ✅ Implement thread-safe access to shared state (blockchain, namedb)
+4. ✅ Add graceful shutdown with resource cleanup
+5. ⏳ Implement `RegisterName` with NAME_NEW → NAME_FIRSTUPDATE flow
+6. ⏳ Add support for custom Dialer and Listener (anonymous networks)
+7. ✅ Add unit tests for EmbeddedClient methods
 
 **Technical Challenges:**
 

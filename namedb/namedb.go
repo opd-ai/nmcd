@@ -2,6 +2,7 @@ package namedb
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -18,6 +19,12 @@ var (
 	nameNewBucket      = []byte("name_new")  // Tracks NAME_NEW commitments
 	utxoBucket         = []byte("utxo")      // Tracks unspent transaction outputs
 	utxoAddrBucket     = []byte("utxo_addr") // Index: address -> UTXOs
+)
+
+// Sentinel errors for namedb operations
+var (
+	// ErrNameNotFound is returned when a requested name does not exist in the database
+	ErrNameNotFound = errors.New("name not found")
 )
 
 // txHashSize is the size of a transaction hash in bytes.
@@ -136,7 +143,7 @@ func (ndb *NameDatabase) GetName(name string) (*NameRecord, error) {
 		bucket := tx.Bucket(namesBucket)
 		data := bucket.Get([]byte(name))
 		if data == nil {
-			return fmt.Errorf("name not found")
+			return ErrNameNotFound
 		}
 		var decodeErr error
 		record, decodeErr = decodeNameRecord(data)

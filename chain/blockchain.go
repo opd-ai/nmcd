@@ -1622,3 +1622,9 @@ func (bc *BlockChain) GetBlockHeader(hash *chainhash.Hash) (wire.BlockHeader, er
 	defer bc.mu.RUnlock()
 	return bc.BlockChain.HeaderByHash(hash)
 }
+
+// GetNameDB returns the name database instance.
+// This allows external packages to access the name database for read operations.
+func (bc *BlockChain) GetNameDB() *namedb.NameDatabase {
+	return bc.nameDB
+}
