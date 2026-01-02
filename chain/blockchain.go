@@ -453,14 +453,15 @@ func (bc *BlockChain) validateAuxPow(block *btcutil.Block) error {
 	// 3. Coinbase merkle branch proves coinbase is in parent block
 	// 4. Chain merkle branch proves aux block hash is committed in coinbase
 	//
-	// Note: We pass targetDifficulty as a big.Int, but ValidateAuxPow expects a Hash.
-	// We need to convert the target to a hash for comparison.
+	// Note: We need to convert targetDifficulty (big.Int) to a Hash for ValidateAuxPow.
+	// blockchain.HashToBig treats hash bytes as little-endian, so we must reverse
+	// the big-endian bytes from big.Int.
 	var targetHash chainhash.Hash
 	targetBytes := targetDifficulty.Bytes()
 	
-	// Copy bytes to hash in reverse order (big-endian to little-endian)
+	// Reverse bytes: big.Int is big-endian, Hash (for HashToBig) is little-endian
 	for i := 0; i < len(targetBytes); i++ {
-		targetHash[chainhash.HashSize-len(targetBytes)+i] = targetBytes[i]
+		targetHash[len(targetBytes)-1-i] = targetBytes[i]
 	}
 	
 	if err := auxPow.ValidateAuxPow(blockHash, NamecoinChainID, &targetHash); err != nil {

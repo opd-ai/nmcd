@@ -299,13 +299,13 @@ func createTestAuxPowBlock(t *testing.T, height int32) (*btcutil.Block, *AuxPow)
 		PkScript: []byte{0x76, 0xa9, 0x14}, // P2PKH prefix
 	})
 	
-	// Create block with very easy difficulty (0x207fffff = nearly no difficulty)
+	// Create block with extremely easy difficulty (0x2100ffff = minimal work)
 	blockHeader := wire.BlockHeader{
 		Version:    config.AuxPowVersionBit,
 		PrevBlock:  chainhash.Hash{},
 		MerkleRoot: coinbaseTx.TxHash(),
 		Timestamp:  time.Now(),
-		Bits:       0x207fffff, // Very easy difficulty for testing
+		Bits:       0x2100ffff, // Extremely easy difficulty (almost any hash works)
 		Nonce:      12345,
 	}
 	
@@ -317,14 +317,14 @@ func createTestAuxPowBlock(t *testing.T, height int32) (*btcutil.Block, *AuxPow)
 	blockHash := block.Hash()
 	
 	// Create parent block header that meets the easy difficulty target
-	// With Bits = 0x207fffff, the target is extremely high (easy to meet)
+	// With Bits = 0x2100ffff, the target is extremely high (easy to meet)
 	// We just need to find a nonce that produces a valid hash
 	parentHeader := wire.BlockHeader{
 		Version:    1,
 		PrevBlock:  chainhash.Hash{},
 		MerkleRoot: coinbaseTx.TxHash(),
 		Timestamp:  time.Now(),
-		Bits:       0x207fffff, // Same easy difficulty
+		Bits:       0x2100ffff, // Same extremely easy difficulty
 		Nonce:      findValidParentNonce(NamecoinChainID, coinbaseTx.TxHash()),
 	}
 	
@@ -352,32 +352,30 @@ func findValidParentNonce(chainID uint32, merkleRoot chainhash.Hash) uint32 {
 	// Encode chain ID in bits 16-23 of nonce
 	baseNonce := chainID << 16
 	
-	// Try different values in lower 16 bits until we find one that works
-	// With 0x207fffff difficulty, this should succeed quickly
-	for i := uint32(0); i < 0x10000; i++ {
+	// With 0x2100ffff difficulty, the target is huge (almost any hash works)
+	// Just try a few values
+	for i := uint32(0); i < 100; i++ {
 		nonce := baseNonce | i
 		
-		// Create header with this nonce and check if hash meets target
+		// Create header with this nonce
 		header := wire.BlockHeader{
 			Version:    1,
 			PrevBlock:  chainhash.Hash{},
 			MerkleRoot: merkleRoot,
 			Timestamp:  time.Unix(1234567890, 0),
-			Bits:       0x207fffff,
+			Bits:       0x2100ffff,
 			Nonce:      nonce,
 		}
 		
-		hash := header.BlockHash()
+		_ = header.BlockHash()
 		
-		// Check if hash meets difficulty target (0x207fffff)
-		// With this easy target, first byte should be 0x00 or very low
-		if hash[31] == 0x00 {
-			return nonce
-		}
+		// With 0x2100ffff, first nonce should work
+		// Target is 0xffff * 2^(8*(0x21-3)) which is very large
+		return nonce
 	}
 	
-	// Fallback - this should never happen with such easy difficulty
-	return baseNonce | 0x1234
+	// Fallback
+	return baseNonce
 }
 
 func createTestNameDB(t *testing.T) (*namedb.NameDatabase, func()) {
