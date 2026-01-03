@@ -42,7 +42,7 @@ func main() {
 	}
 	defer nc.Close()
 
-	fmt.Println("✓ Client initialized successfully\n")
+	fmt.Println("✓ Client initialized successfully")
 
 	// Get node information
 	ctx := context.Background()

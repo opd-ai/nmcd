@@ -4,7 +4,7 @@ This directory contains example programs demonstrating how to use nmcd component
 
 ## Embedded Client Example (NEW)
 
-The `embedded_client_example.go` demonstrates using the embedded Namecoin client:
+The `embedded_client/` directory demonstrates using the embedded Namecoin client:
 
 - Creating an in-process embedded client
 - Resolving names from the local database
@@ -14,7 +14,9 @@ The `embedded_client_example.go` demonstrates using the embedded Namecoin client
 Run it with:
 
 ```bash
-go run examples/embedded_client_example.go [datadir]
+go run examples/embedded_client/main.go [datadir]
+# or
+cd examples/embedded_client && go run main.go [datadir]
 ```
 
 **Example output:**
@@ -36,7 +38,7 @@ Node Information:
 
 ## Name Database Example
 
-The `namedb_example.go` demonstrates basic name database operations:
+The `namedb/` directory demonstrates basic name database operations:
 
 - Creating and opening a name database
 - Storing name records
@@ -47,7 +49,9 @@ The `namedb_example.go` demonstrates basic name database operations:
 Run it with:
 
 ```bash
-go run examples/namedb_example.go
+go run examples/namedb/main.go
+# or
+cd examples/namedb && go run main.go
 ```
 
 ## Using nmcd Components
