@@ -886,11 +886,11 @@ func NewClient(cfg *Config) (NameClient, error) {
 
 **Deliverables:**
 - ✅ `client/client.go` - NewClient factory with auto-detection
-- ✅ `examples/simple_resolve.go` - Basic name resolution
-- ✅ `examples/register_name.go` - Name registration flow
-- ✅ `examples/update_name.go` - Name update flow
-- ✅ `examples/list_names.go` - Name listing and filtering
-- ✅ Integration tests: `client/integration_test.go`
+- ✅ `examples/simple_resolve/` - Basic name resolution
+- ✅ `examples/register_name/` - Name registration flow
+- ✅ `examples/update_name/` - Name update flow
+- ✅ `examples/list_names/` - Name listing and filtering
+- ⏳ Integration tests: `client/integration_test.go` (deferred - requires running daemon for full coverage)
 - ✅ Updated README with library usage examples
 
 **Breaking Changes:** None (additive only)
@@ -898,14 +898,13 @@ func NewClient(cfg *Config) (NameClient, error) {
 **Validation:**
 ```bash
 # Run all examples
-cd examples
-go run simple_resolve.go
-go run register_name.go d/test '{"ip":"1.2.3.4"}'
-go run update_name.go d/test '{"ip":"5.6.7.8"}'
-go run list_names.go --namespace=d/
+go run ./examples/simple_resolve d/example
+go run ./examples/register_name d/test '{"ip":"1.2.3.4"}'
+go run ./examples/update_name d/test '{"ip":"5.6.7.8"}'
+go run ./examples/list_names --namespace=d/
 
-# Run integration tests
-go test -v ./client -run TestIntegration
+# Run unit tests (covers both EmbeddedClient and DaemonClient)
+go test -v ./client
 ```
 
 ### Phase 5: Documentation and Examples (Week 5-6)

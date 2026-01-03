@@ -2,7 +2,72 @@
 
 This directory contains example programs demonstrating how to use nmcd components.
 
-## Embedded Client Example (NEW)
+## Quick Start Examples
+
+### Simple Name Resolution (`simple_resolve/`)
+
+Demonstrates basic Namecoin name resolution:
+
+```bash
+go run ./examples/simple_resolve d/example
+go run ./examples/simple_resolve id/alice
+```
+
+Features:
+- Auto-detection of daemon or embedded mode
+- Error handling for name not found and expired names
+- Display of complete name record information
+
+### Name Registration (`register_name/`)
+
+Demonstrates registering a new Namecoin name:
+
+```bash
+go run ./examples/register_name d/mysite '{"ip":"1.2.3.4"}'
+go run ./examples/register_name id/alice '{"name":"Alice"}'
+```
+
+Features:
+- NAME_NEW + NAME_FIRSTUPDATE two-step registration process
+- JSON value validation for d/ and id/ namespaces
+- Wallet integration for signing transactions
+
+### Name Update (`update_name/`)
+
+Demonstrates updating an existing name's value:
+
+```bash
+go run ./examples/update_name d/mysite '{"ip":"5.6.7.8"}'
+go run ./examples/update_name id/alice '{"name":"Alice","verified":true}'
+```
+
+Features:
+- NAME_UPDATE transaction creation
+- Current record lookup before update
+- Expiration extension (36,000 blocks added)
+
+### Name Listing (`list_names/`)
+
+Demonstrates listing and filtering names:
+
+```bash
+go run ./examples/list_names
+go run ./examples/list_names --namespace=d/
+go run ./examples/list_names --address=N1abc...
+go run ./examples/list_names --pattern=d/example --limit=10
+```
+
+Options:
+- `--namespace=<ns>`: Filter by namespace (d/, id/, p/)
+- `--address=<addr>`: Filter by owner address
+- `--pattern=<prefix>`: Filter by name prefix
+- `--include-expired`: Include expired names
+- `--limit=<n>`: Limit results (default: 100)
+- `--offset=<n>`: Pagination offset
+
+---
+
+## Embedded Client Example
 
 The `embedded_client/` directory demonstrates using the embedded Namecoin client:
 
@@ -33,8 +98,6 @@ Node Information:
   Block Height: 0
   ...
 ```
-
-**Phase 2 Foundation Note:** The current implementation supports read-only operations (ResolveName, GetInfo). Full blockchain sync, name registration (RegisterName), and name updates (UpdateName) will be added in future phases.
 
 ## Name Database Example
 
