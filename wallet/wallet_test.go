@@ -5,7 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/txscript"
 	"github.com/opd-ai/nmcd/config"
 )
 
@@ -453,4 +456,352 @@ func TestWalletFilePermissions(t *testing.T) {
 	if perm != 0600 {
 		t.Errorf("expected permissions 0600, got %04o", perm)
 	}
+}
+
+func TestCreateNameNewTx(t *testing.T) {
+	tmpDir := t.TempDir()
+	w, err := NewWallet(tmpDir, &config.NamecoinMainNetParams)
+	if err != nil {
+		t.Fatalf("failed to create wallet: %v", err)
+	}
+
+	// Generate a key for the wallet
+	addr, err := w.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	kp, err := w.GetKey(addr)
+	if err != nil {
+		t.Fatalf("failed to get key: %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		nameToReg   string
+		randBytes   []byte
+		utxos       []UTXO
+		feeRate     int64
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:      "valid NAME_NEW",
+			nameToReg: "d/example",
+			randBytes: []byte("01234567890123456789"), // 20 bytes
+			utxos: []UTXO{
+				{
+					TxHash:   mustParseHash(t, "0000000000000000000000000000000000000000000000000000000000000001"),
+					Vout:     0,
+					Value:    100000,
+					PkScript: mustP2PKHScript(t, kp.Address),
+					Address:  addr,
+				},
+			},
+			feeRate: 1,
+			wantErr: false,
+		},
+		{
+			name:        "empty name",
+			nameToReg:   "",
+			randBytes:   []byte("01234567890123456789"),
+			utxos:       []UTXO{{Value: 100000, Address: addr, PkScript: mustP2PKHScript(t, kp.Address)}},
+			feeRate:     1,
+			wantErr:     true,
+			errContains: "invalid name length",
+		},
+		{
+			name:        "name too long",
+			nameToReg:   string(make([]byte, 256)),
+			randBytes:   []byte("01234567890123456789"),
+			utxos:       []UTXO{{Value: 100000, Address: addr, PkScript: mustP2PKHScript(t, kp.Address)}},
+			feeRate:     1,
+			wantErr:     true,
+			errContains: "invalid name length",
+		},
+		{
+			name:        "empty random bytes",
+			nameToReg:   "d/example",
+			randBytes:   []byte{},
+			utxos:       []UTXO{{Value: 100000, Address: addr, PkScript: mustP2PKHScript(t, kp.Address)}},
+			feeRate:     1,
+			wantErr:     true,
+			errContains: "random bytes cannot be empty",
+		},
+		{
+			name:        "no UTXOs",
+			nameToReg:   "d/example",
+			randBytes:   []byte("01234567890123456789"),
+			utxos:       []UTXO{},
+			feeRate:     1,
+			wantErr:     true,
+			errContains: "no UTXOs provided",
+		},
+		{
+			name:      "insufficient funds",
+			nameToReg: "d/example",
+			randBytes: []byte("01234567890123456789"),
+			utxos: []UTXO{
+				{
+					TxHash:   mustParseHash(t, "0000000000000000000000000000000000000000000000000000000000000001"),
+					Vout:     0,
+					Value:    100, // Too small
+					PkScript: mustP2PKHScript(t, kp.Address),
+					Address:  addr,
+				},
+			},
+			feeRate:     1,
+			wantErr:     true,
+			errContains: "insufficient funds",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tx, rand, err := w.CreateNameNewTx(tt.randBytes, tt.nameToReg, tt.utxos, tt.feeRate, kp.Address)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.errContains)
+				}
+				if tt.errContains != "" && !contains(err.Error(), tt.errContains) {
+					t.Errorf("expected error containing %q, got %q", tt.errContains, err.Error())
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tx == nil {
+				t.Fatal("transaction is nil")
+			}
+
+			if rand == nil {
+				t.Fatal("random bytes are nil")
+			}
+
+			// Verify transaction structure
+			if len(tx.TxIn) != len(tt.utxos) {
+				t.Errorf("expected %d inputs, got %d", len(tt.utxos), len(tx.TxIn))
+			}
+
+			if len(tx.TxOut) == 0 {
+				t.Fatal("transaction has no outputs")
+			}
+
+			// First output should be NAME_NEW
+			if tx.TxOut[0].Value != 1000 {
+				t.Errorf("expected NAME_NEW output value 1000, got %d", tx.TxOut[0].Value)
+			}
+
+			// Verify signature scripts are present (transaction is signed)
+			for i, txIn := range tx.TxIn {
+				if len(txIn.SignatureScript) == 0 {
+					t.Errorf("input %d has no signature script", i)
+				}
+			}
+		})
+	}
+}
+
+func TestCreateNameFirstUpdateTx(t *testing.T) {
+	tmpDir := t.TempDir()
+	w, err := NewWallet(tmpDir, &config.NamecoinMainNetParams)
+	if err != nil {
+		t.Fatalf("failed to create wallet: %v", err)
+	}
+
+	// Generate a key for the wallet
+	addr, err := w.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	kp, err := w.GetKey(addr)
+	if err != nil {
+		t.Fatalf("failed to get key: %v", err)
+	}
+
+	tests := []struct {
+		name            string
+		nameToReg       string
+		randHex         string
+		value           string
+		utxos           []UTXO
+		nameNewUtxoIdx  int
+		feeRate         int64
+		wantErr         bool
+		errContains     string
+	}{
+		{
+			name:      "valid NAME_FIRSTUPDATE",
+			nameToReg: "d/example",
+			randHex:   "0123456789abcdef0123456789abcdef01234567",
+			value:     `{"ip":"1.2.3.4"}`,
+			utxos: []UTXO{
+				{
+					TxHash:   mustParseHash(t, "0000000000000000000000000000000000000000000000000000000000000001"),
+					Vout:     0,
+					Value:    100000,
+					PkScript: mustP2PKHScript(t, kp.Address),
+					Address:  addr,
+				},
+			},
+			nameNewUtxoIdx: 0,
+			feeRate:        1,
+			wantErr:        false,
+		},
+		{
+			name:           "empty name",
+			nameToReg:      "",
+			randHex:        "0123456789abcdef0123456789abcdef01234567",
+			value:          `{"ip":"1.2.3.4"}`,
+			utxos:          []UTXO{{Value: 100000, Address: addr, PkScript: mustP2PKHScript(t, kp.Address)}},
+			nameNewUtxoIdx: 0,
+			feeRate:        1,
+			wantErr:        true,
+			errContains:    "invalid name length",
+		},
+		{
+			name:           "name too long",
+			nameToReg:      string(make([]byte, 256)),
+			randHex:        "0123456789abcdef0123456789abcdef01234567",
+			value:          "test",
+			utxos:          []UTXO{{Value: 100000, Address: addr, PkScript: mustP2PKHScript(t, kp.Address)}},
+			nameNewUtxoIdx: 0,
+			feeRate:        1,
+			wantErr:        true,
+			errContains:    "invalid name length",
+		},
+		{
+			name:           "value too large",
+			nameToReg:      "d/example",
+			randHex:        "0123456789abcdef0123456789abcdef01234567",
+			value:          string(make([]byte, 1024)),
+			utxos:          []UTXO{{Value: 100000, Address: addr, PkScript: mustP2PKHScript(t, kp.Address)}},
+			nameNewUtxoIdx: 0,
+			feeRate:        1,
+			wantErr:        true,
+			errContains:    "value too large",
+		},
+		{
+			name:           "invalid UTXO index",
+			nameToReg:      "d/example",
+			randHex:        "0123456789abcdef0123456789abcdef01234567",
+			value:          "test",
+			utxos:          []UTXO{{Value: 100000, Address: addr, PkScript: mustP2PKHScript(t, kp.Address)}},
+			nameNewUtxoIdx: 5,
+			feeRate:        1,
+			wantErr:        true,
+			errContains:    "invalid NAME_NEW UTXO index",
+		},
+		{
+			name:      "insufficient funds",
+			nameToReg: "d/example",
+			randHex:   "0123456789abcdef0123456789abcdef01234567",
+			value:     "test",
+			utxos: []UTXO{
+				{
+					TxHash:   mustParseHash(t, "0000000000000000000000000000000000000000000000000000000000000001"),
+					Vout:     0,
+					Value:    100, // Too small
+					PkScript: mustP2PKHScript(t, kp.Address),
+					Address:  addr,
+				},
+			},
+			nameNewUtxoIdx: 0,
+			feeRate:        1,
+			wantErr:        true,
+			errContains:    "insufficient funds",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tx, err := w.CreateNameFirstUpdateTx(
+				tt.nameToReg,
+				tt.randHex,
+				tt.value,
+				tt.utxos,
+				tt.nameNewUtxoIdx,
+				tt.feeRate,
+				kp.Address,
+			)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.errContains)
+				}
+				if tt.errContains != "" && !contains(err.Error(), tt.errContains) {
+					t.Errorf("expected error containing %q, got %q", tt.errContains, err.Error())
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tx == nil {
+				t.Fatal("transaction is nil")
+			}
+
+			// Verify transaction structure
+			if len(tx.TxIn) != len(tt.utxos) {
+				t.Errorf("expected %d inputs, got %d", len(tt.utxos), len(tx.TxIn))
+			}
+
+			if len(tx.TxOut) == 0 {
+				t.Fatal("transaction has no outputs")
+			}
+
+			// First output should be NAME_FIRSTUPDATE
+			if tx.TxOut[0].Value != 1000 {
+				t.Errorf("expected NAME_FIRSTUPDATE output value 1000, got %d", tx.TxOut[0].Value)
+			}
+
+			// Verify signature scripts are present (transaction is signed)
+			for i, txIn := range tx.TxIn {
+				if len(txIn.SignatureScript) == 0 {
+					t.Errorf("input %d has no signature script", i)
+				}
+			}
+		})
+	}
+}
+
+// Helper function to check if a string contains a substring
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 || s[:len(substr)] == substr || s[len(s)-len(substr):] == substr || s[1:len(s)-1] == substr || findSubstring(s, substr))
+}
+
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+// mustParseHash parses a hex string into a chainhash.Hash and panics on error
+func mustParseHash(t *testing.T, hexStr string) chainhash.Hash {
+	t.Helper()
+	hash, err := chainhash.NewHashFromStr(hexStr)
+	if err != nil {
+		t.Fatalf("failed to parse hash: %v", err)
+	}
+	return *hash
+}
+
+// mustP2PKHScript creates a P2PKH script for an address and panics on error
+func mustP2PKHScript(t *testing.T, addr btcutil.Address) []byte {
+	t.Helper()
+	script, err := txscript.PayToAddrScript(addr)
+	if err != nil {
+		t.Fatalf("failed to create P2PKH script: %v", err)
+	}
+	return script
 }

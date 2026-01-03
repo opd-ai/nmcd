@@ -580,6 +580,272 @@ func CreateNameUpdateTxRaw(
 	return tx, nil
 }
 
+// CreateNameNewTx creates a NAME_NEW transaction for pre-registering a name commitment.
+// This is the first step in the two-phase name registration process to prevent front-running.
+//
+// Parameters:
+//   - randBytes: Random salt value (20 bytes) for the commitment
+//   - name: Name to be registered (e.g., "d/example")
+//   - utxos: Available UTXOs to fund the transaction
+//   - feeRate: Satoshis per byte for transaction fee
+//   - ownerAddress: Address that will own the name (used for commitment and change)
+//
+// Returns:
+//   - *wire.MsgTx: Signed NAME_NEW transaction ready to broadcast
+//   - []byte: Random bytes used (must be saved for NAME_FIRSTUPDATE)
+//   - error: Any error encountered during transaction creation
+func (w *Wallet) CreateNameNewTx(
+	randBytes []byte,
+	name string,
+	utxos []UTXO,
+	feeRate int64,
+	ownerAddress btcutil.Address,
+) (*wire.MsgTx, []byte, error) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
+	// Validate inputs
+	if len(name) == 0 || len(name) > 255 {
+		return nil, nil, fmt.Errorf("invalid name length: %d (must be 1-255)", len(name))
+	}
+	if len(randBytes) == 0 {
+		return nil, nil, fmt.Errorf("random bytes cannot be empty")
+	}
+	if len(utxos) == 0 {
+		return nil, nil, fmt.Errorf("no UTXOs provided")
+	}
+
+	// Get owner's pubkey hash
+	var pubKeyHash []byte
+	switch addr := ownerAddress.(type) {
+	case *btcutil.AddressPubKeyHash:
+		pubKeyHash = addr.ScriptAddress()
+	default:
+		return nil, nil, fmt.Errorf("unsupported address type: %T", ownerAddress)
+	}
+
+	// Compute commitment hash
+	commitHash := ComputeNameNewHash(randBytes, name, w.chainParams)
+
+	// Build NAME_NEW output script
+	nameScript, err := BuildNameNewScript(commitHash, pubKeyHash)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to build NAME_NEW script: %w", err)
+	}
+
+	// Calculate total input value
+	var totalIn int64
+	for _, utxo := range utxos {
+		totalIn += utxo.Value
+	}
+
+	// Estimate transaction size
+	// Inputs: ~148 bytes each, Outputs: NAME_NEW + change
+	estimatedSize := int64(10 + len(utxos)*148 + len(nameScript) + 34)
+	fee := feeRate * estimatedSize
+
+	// NAME_NEW output value (just above dust)
+	nameOutValue := int64(1000)
+
+	// Change calculation
+	changeValue := totalIn - nameOutValue - fee
+	if changeValue < 0 {
+		return nil, nil, fmt.Errorf("insufficient funds: need %d, have %d", nameOutValue+fee, totalIn)
+	}
+
+	// Create transaction
+	tx := wire.NewMsgTx(wire.TxVersion)
+
+	// Add inputs
+	for _, utxo := range utxos {
+		outPoint := wire.NewOutPoint(&utxo.TxHash, utxo.Vout)
+		txIn := wire.NewTxIn(outPoint, nil, nil)
+		tx.AddTxIn(txIn)
+	}
+
+	// Add NAME_NEW output
+	tx.AddTxOut(wire.NewTxOut(nameOutValue, nameScript))
+
+	// Add change output if above dust
+	if changeValue >= config.DustLimit {
+		changeScript, err := txscript.PayToAddrScript(ownerAddress)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to create change script: %w", err)
+		}
+		tx.AddTxOut(wire.NewTxOut(changeValue, changeScript))
+	}
+
+	// Sign all inputs
+	for i, utxo := range utxos {
+		inputKp, ok := w.keys[utxo.Address]
+		if !ok {
+			return nil, nil, fmt.Errorf("no key for input address: %s", utxo.Address)
+		}
+
+		sigHash, err := txscript.CalcSignatureHash(
+			utxo.PkScript,
+			txscript.SigHashAll,
+			tx,
+			i,
+		)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to calculate signature hash: %w", err)
+		}
+
+		sig := ecdsa.Sign(inputKp.PrivateKey, sigHash)
+		sigWithHashType := append(sig.Serialize(), byte(txscript.SigHashAll))
+		pubKeyBytes := inputKp.PublicKey.SerializeCompressed()
+
+		sigScript, err := txscript.NewScriptBuilder().
+			AddData(sigWithHashType).
+			AddData(pubKeyBytes).
+			Script()
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to build sig script: %w", err)
+		}
+
+		tx.TxIn[i].SignatureScript = sigScript
+	}
+
+	return tx, randBytes, nil
+}
+
+// CreateNameFirstUpdateTx creates a NAME_FIRSTUPDATE transaction to complete name registration.
+// This is the second step in the two-phase registration process, revealing the name and setting
+// its initial value. Must be called at least 12 blocks after the NAME_NEW transaction.
+//
+// Parameters:
+//   - name: Name being registered (must match the NAME_NEW commitment)
+//   - randBytes: Random bytes from the NAME_NEW transaction (for commitment verification)
+//   - value: Initial value for the name (max 1023 bytes)
+//   - nameNewUtxo: UTXO from the NAME_NEW transaction (must be in utxos slice)
+//   - utxos: Available UTXOs to spend (must include nameNewUtxo)
+//   - nameNewUtxoIndex: Index of nameNewUtxo in the utxos slice
+//   - feeRate: Satoshis per byte for transaction fee
+//   - ownerAddress: Address that will own the name (can be different from NAME_NEW address)
+//
+// Returns:
+//   - *wire.MsgTx: Signed NAME_FIRSTUPDATE transaction ready to broadcast
+//   - error: Any error encountered during transaction creation
+func (w *Wallet) CreateNameFirstUpdateTx(
+	name, randHex, value string,
+	utxos []UTXO,
+	nameNewUtxoIndex int,
+	feeRate int64,
+	ownerAddress btcutil.Address,
+) (*wire.MsgTx, error) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
+	// Validate inputs
+	if len(name) == 0 || len(name) > 255 {
+		return nil, fmt.Errorf("invalid name length: %d (must be 1-255)", len(name))
+	}
+	if len(value) > 1023 {
+		return nil, fmt.Errorf("value too large: %d bytes (max 1023)", len(value))
+	}
+	if nameNewUtxoIndex < 0 || nameNewUtxoIndex >= len(utxos) {
+		return nil, fmt.Errorf("invalid NAME_NEW UTXO index: %d", nameNewUtxoIndex)
+	}
+
+	nameNewUtxo := utxos[nameNewUtxoIndex]
+
+	// Verify we have the key for the NAME_NEW UTXO (needed for signing)
+	if _, ok := w.keys[nameNewUtxo.Address]; !ok {
+		return nil, fmt.Errorf("no key for NAME_NEW address: %s", nameNewUtxo.Address)
+	}
+
+	// Get owner's pubkey hash
+	var pubKeyHash []byte
+	switch addr := ownerAddress.(type) {
+	case *btcutil.AddressPubKeyHash:
+		pubKeyHash = addr.ScriptAddress()
+	default:
+		return nil, fmt.Errorf("unsupported address type: %T", ownerAddress)
+	}
+
+	// Build NAME_FIRSTUPDATE output script
+	nameScript, err := BuildNameFirstUpdateScript(name, randHex, value, pubKeyHash)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build NAME_FIRSTUPDATE script: %w", err)
+	}
+
+	// Calculate total input value
+	var totalIn int64
+	for _, utxo := range utxos {
+		totalIn += utxo.Value
+	}
+
+	// Estimate transaction size
+	estimatedSize := int64(10 + len(utxos)*148 + len(nameScript) + 34)
+	fee := feeRate * estimatedSize
+
+	// Name output value
+	nameOutValue := int64(1000)
+
+	// Change calculation
+	changeValue := totalIn - nameOutValue - fee
+	if changeValue < 0 {
+		return nil, fmt.Errorf("insufficient funds: need %d, have %d", nameOutValue+fee, totalIn)
+	}
+
+	// Create transaction
+	tx := wire.NewMsgTx(wire.TxVersion)
+
+	// Add inputs
+	for _, utxo := range utxos {
+		outPoint := wire.NewOutPoint(&utxo.TxHash, utxo.Vout)
+		txIn := wire.NewTxIn(outPoint, nil, nil)
+		tx.AddTxIn(txIn)
+	}
+
+	// Add NAME_FIRSTUPDATE output
+	tx.AddTxOut(wire.NewTxOut(nameOutValue, nameScript))
+
+	// Add change output if above dust
+	if changeValue >= config.DustLimit {
+		changeScript, err := txscript.PayToAddrScript(ownerAddress)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create change script: %w", err)
+		}
+		tx.AddTxOut(wire.NewTxOut(changeValue, changeScript))
+	}
+
+	// Sign all inputs
+	for i, utxo := range utxos {
+		inputKp, ok := w.keys[utxo.Address]
+		if !ok {
+			return nil, fmt.Errorf("no key for input address: %s", utxo.Address)
+		}
+
+		sigHash, err := txscript.CalcSignatureHash(
+			utxo.PkScript,
+			txscript.SigHashAll,
+			tx,
+			i,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to calculate signature hash: %w", err)
+		}
+
+		sig := ecdsa.Sign(inputKp.PrivateKey, sigHash)
+		sigWithHashType := append(sig.Serialize(), byte(txscript.SigHashAll))
+		pubKeyBytes := inputKp.PublicKey.SerializeCompressed()
+
+		sigScript, err := txscript.NewScriptBuilder().
+			AddData(sigWithHashType).
+			AddData(pubKeyBytes).
+			Script()
+		if err != nil {
+			return nil, fmt.Errorf("failed to build sig script: %w", err)
+		}
+
+		tx.TxIn[i].SignatureScript = sigScript
+	}
+
+	return tx, nil
+}
+
 // SignTransaction signs all inputs in a transaction.
 func (w *Wallet) SignTransaction(tx *wire.MsgTx, utxos []UTXO) error {
 	w.mu.RLock()
