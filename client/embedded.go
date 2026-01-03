@@ -372,6 +372,17 @@ func (c *EmbeddedClient) RegisterName(ctx context.Context, name, value string, o
 	// Network integration will be added in a future phase
 	nameNewTxHash := nameNewTx.TxHash()
 
+	// TODO: Store pending registration for NAME_FIRSTUPDATE completion in Phase 3
+	// The following data should be persisted to enable NAME_FIRSTUPDATE after 12 blocks:
+	// - name: the name being registered
+	// - randUsed: hex-encoded random bytes used in NAME_NEW commitment
+	// - nameNewTxHash: transaction hash of NAME_NEW
+	// - ownerAddress: address that will own the name
+	// - value: initial value to set
+	// - blockHeight: height when NAME_NEW was broadcast (for 12-block wait)
+	// This will be implemented as part of pending registration tracking system.
+	_ = randUsed // Suppress unused variable warning until persistence is implemented
+
 	result := &TxResult{
 		TxHash:        nameNewTxHash.String(),
 		Name:          name,
@@ -393,7 +404,6 @@ func (c *EmbeddedClient) RegisterName(ctx context.Context, name, value string, o
 	// 3. Creating and broadcasting NAME_FIRSTUPDATE transaction
 	//
 	// For now, return an error indicating this functionality requires network integration
-	_ = randUsed // Keep reference to random bytes for NAME_FIRSTUPDATE
 	return nil, fmt.Errorf("WaitForConfirmation requires network integration (coming in future phase)")
 }
 
@@ -612,8 +622,6 @@ func (c *EmbeddedClient) GetNameHistory(ctx context.Context, name string) ([]*Na
 	return history, nil
 }
 
-// WaitForConfirmation waits for a transaction to be confirmed in a block.
-// This is a placeholder implementation for Phase 2.
 // WaitForConfirmation waits for a transaction to be confirmed in a block.
 // Blocks until the transaction appears in the blockchain with the specified
 // number of confirmations or the context is canceled.

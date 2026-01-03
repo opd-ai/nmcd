@@ -645,7 +645,7 @@ func TestCreateNameFirstUpdateTx(t *testing.T) {
 				{
 					TxHash:   mustParseHash(t, "0000000000000000000000000000000000000000000000000000000000000001"),
 					Vout:     0,
-					Value:    100000,
+					Value:    2000000, // Sufficient for name output (1000) + burn fee (1,000,000) + change
 					PkScript: mustP2PKHScript(t, kp.Address),
 					Address:  addr,
 				},
@@ -697,6 +697,28 @@ func TestCreateNameFirstUpdateTx(t *testing.T) {
 			feeRate:        1,
 			wantErr:        true,
 			errContains:    "invalid NAME_NEW UTXO index",
+		},
+		{
+			name:           "empty randHex",
+			nameToReg:      "d/example",
+			randHex:        "",
+			value:          "test",
+			utxos:          []UTXO{{Value: 2000000, Address: addr, PkScript: mustP2PKHScript(t, kp.Address)}},
+			nameNewUtxoIdx: 0,
+			feeRate:        1,
+			wantErr:        true,
+			errContains:    "randHex cannot be empty",
+		},
+		{
+			name:           "invalid randHex",
+			nameToReg:      "d/example",
+			randHex:        "not-valid-hex",
+			value:          "test",
+			utxos:          []UTXO{{Value: 2000000, Address: addr, PkScript: mustP2PKHScript(t, kp.Address)}},
+			nameNewUtxoIdx: 0,
+			feeRate:        1,
+			wantErr:        true,
+			errContains:    "invalid randHex",
 		},
 		{
 			name:      "insufficient funds",
@@ -773,7 +795,6 @@ func TestCreateNameFirstUpdateTx(t *testing.T) {
 	}
 }
 
-// Helper function to check if a string contains a substring
 // mustParseHash parses a hex string into a chainhash.Hash and panics on error
 func mustParseHash(t *testing.T, hexStr string) chainhash.Hash {
 	t.Helper()

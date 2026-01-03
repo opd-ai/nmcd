@@ -716,7 +716,7 @@ func (w *Wallet) CreateNameNewTx(
 //
 // Parameters:
 //   - name: Name being registered (must match the NAME_NEW commitment)
-//   - randBytes: Random bytes from the NAME_NEW transaction (for commitment verification)
+//   - randHex: Hex-encoded random bytes from the NAME_NEW transaction (for commitment verification)
 //   - value: Initial value for the name (max 1023 bytes)
 //   - nameNewUtxo: UTXO from the NAME_NEW transaction (must be in utxos slice)
 //   - utxos: Available UTXOs to spend (must include nameNewUtxo)
@@ -740,6 +740,13 @@ func (w *Wallet) CreateNameFirstUpdateTx(
 	// Validate inputs
 	if len(name) == 0 || len(name) > 255 {
 		return nil, fmt.Errorf("invalid name length: %d (must be 1-255)", len(name))
+	}
+	if len(randHex) == 0 {
+		return nil, fmt.Errorf("randHex cannot be empty")
+	}
+	// Validate randHex is valid hex
+	if _, err := hex.DecodeString(randHex); err != nil {
+		return nil, fmt.Errorf("invalid randHex: must be valid hex string: %w", err)
 	}
 	if len(value) > 1023 {
 		return nil, fmt.Errorf("value too large: %d bytes (max 1023)", len(value))
@@ -778,15 +785,28 @@ func (w *Wallet) CreateNameFirstUpdateTx(
 
 	// Estimate transaction size
 	estimatedSize := int64(10 + len(utxos)*148 + len(nameScript) + 34)
-	fee := feeRate * estimatedSize
+	
+	// Miner fee based on fee rate and estimated size
+	minerFee := feeRate * estimatedSize
 
-	// Name output value
+	// Name output value (just above dust)
 	nameOutValue := int64(1000)
 
-	// Change calculation
-	changeValue := totalIn - nameOutValue - fee
+	// Protocol-mandated burned fee for NAME_FIRSTUPDATE: at least MinNameOperationFee (0.01 NMC = 1,000,000 satoshis)
+	// This fee is "burned" - it's the difference between inputs and outputs that goes to miners
+	// but must be at least the minimum protocol fee
+	burnFee := int64(config.MinNameOperationFee)
+	if minerFee > burnFee {
+		burnFee = minerFee
+	}
+
+	// Total required: name output + burn fee (which includes miner fee)
+	totalRequired := nameOutValue + burnFee
+
+	// Change calculation (inputs minus name output and burn fee)
+	changeValue := totalIn - totalRequired
 	if changeValue < 0 {
-		return nil, fmt.Errorf("insufficient funds: need %d, have %d", nameOutValue+fee, totalIn)
+		return nil, fmt.Errorf("insufficient funds: need %d, have %d", totalRequired, totalIn)
 	}
 
 	// Create transaction
