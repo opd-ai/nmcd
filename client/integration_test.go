@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -78,7 +79,10 @@ func TestIntegration_EmbeddedClient_FullWorkflow(t *testing.T) {
 
 	testName := "d/integration-test"
 	testValue := `{"ip":"1.2.3.4"}`
-	txHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+	txHash, err := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+	if err != nil {
+		t.Fatalf("NewHashFromStr() failed: %v", err)
+	}
 	
 	record := &namedb.NameRecord{
 		Name:      testName,
@@ -403,7 +407,10 @@ func TestIntegration_ConcurrentOperations(t *testing.T) {
 	}
 
 	for i := 0; i < 10; i++ {
-		txHash, _ := chainhash.NewHashFromStr(fmt.Sprintf("000000000000000000000000000000000000000000000000000000000000000%d", i))
+		txHash, err := chainhash.NewHashFromStr(fmt.Sprintf("000000000000000000000000000000000000000000000000000000000000000%d", i))
+		if err != nil {
+			t.Fatalf("NewHashFromStr() failed for index %d: %v", i, err)
+		}
 		record := &namedb.NameRecord{
 			Name:      fmt.Sprintf("d/test-%d", i),
 			Value:     fmt.Sprintf(`{"id":%d}`, i),
@@ -521,10 +528,10 @@ func TestIntegration_ContextCancellation(t *testing.T) {
 	}
 
 	// Test 2: Cancel during operation (use short timeout)
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 100*time.Microsecond)
 	defer cancel2()
 
-	time.Sleep(10 * time.Millisecond) // Ensure timeout expires
+	time.Sleep(1 * time.Millisecond) // Ensure timeout expires
 
 	_, err = client.ListNames(ctx2, &ListFilter{Limit: 100})
 	// May or may not error depending on timing, but shouldn't panic
@@ -558,7 +565,7 @@ func TestIntegration_ErrorRecovery(t *testing.T) {
 	}
 
 	// Very long name
-	longName := "d/" + string(make([]byte, 1000))
+	longName := "d/" + strings.Repeat("x", 1000)
 	_, err = client.ResolveName(ctx, longName)
 	if err == nil {
 		t.Error("Expected error for too long name, got nil")
