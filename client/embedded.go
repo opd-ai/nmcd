@@ -408,8 +408,29 @@ func (c *EmbeddedClient) RegisterName(ctx context.Context, name, value string, o
 	return nil, fmt.Errorf("WaitForConfirmation requires network integration (coming in future phase)")
 }
 
-// UpdateName updates an existing name's value.
-// This is a placeholder implementation for Phase 2.
+// UpdateName updates the value of an existing name using a NAME_UPDATE operation.
+// It validates the client state and inputs, then constructs a transaction using the
+// embedded wallet. The caller is responsible for broadcasting the transaction to the
+// network and handling confirmations (network integration in Phase 3).
+//
+// The wallet must contain the private key for the address that currently owns the name.
+// The name must exist in the database and must not be expired.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - name: Name to update (must exist and not be expired)
+//   - value: New value for the name (max 1023 bytes, typically JSON)
+//   - opts: Update options (transfer address, confirmations, fee rate, etc.)
+//
+// Returns:
+//   - *TxResult: Result containing transaction hash and pending status
+//   - error: Any error encountered during update
+//
+// Example:
+//
+//	result, err := client.UpdateName(ctx, "d/example", `{"ip":"5.6.7.8"}`, &UpdateOpts{
+//	    FeeRate: 1,
+//	})
 func (c *EmbeddedClient) UpdateName(ctx context.Context, name, value string, opts *UpdateOpts) (*TxResult, error) {
 	// Check context
 	select {
@@ -515,18 +536,14 @@ func (c *EmbeddedClient) UpdateName(ctx context.Context, name, value string, opt
 	// Parse destination address if transfer is requested
 	var destAddr btcutil.Address
 	if opts.TransferTo != "" {
-		// Validate the destination address format
-		// For now, we support standard P2PKH addresses
-		// The wallet.CreateNameUpdateTx will handle address parsing internally
-		// We just need to check if it's a valid address string
-		if opts.TransferTo == nameRecord.Address {
-			// Transferring to same address is redundant but allowed
-			destAddr = nil
-		} else {
-			// For Phase 2, we'll use nil for transfer (keeping at same address)
-			// Full transfer support will be added in Phase 3 with address validation
+		// For now, only same-address "transfers" are allowed and treated as no-transfer
+		// (destAddr remains nil, so ownership stays with the current address).
+		// Any real transfer to a different address requires full network integration.
+		if opts.TransferTo != nameRecord.Address {
 			return nil, fmt.Errorf("name transfers (TransferTo) require network integration (coming in future phase)")
 		}
+		// Transferring to same address is redundant but allowed
+		destAddr = nil
 	}
 
 	// Create NAME_UPDATE transaction

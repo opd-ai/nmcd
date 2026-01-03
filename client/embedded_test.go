@@ -1093,16 +1093,17 @@ func TestEmbeddedClient_UpdateName(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	tests := []struct {
-		name        string
-		updateName  string
-		value       string
-		opts        *UpdateOpts
-		setupWallet bool
-		setupUTXOs  bool
-		setupName   bool
-		nameExpired bool
-		wantErr     bool
-		errContains string
+		name             string
+		updateName       string
+		value            string
+		opts             *UpdateOpts
+		setupWallet      bool
+		setupUTXOs       bool
+		setupName        bool
+		nameExpired      bool
+		nameOwnedByOther bool // If true, name is owned by different address than wallet
+		wantErr          bool
+		errContains      string
 	}{
 		{
 			name:        "successful update without waiting",
@@ -1180,6 +1181,18 @@ func TestEmbeddedClient_UpdateName(t *testing.T) {
 			nameExpired: true,
 			wantErr:     true,
 			errContains: "expired",
+		},
+		{
+			name:             "wallet doesn't own name error",
+			updateName:       "d/notowned",
+			value:            "value",
+			opts:             nil,
+			setupWallet:      true,
+			setupUTXOs:       false,
+			setupName:        true,
+			nameOwnedByOther: true,
+			wantErr:          true,
+			errContains:      "wallet does not have key for name owner address",
 		},
 		{
 			name:        "insufficient funds error",
@@ -1268,6 +1281,13 @@ func TestEmbeddedClient_UpdateName(t *testing.T) {
 						expiresAt = bestHeight - 1 // Expired
 					}
 
+					// Determine name owner address
+					nameOwnerAddr := ownerAddr
+					if tt.nameOwnedByOther {
+						// Use a different address that the wallet doesn't own
+						nameOwnerAddr = "N1OtherAddressThatWalletDoesNotOwn"
+					}
+
 					nameRecord := &namedb.NameRecord{
 						Name:      tt.updateName,
 						Value:     `{"ip":"1.2.3.4"}`,
@@ -1275,7 +1295,7 @@ func TestEmbeddedClient_UpdateName(t *testing.T) {
 						OutIndex:  0,
 						Height:    bestHeight,
 						ExpiresAt: expiresAt,
-						Address:   ownerAddr,
+						Address:   nameOwnerAddr,
 						UpdatedAt: time.Now(),
 					}
 					if err := client.nameDB.PutName(tt.updateName, nameRecord); err != nil {

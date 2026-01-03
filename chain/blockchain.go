@@ -1712,6 +1712,7 @@ func (bc *BlockChain) GetNameDB() *namedb.NameDatabase {
 // - UTXO availability for name updates
 //
 // IMPORTANT LIMITATIONS:
+//
 //  1. This method does NOT validate script signatures or verify that transactions can
 //     actually spend the UTXOs they reference. Signature validation is expensive and
 //     deferred to block validation. Invalid transactions with incorrect signatures may
