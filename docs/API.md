@@ -37,7 +37,7 @@ func main() {
     // Resolve a name
     ctx := context.Background()
     record, err := nc.ResolveName(ctx, "d/example")
-    if err == client.ErrNameNotFound {
+    if errors.Is(err, client.ErrNameNotFound) {
         fmt.Println("Name not found")
         return
     } else if err != nil {
@@ -563,9 +563,10 @@ for _, name := range names {
     go func(n string) {
         defer wg.Done()
         record, err := client.ResolveName(ctx, n)
-        if err == nil {
-            fmt.Printf("%s: %s\n", record.Name, record.Value)
+        if err != nil {
+            return
         }
+        fmt.Printf("%s: %s\n", record.Name, record.Value)
     }(name)
 }
 
