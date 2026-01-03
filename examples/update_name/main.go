@@ -21,6 +21,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -86,12 +87,12 @@ func main() {
 	// Get current name record
 	fmt.Printf("Looking up current record for '%s'...\n", name)
 	record, err := nc.ResolveName(ctx, name)
-	if err == client.ErrNameNotFound {
+	if errors.Is(err, client.ErrNameNotFound) {
 		fmt.Printf("✗ Name not found: %s\n", name)
 		fmt.Println("\nThe name must be registered before it can be updated.")
 		fmt.Println("Use register_name.go to register a new name.")
 		os.Exit(1)
-	} else if err == client.ErrNameExpired {
+	} else if errors.Is(err, client.ErrNameExpired) {
 		fmt.Printf("✗ Name expired: %s\n", name)
 		fmt.Println("\nThe name has expired. You can re-register it as a new name.")
 		os.Exit(1)
@@ -117,16 +118,16 @@ func main() {
 	result, err := nc.UpdateName(ctx, name, newValue, opts)
 	if err != nil {
 		switch {
-		case err == client.ErrNameNotFound:
+		case errors.Is(err, client.ErrNameNotFound):
 			fmt.Println("✗ Name not found")
-		case err == client.ErrNameExpired:
+		case errors.Is(err, client.ErrNameExpired):
 			fmt.Println("✗ Name expired while updating")
-		case err == client.ErrInsufficientFunds:
+		case errors.Is(err, client.ErrInsufficientFunds):
 			fmt.Println("✗ Insufficient funds for update")
 			fmt.Println("  The wallet needs NMC to pay for the update fee")
-		case err == client.ErrNoWallet:
+		case errors.Is(err, client.ErrNoWallet):
 			fmt.Println("✗ Wallet not initialized")
-		case err == client.ErrInvalidValue:
+		case errors.Is(err, client.ErrInvalidValue):
 			fmt.Println("✗ Invalid value format")
 		default:
 			log.Fatalf("Failed to update name: %v", err)

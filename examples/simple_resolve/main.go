@@ -17,6 +17,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -64,12 +65,12 @@ func main() {
 	record, err := nc.ResolveName(ctx, name)
 
 	switch {
-	case err == client.ErrNameNotFound:
+	case errors.Is(err, client.ErrNameNotFound):
 		fmt.Printf("✗ Name not found: %s\n", name)
 		fmt.Println("\nThe name either doesn't exist or hasn't been registered yet.")
 		os.Exit(1)
 
-	case err == client.ErrNameExpired:
+	case errors.Is(err, client.ErrNameExpired):
 		fmt.Printf("✗ Name expired: %s\n", name)
 		fmt.Println("\nThe name was registered but has expired and is now available for re-registration.")
 		os.Exit(1)

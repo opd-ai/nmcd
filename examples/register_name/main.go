@@ -22,6 +22,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -93,7 +94,7 @@ func main() {
 		fmt.Printf("  Owner: %s\n", existingRecord.Address)
 		fmt.Printf("  Expires in: %d blocks\n", existingRecord.ExpiresIn)
 		os.Exit(1)
-	} else if err != client.ErrNameNotFound && err != client.ErrNameExpired {
+	} else if !errors.Is(err, client.ErrNameNotFound) && !errors.Is(err, client.ErrNameExpired) {
 		log.Fatalf("Failed to check name: %v", err)
 	}
 
@@ -112,16 +113,16 @@ func main() {
 	result, err := nc.RegisterName(ctx, name, value, opts)
 	if err != nil {
 		switch {
-		case err == client.ErrNameExists:
+		case errors.Is(err, client.ErrNameExists):
 			fmt.Println("✗ Name already exists (race condition)")
-		case err == client.ErrInsufficientFunds:
+		case errors.Is(err, client.ErrInsufficientFunds):
 			fmt.Println("✗ Insufficient funds for registration")
 			fmt.Println("  The wallet needs NMC to pay for the registration fee")
-		case err == client.ErrNoWallet:
+		case errors.Is(err, client.ErrNoWallet):
 			fmt.Println("✗ Wallet not initialized")
-		case err == client.ErrInvalidName:
+		case errors.Is(err, client.ErrInvalidName):
 			fmt.Println("✗ Invalid name format")
-		case err == client.ErrInvalidValue:
+		case errors.Is(err, client.ErrInvalidValue):
 			fmt.Println("✗ Invalid value format")
 		default:
 			log.Fatalf("Failed to register name: %v", err)
