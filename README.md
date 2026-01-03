@@ -1,24 +1,228 @@
 # nmcd
 
-Pure Go Namecoin implementation using btcd as library dependencies (not forks).
+Pure Go Namecoin library and daemon using btcd as dependencies (not forks).
 
 ## Overview
 
-nmcd is a lightweight Namecoin daemon built using btcd libraries. It focuses on composition over reimplementation, leveraging btcd's battle-tested blockchain, peer, and wire packages.
+nmcd is a **library-first** Namecoin implementation built using btcd libraries. It can be embedded directly into your Go applications for in-process name resolution and registration, or run as a standalone daemon for traditional RPC access.
 
-## Features
+**Key Highlights:**
+- 🔧 **Library-First Design**: Import and use directly in your Go code
+- 🚀 **Embedded or Daemon Mode**: Choose in-process or external daemon
+- 🧩 **Composition over Reimplementation**: Built on btcd's battle-tested components
+- 🔒 **Thread-Safe**: All operations safe for concurrent use
+- 📦 **Pure Go**: No C dependencies, cross-platform support
+
+## Quick Start (Library Usage)
+
+### Installation
+
+```bash
+go get github.com/opd-ai/nmcd
+```
+
+### Basic Example: Resolve a Name
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    
+    "github.com/opd-ai/nmcd/client"
+)
+
+func main() {
+    // Create embedded client (runs in-process)
+    nc, err := client.NewClient(&client.Config{
+        Mode:    client.ModeAuto,  // Auto-detect daemon or use embedded
+        Network: "mainnet",
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer nc.Close()
+    
+    // Resolve a Namecoin name
+    ctx := context.Background()
+    record, err := nc.ResolveName(ctx, "d/example")
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    fmt.Printf("Name: %s\nValue: %s\nOwner: %s\n",
+        record.Name, record.Value, record.Address)
+}
+```
+
+### Register or Update Names
+
+```go
+// Register a new name
+result, err := nc.RegisterName(ctx, "d/mysite", `{"ip":"1.2.3.4"}`, nil)
+fmt.Printf("Registration TX: %s\n", result.TxHash)
+
+// Update existing name
+result, err = nc.UpdateName(ctx, "d/mysite", `{"ip":"5.6.7.8"}`, nil)
+fmt.Printf("Update TX: %s\n", result.TxHash)
+
+// List names with filters
+names, err := nc.ListNames(ctx, &client.ListFilter{
+    Namespace: "d/",
+    Limit:     100,
+})
+```
+
+**📚 See [docs/EXAMPLES.md](docs/EXAMPLES.md) for detailed walkthroughs and patterns.**
+
+## Library Features
+
+- **Name Resolution**: Look up Namecoin names with expiration checking
+- **Name Registration**: Two-step NAME_NEW → NAME_FIRSTUPDATE process
+- **Name Updates**: Update values and extend expiration (36,000 blocks)
+- **Name Listing**: Filter by namespace, address, or pattern with pagination
+- **Embedded Mode**: In-process blockchain and database (no external daemon)
+- **Daemon Mode**: Connect to existing nmcd or Namecoin Core via RPC
+- **Auto-Detection**: Automatically choose daemon or embedded based on availability
+- **Thread-Safe**: All methods safe for concurrent goroutines
+- **Context Support**: Timeouts and cancellation for all operations
+
+## Daemon Features
+
+When run as a standalone daemon, nmcd provides:
 
 - **Pure Go**: Built entirely in Go using standard library and btcd
 - **NameDatabase**: bbolt-backed storage for name operations
 - **Blockchain Integration**: Embeds btcd's blockchain.BlockChain with name validation hooks
 - **Network Layer**: Uses btcd/peer for P2P networking with interface-based connections (net.Conn)
-- **RPC Server**: Standard library net/http for JSON-RPC interface
+- **JSON-RPC Server**: Standard library net/http for RPC interface
 - **Thread-Safe**: Mutex protection for all shared state
 - **Minimal Custom Code**: ~3,500 lines of focused custom code
 
+## Documentation
+
+- **[API Reference](docs/API.md)**: Complete API documentation with examples
+- **[Embedding Guide](docs/EMBEDDING.md)**: Integration patterns for applications
+- **[Examples Guide](docs/EXAMPLES.md)**: Detailed walkthroughs of example code
+- **[Mode Comparison](docs/MODES.md)**: Embedded vs daemon tradeoffs
+- **[Performance Guide](docs/PERFORMANCE.md)**: Benchmarks and optimization tips
+
+## Mode Selection
+
+nmcd supports three operational modes:
+
+### Auto Mode (Recommended)
+
+Automatically detects if a daemon is running on localhost:8336 and uses it; otherwise runs in embedded mode.
+
+```go
+nc, err := client.NewClient(&client.Config{
+    Mode: client.ModeAuto,  // Default
+})
+```
+
+**Use When:**
+- Building applications that work with or without a daemon
+- Want flexibility without configuration
+- Development and testing
+
+### Embedded Mode
+
+Runs the full blockchain, database, and network stack in-process. No external daemon required.
+
+```go
+nc, err := client.NewEmbeddedClient(&client.Config{
+    Mode:    client.ModeEmbedded,
+    DataDir: "/path/to/data",
+    Network: "mainnet",
+})
+```
+
+**Use When:**
+- Embedding nmcd in your application
+- Running multiple isolated instances
+- Offline name resolution from local database
+- No dependency on external services
+
+**Pros:**
+- ✅ No external dependencies
+- ✅ Full control over resources
+- ✅ Isolated data and state
+- ✅ Simpler deployment
+
+**Cons:**
+- ❌ Higher memory usage (~250MB UTXO cache)
+- ❌ Each instance syncs independently
+- ❌ Database locked to single process
+
+### Daemon Mode
+
+Connects to an existing nmcd or Namecoin Core daemon via RPC.
+
+```go
+nc, err := client.NewDaemonClient(&client.Config{
+    Mode:        client.ModeDaemon,
+    RPCAddr:     "http://localhost:8336",
+    RPCUser:     "user",
+    RPCPassword: "pass",
+})
+```
+
+**Use When:**
+- Shared blockchain state across applications
+- Multiple applications need name resolution
+- Centralized infrastructure
+- Production deployments with managed daemon
+
+**Pros:**
+- ✅ Shared blockchain sync
+- ✅ Lower per-application memory
+- ✅ Centralized monitoring
+- ✅ Multiple clients, one sync
+
+**Cons:**
+- ❌ Requires running daemon
+- ❌ Network dependency
+- ❌ RPC authentication needed
+
+**📚 See [docs/MODES.md](docs/MODES.md) for detailed comparison and recommendations.**
+
 ## Architecture
 
-### Components
+### Library Architecture
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│                    Your Go Application                         │
+├───────────────────────────────────────────────────────────────┤
+│                    nmcd Library (client/)                      │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │         NameClient Interface (Public API)              │  │
+│  │  • ResolveName(name) → NameRecord                      │  │
+│  │  • RegisterName(name, value, opts) → TxHash            │  │
+│  │  • UpdateName(name, value, opts) → TxHash              │  │
+│  │  • ListNames(filter) → []NameRecord                    │  │
+│  └────────────────────────────────────────────────────────┘  │
+│            ▲                              ▲                    │
+│            │                              │                    │
+│  ┌─────────┴─────────┐        ┌──────────┴──────────┐        │
+│  │  EmbeddedClient   │        │   DaemonClient      │        │
+│  │  (in-process)     │        │   (RPC to daemon)   │        │
+│  └─────────┬─────────┘        └─────────────────────┘        │
+│            │                                                   │
+│  ┌─────────▼─────────────────────────┐                       │
+│  │  Embedded Components               │                       │
+│  │  ┌────────┐ ┌────────┐ ┌────────┐│                       │
+│  │  │ chain/ │ │namedb/ │ │network/││                       │
+│  │  │validate│ │bbolt DB│ │ peer   ││                       │
+│  │  └────────┘ └────────┘ └────────┘│                       │
+│  └───────────────────────────────────┘                       │
+└───────────────────────────────────────────────────────────────┘
+```
+
+### Daemon Component Architecture
 
 1. **namedb**: Name database with bbolt storage
    - Stores name records with expiration tracking
@@ -44,13 +248,19 @@ nmcd is a lightweight Namecoin daemon built using btcd libraries. It focuses on 
    - Network selection (mainnet/testnet/regtest)
    - Data directory management
 
-## Building
+---
+
+## Using as a Daemon
+
+While nmcd is primarily a library, it can also run as a standalone daemon for traditional RPC access.
+
+### Building the Daemon
 
 ```bash
 go build -v ./cmd/nmcd
 ```
 
-## Running
+### Running the Daemon
 
 ```bash
 # Run with defaults (auto-discovers peers via DNS seeds)
@@ -72,7 +282,9 @@ go build -v ./cmd/nmcd
 ./nmcd -rpcuser=myuser -rpcpassword=mypassword
 ```
 
-## Peer Discovery
+**Note:** When using nmcd as a library, you don't need to run the daemon unless you want to share blockchain state across multiple applications.
+
+### Peer Discovery (Daemon Mode)
 
 nmcd supports automatic peer discovery via DNS seeds. When started without the `-addpeer` flag, the node will:
 
@@ -93,7 +305,9 @@ nmcd supports automatic peer discovery via DNS seeds. When started without the `
 
 To bypass DNS seed discovery and connect to specific peers, use the `-addpeer` flag.
 
-## RPC API
+### RPC API (Daemon Mode)
+
+When running nmcd as a daemon, it exposes a JSON-RPC interface for external access. **If you're using nmcd as a library**, use the Go API instead of RPC for better performance and type safety.
 
 The RPC server supports HTTP Basic Authentication. When both `-rpcuser` and `-rpcpassword` flags are set, all RPC requests must include valid credentials.
 
@@ -172,11 +386,71 @@ curl -X POST http://127.0.0.1:8336 \
   
   Returns an array of address strings currently stored in the wallet.
 
+---
+
+## Examples
+
+The `examples/` directory contains several working examples demonstrating library usage:
+
+- **[simple_resolve](examples/simple_resolve/)**: Basic name resolution with auto-detection
+- **[embedded_client](examples/embedded_client/)**: Explicit embedded mode usage
+- **[register_name](examples/register_name/)**: Two-step name registration (NAME_NEW → NAME_FIRSTUPDATE)
+- **[update_name](examples/update_name/)**: Update existing name values
+- **[list_names](examples/list_names/)**: Filter and paginate name listings
+- **[namedb](examples/namedb/)**: Direct database operations
+
+**Run an example:**
+
+```bash
+go run ./examples/simple_resolve d/example
+go run ./examples/list_names --namespace=d/
+```
+
+**📚 For detailed walkthroughs, see [docs/EXAMPLES.md](docs/EXAMPLES.md)**
+
+---
+
 ## Wallet
 
 nmcd includes basic wallet functionality for managing name operations. The wallet stores private keys in `wallet.json` within the data directory.
 
 **Security Note:** The wallet file contains unencrypted private keys. Ensure proper file permissions (0600) and secure the data directory.
+
+**Library Usage:** When using nmcd as a library, the wallet is automatically initialized in the data directory. Use `DisableWallet: true` in the config to disable wallet functionality if you only need name resolution.
+
+---
+
+## Use Cases
+
+### Library Mode (Embedded)
+
+**Best For:**
+- 🔍 DNS resolvers and proxies
+- 🌐 Web applications with Namecoin integration
+- 🤖 Bots and monitoring tools
+- 📱 Mobile/desktop applications (future)
+- 🔬 Research and experimentation
+
+**Example Applications:**
+- DNS bridge resolving Namecoin domains to IP addresses
+- Identity verification service using id/ namespace
+- Domain monitoring service with expiration alerts
+- Decentralized website hosting with d/ namespace
+
+### Daemon Mode
+
+**Best For:**
+- 🖥️ Shared infrastructure serving multiple applications
+- 🔧 Development and testing environments
+- 📊 Blockchain explorers and analytics
+- 🔌 Legacy applications using RPC interface
+
+**Example Setups:**
+- Central Namecoin node serving multiple microservices
+- Development server for application testing
+- Network monitoring and statistics collection
+
+---
 
 ## Dependencies
 
@@ -203,17 +477,59 @@ The implementation supports three name operations:
 
 Names expire after 36000 blocks (~250 days) and must be renewed.
 
-## Code Structure
+## Project Structure
 
 ```
 nmcd/
-├── cmd/nmcd/        # Main entry point
+├── client/          # 🔧 Library public API (import this!)
+│   ├── types.go           # NameClient interface and types
+│   ├── embedded.go        # In-process embedded client
+│   ├── daemon.go          # RPC daemon client
+│   └── *_test.go          # Comprehensive test suite
+│
+├── cmd/nmcd/        # Daemon binary entry point
+│   └── main.go            # CLI flags and daemon setup
+│
+├── internal/        # Internal packages (not importable)
+│   └── server/            # Daemon server implementation
+│
 ├── namedb/          # Name database (bbolt)
-├── chain/           # Blockchain wrapper
-├── network/         # P2P networking
-├── rpc/             # JSON-RPC server
-└── config/          # Configuration
+├── chain/           # Blockchain wrapper (btcd integration)
+├── network/         # P2P networking (btcd/peer)
+├── rpc/             # JSON-RPC server (daemon mode)
+├── wallet/          # Basic wallet functionality
+├── config/          # Network configuration
+│
+├── docs/            # 📚 Documentation
+│   ├── API.md             # Complete API reference
+│   ├── EMBEDDING.md       # Integration guide
+│   ├── EXAMPLES.md        # Example walkthroughs
+│   ├── MODES.md           # Mode comparison
+│   └── PERFORMANCE.md     # Optimization tips
+│
+├── examples/        # 🎯 Working code examples
+│   ├── simple_resolve/    # Basic name resolution
+│   ├── embedded_client/   # Embedded mode demo
+│   ├── register_name/     # Name registration
+│   ├── update_name/       # Name updates
+│   ├── list_names/        # Name filtering
+│   └── namedb/            # Direct database access
+│
+└── README.md        # This file
 ```
+
+**Import Paths:**
+
+```go
+// Primary library interface
+import "github.com/opd-ai/nmcd/client"
+
+// For advanced usage (typically not needed)
+import "github.com/opd-ai/nmcd/namedb"
+import "github.com/opd-ai/nmcd/config"
+```
+
+---
 
 ## Security
 
@@ -222,6 +538,36 @@ nmcd/
 - Names must be unique and unexpired
 - Value size limits enforced (1023 bytes)
 - Name length limits enforced (1-255 characters)
+
+---
+
+## Getting Help
+
+- **📖 Documentation**: Start with [docs/EXAMPLES.md](docs/EXAMPLES.md) for guided walkthroughs
+- **💡 API Reference**: See [docs/API.md](docs/API.md) for complete method signatures
+- **🔧 Integration**: Check [docs/EMBEDDING.md](docs/EMBEDDING.md) for integration patterns
+- **⚡ Performance**: Read [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for optimization tips
+- **🐛 Issues**: Report bugs on [GitHub Issues](https://github.com/opd-ai/nmcd/issues)
+
+---
+
+## Contributing
+
+Contributions are welcome! Areas of interest:
+
+- **Examples**: Add new example applications showcasing library usage
+- **Documentation**: Improve guides, add tutorials, fix typos
+- **Testing**: Expand test coverage, add integration tests
+- **Features**: Implement missing Namecoin protocol features
+- **Performance**: Optimize hot paths, reduce memory usage
+
+Please ensure:
+1. Code follows Go best practices (`go fmt`, `go vet`)
+2. All tests pass (`make test`)
+3. Documentation is updated for API changes
+4. Examples are updated if public API changes
+
+---
 
 ## License
 

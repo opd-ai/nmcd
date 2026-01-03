@@ -906,9 +906,9 @@ func TestDaemonClient_RegisterName(t *testing.T) {
 
 func TestIsTransientError(t *testing.T) {
 	tests := []struct {
-		name    string
-		err     error
-		want    bool
+		name string
+		err  error
+		want bool
 	}{
 		{
 			name: "nil error",
