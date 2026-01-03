@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -265,33 +266,18 @@ func isTransientError(err error) bool {
 
 	// Authentication errors are not transient
 	errStr := err.Error()
-	if contains(errStr, "authentication failed") {
+	if strings.Contains(errStr, "authentication failed") {
 		return false
 	}
 
 	// Connection refused, timeout, etc. are transient
-	if contains(errStr, "connection refused") ||
-		contains(errStr, "timeout") ||
-		contains(errStr, "EOF") ||
-		contains(errStr, "connection reset") {
+	if strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "timeout") ||
+		strings.Contains(errStr, "EOF") ||
+		strings.Contains(errStr, "connection reset") {
 		return true
 	}
 
-	return false
-}
-
-// contains checks if s contains substr (case-insensitive would be better but this is simple)
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		(len(s) > 0 && len(substr) > 0 && findSubstring(s, substr)))
-}
-
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
 	return false
 }
 
@@ -307,7 +293,7 @@ func (c *DaemonClient) ResolveName(ctx context.Context, name string) (*NameRecor
 	if err != nil {
 		// Check for "name not found" RPC error
 		if rpcErr, ok := err.(*rpcError); ok {
-			if rpcErr.Code == -5 || contains(rpcErr.Message, "not found") {
+			if rpcErr.Code == -5 || strings.Contains(rpcErr.Message, "not found") {
 				return nil, ErrNameNotFound
 			}
 		}
@@ -347,8 +333,20 @@ func (c *DaemonClient) ResolveName(ctx context.Context, name string) (*NameRecor
 }
 
 // RegisterName creates a new name registration with the given value.
-// Note: This delegates to the daemon's name registration RPC methods.
-// The daemon must have wallet functionality enabled.
+//
+// IMPORTANT: RegisterName is not yet supported in daemon mode because the nmcd RPC
+// server does not currently expose name_new and name_firstupdate RPC methods.
+//
+// TODO: Implement RegisterName when name_new and name_firstupdate RPC methods are added.
+// The two-phase registration process requires:
+// 1. name_new: Create commitment transaction
+// 2. Wait for 12 block confirmations
+// 3. name_firstupdate: Reveal name and set initial value
+//
+// Workarounds:
+// - Use embedded mode (NewClient with ModeEmbedded) for name registration
+// - Call name_new and name_firstupdate RPC methods directly via raw RPC client
+// - Use Namecoin Core's RPC interface which supports these methods
 func (c *DaemonClient) RegisterName(ctx context.Context, name, value string, opts *RegisterOpts) (*TxResult, error) {
 	// Validate inputs
 	if len(name) == 0 || len(name) > 255 {
@@ -358,10 +356,8 @@ func (c *DaemonClient) RegisterName(ctx context.Context, name, value string, opt
 		return nil, fmt.Errorf("%w: length %d (max 1023)", ErrInvalidValue, len(value))
 	}
 
-	// The daemon doesn't have a complete name_register RPC that handles the two-phase process.
-	// For now, return an error indicating this limitation.
-	// Future enhancement: Implement name_new and name_firstupdate RPC calls.
-	return nil, fmt.Errorf("RegisterName via daemon mode is not yet supported: use embedded mode or call name_new/name_firstupdate RPC methods directly")
+	// The daemon doesn't have name_new and name_firstupdate RPC methods yet.
+	return nil, fmt.Errorf("RegisterName via daemon mode is not yet supported: use embedded mode (ModeEmbedded) or call name_new/name_firstupdate RPC methods directly on Namecoin Core")
 }
 
 // UpdateName updates an existing name's value.
@@ -388,10 +384,10 @@ func (c *DaemonClient) UpdateName(ctx context.Context, name, value string, opts 
 		if rpcErr, ok := err.(*rpcError); ok {
 			switch rpcErr.Code {
 			case -4, -5:
-				if contains(rpcErr.Message, "not found") {
+				if strings.Contains(rpcErr.Message, "not found") {
 					return nil, fmt.Errorf("%w: %s", ErrNameNotFound, name)
 				}
-				if contains(rpcErr.Message, "expired") {
+				if strings.Contains(rpcErr.Message, "expired") {
 					return nil, fmt.Errorf("%w: %s", ErrNameExpired, name)
 				}
 			case -13:
@@ -573,19 +569,34 @@ func (c *DaemonClient) GetNameHistory(ctx context.Context, name string) ([]*Name
 }
 
 // WaitForConfirmation waits for a transaction to be confirmed in a block.
-// Note: This is a polling implementation. The daemon doesn't provide a
-// notification mechanism, so we poll getblockcount and check transaction status.
+//
+// IMPORTANT: This is a simplified implementation that estimates confirmation time
+// based on Namecoin's average block interval (10 minutes). The current nmcd daemon
+// does not expose a gettransaction RPC that returns confirmation count.
+//
+// TODO: Implement proper confirmation checking when gettransaction RPC is added.
+// See: https://github.com/opd-ai/nmcd/issues - tracking issue for gettransaction RPC
+//
+// The function polls at 60-second intervals (approximately every 6 blocks worth of time)
+// and returns success after waiting for the expected time based on the number of
+// confirmations requested.
 func (c *DaemonClient) WaitForConfirmation(ctx context.Context, txHash string, confirmations int) error {
 	if confirmations < 1 {
 		return fmt.Errorf("confirmations must be at least 1, got %d", confirmations)
 	}
 
-	// Poll every 30 seconds (approximately every 3 blocks worth of time)
-	ticker := time.NewTicker(30 * time.Second)
+	// Calculate expected wait time based on confirmations
+	// Namecoin block interval is approximately 10 minutes
+	expectedWait := time.Duration(confirmations) * 10 * time.Minute
+	waitUntil := time.Now().Add(expectedWait)
+
+	// Poll every 60 seconds (approximately every 6 blocks worth of time)
+	// This reduces unnecessary RPC calls while still allowing for context cancellation
+	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 
-	// Maximum wait time (approximately 2 hours for 12 confirmations)
-	maxWait := time.Duration(confirmations) * 10 * time.Minute
+	// Maximum wait time (2x expected wait as safety margin)
+	maxWait := expectedWait * 2
 	deadline := time.Now().Add(maxWait)
 
 	for {
@@ -598,14 +609,13 @@ func (c *DaemonClient) WaitForConfirmation(ctx context.Context, txHash string, c
 				return fmt.Errorf("timeout waiting for %d confirmations for tx %s", confirmations, txHash)
 			}
 
-			// Note: The daemon doesn't have a gettransaction RPC that returns confirmations.
-			// For a more complete implementation, we would need:
-			// 1. gettransaction RPC to get transaction details including confirmations
-			// 2. Or track block heights and compare to when we submitted the transaction
-			//
-			// For now, we'll just wait for the expected amount of time based on block interval.
-			// This is a simplification that assumes 10 minutes per block on average.
-			return nil
+			// Check if we've waited long enough for the expected confirmations
+			// This is a time-based estimation since we can't query actual confirmations
+			if time.Now().After(waitUntil) {
+				return nil
+			}
+
+			// Continue polling
 		}
 	}
 }
@@ -688,10 +698,8 @@ func (c *DaemonClient) SetRetryConfig(cfg RetryConfig) {
 	if cfg.MaxDelay <= 0 {
 		cfg.MaxDelay = 5 * time.Second
 	}
-	if cfg.Multiplier <= 0 {
-		cfg.Multiplier = 2.0
-	}
-	if math.IsNaN(cfg.Multiplier) || math.IsInf(cfg.Multiplier, 0) {
+	// Multiplier must be >= 1.0 (no backoff reduction) and finite
+	if cfg.Multiplier < 1.0 || math.IsNaN(cfg.Multiplier) || math.IsInf(cfg.Multiplier, 0) {
 		cfg.Multiplier = 2.0
 	}
 

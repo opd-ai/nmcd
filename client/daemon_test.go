@@ -3,9 +3,11 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -264,7 +266,7 @@ func TestDaemonClient_ResolveName(t *testing.T) {
 					t.Errorf("ResolveName() expected error %v, got nil", tt.wantErr)
 					return
 				}
-				if err != tt.wantErr && !contains(err.Error(), tt.wantErr.Error()) {
+				if !errors.Is(err, tt.wantErr) && !strings.Contains(err.Error(), tt.wantErr.Error()) {
 					t.Errorf("ResolveName() error = %v, want %v", err, tt.wantErr)
 				}
 				return
@@ -697,7 +699,7 @@ func TestDaemonClient_Close(t *testing.T) {
 	// Operations after close should fail
 	ctx := context.Background()
 	_, err = client.ResolveName(ctx, "d/test")
-	if err == nil || !contains(err.Error(), "closed") {
+	if err == nil || !strings.Contains(err.Error(), "closed") {
 		t.Errorf("ResolveName() after close should fail with 'closed' error, got %v", err)
 	}
 }
@@ -723,7 +725,7 @@ func TestDaemonClient_ContextCancellation(t *testing.T) {
 	defer cancel()
 
 	_, err = client.ResolveName(ctx, "d/test")
-	if err != ErrContextCanceled && !contains(err.Error(), "context") {
+	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "context") {
 		t.Errorf("ResolveName() with canceled context should fail, got %v", err)
 	}
 }
@@ -875,13 +877,13 @@ func TestDaemonClient_RegisterName(t *testing.T) {
 
 	// RegisterName is not yet supported in daemon mode
 	_, err = client.RegisterName(ctx, "d/test", `{}`, nil)
-	if err == nil || !contains(err.Error(), "not yet supported") {
+	if err == nil || !strings.Contains(err.Error(), "not yet supported") {
 		t.Errorf("RegisterName() should return 'not supported' error, got %v", err)
 	}
 
 	// Test validation still works
 	_, err = client.RegisterName(ctx, "", `{}`, nil)
-	if err == nil || !contains(err.Error(), "invalid") {
+	if err == nil || !strings.Contains(err.Error(), "invalid") {
 		t.Errorf("RegisterName() with empty name should fail with validation error, got %v", err)
 	}
 }
