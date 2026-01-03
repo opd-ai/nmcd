@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -76,6 +77,6 @@ func NewClient(cfg *Config) (NameClient, error) {
 		return NewEmbeddedClient(cfg)
 
 	default:
-		return nil, ErrDaemonUnavailable
+		return nil, fmt.Errorf("invalid client mode: %d", cfg.Mode)
 	}
 }

@@ -120,8 +120,15 @@ func NewDaemonClient(cfg *Config) (*DaemonClient, error) {
 		closed:      false,
 	}
 
-	// Set authentication if provided
-	if cfg.RPCUser != "" && cfg.RPCPassword != "" {
+	// Validate authentication configuration: either both credentials must be provided, or neither
+	hasUser := cfg.RPCUser != ""
+	hasPassword := cfg.RPCPassword != ""
+	if hasUser != hasPassword {
+		return nil, fmt.Errorf("incomplete RPC authentication: both RPCUser and RPCPassword must be provided together, or neither")
+	}
+
+	// Set authentication if both credentials are provided
+	if hasUser && hasPassword {
 		client.auth = &basicAuth{
 			username: cfg.RPCUser,
 			password: cfg.RPCPassword,
@@ -143,12 +150,14 @@ func (c *DaemonClient) Ping(ctx context.Context) error {
 
 // rpcCall performs a JSON-RPC call to the daemon with retry logic.
 func (c *DaemonClient) rpcCall(ctx context.Context, method string, params interface{}) (json.RawMessage, error) {
-	// Check if client is closed
+	// Check if client is closed and copy retry config under lock to avoid race conditions
 	c.mu.RLock()
 	if c.closed {
 		c.mu.RUnlock()
 		return nil, fmt.Errorf("client is closed")
 	}
+	// Copy retry config to avoid race with SetRetryConfig
+	retryCfg := c.retryConfig
 	c.mu.RUnlock()
 
 	// Build request
@@ -165,9 +174,9 @@ func (c *DaemonClient) rpcCall(ctx context.Context, method string, params interf
 	}
 
 	var lastErr error
-	delay := c.retryConfig.InitialDelay
+	delay := retryCfg.InitialDelay
 
-	for attempt := 0; attempt < c.retryConfig.MaxAttempts; attempt++ {
+	for attempt := 0; attempt < retryCfg.MaxAttempts; attempt++ {
 		// Check context before each attempt
 		select {
 		case <-ctx.Done():
@@ -188,7 +197,7 @@ func (c *DaemonClient) rpcCall(ctx context.Context, method string, params interf
 		}
 
 		// Wait before retry (with context cancellation support)
-		if attempt < c.retryConfig.MaxAttempts-1 {
+		if attempt < retryCfg.MaxAttempts-1 {
 			select {
 			case <-ctx.Done():
 				return nil, ErrContextCanceled
@@ -196,14 +205,14 @@ func (c *DaemonClient) rpcCall(ctx context.Context, method string, params interf
 			}
 
 			// Exponential backoff
-			delay = time.Duration(float64(delay) * c.retryConfig.Multiplier)
-			if delay > c.retryConfig.MaxDelay {
-				delay = c.retryConfig.MaxDelay
+			delay = time.Duration(float64(delay) * retryCfg.Multiplier)
+			if delay > retryCfg.MaxDelay {
+				delay = retryCfg.MaxDelay
 			}
 		}
 	}
 
-	return nil, fmt.Errorf("RPC call failed after %d attempts: %w", c.retryConfig.MaxAttempts, lastErr)
+	return nil, fmt.Errorf("RPC call failed after %d attempts: %w", retryCfg.MaxAttempts, lastErr)
 }
 
 // doRPCCall performs a single RPC call without retry
@@ -314,8 +323,9 @@ func (c *DaemonClient) ResolveName(ctx context.Context, name string) (*NameRecor
 		return nil, fmt.Errorf("failed to parse name_show response: %w", err)
 	}
 
-	// Check if expired (negative expires_in)
-	if resp.ExpiresIn <= 0 {
+	// Check if expired (negative expires_in means already expired)
+	// ExpiresIn of 0 means expires at current block, which is still valid
+	if resp.ExpiresIn < 0 {
 		return nil, ErrNameExpired
 	}
 
@@ -469,8 +479,8 @@ func (c *DaemonClient) ListNames(ctx context.Context, filter *ListFilter) ([]*Na
 
 	var records []*NameRecord
 	for _, item := range resp {
-		// Filter by expiration
-		if !filter.IncludeExpired && item.ExpiresIn <= 0 {
+		// Filter by expiration (ExpiresIn < 0 means expired, 0 means expires at current block which is still valid)
+		if !filter.IncludeExpired && item.ExpiresIn < 0 {
 			continue
 		}
 
@@ -577,9 +587,9 @@ func (c *DaemonClient) GetNameHistory(ctx context.Context, name string) ([]*Name
 // TODO: Implement proper confirmation checking when gettransaction RPC is added.
 // See: https://github.com/opd-ai/nmcd/issues - tracking issue for gettransaction RPC
 //
-// The function polls at 60-second intervals (approximately every 6 blocks worth of time)
-// and returns success after waiting for the expected time based on the number of
-// confirmations requested.
+// The function polls at 60-second intervals (1/10th of a block interval) to allow
+// for context cancellation, and returns success after waiting for the expected time
+// based on the number of confirmations requested.
 func (c *DaemonClient) WaitForConfirmation(ctx context.Context, txHash string, confirmations int) error {
 	if confirmations < 1 {
 		return fmt.Errorf("confirmations must be at least 1, got %d", confirmations)
@@ -590,8 +600,13 @@ func (c *DaemonClient) WaitForConfirmation(ctx context.Context, txHash string, c
 	expectedWait := time.Duration(confirmations) * 10 * time.Minute
 	waitUntil := time.Now().Add(expectedWait)
 
-	// Poll every 60 seconds (approximately every 6 blocks worth of time)
-	// This reduces unnecessary RPC calls while still allowing for context cancellation
+	// Check immediately if we've already waited long enough (handles quick confirmations)
+	if time.Now().After(waitUntil) {
+		return nil
+	}
+
+	// Poll every 60 seconds (1/10th of a block interval)
+	// This allows for timely context cancellation while avoiding excessive checks
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 

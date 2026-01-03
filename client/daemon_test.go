@@ -108,6 +108,22 @@ func TestNewDaemonClient(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "incomplete auth - only user",
+			cfg: &Config{
+				RPCAddr: "http://localhost:8336",
+				RPCUser: "testuser",
+			},
+			wantErr: true,
+		},
+		{
+			name: "incomplete auth - only password",
+			cfg: &Config{
+				RPCAddr:     "http://localhost:8336",
+				RPCPassword: "testpass",
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
