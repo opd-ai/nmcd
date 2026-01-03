@@ -591,18 +591,18 @@ make build
 make test  # All tests passing
 ```
 
-### Phase 2: Implement EmbeddedClient (Week 2-3) ✅ **COMPLETE**
+### Phase 2: Implement EmbeddedClient (Week 2-3) 🚧 **IN PROGRESS**
 
 **Goal:** Create in-process client implementation
 
-**Status:** Foundation complete + ListNames + GetNameHistory + Full blockchain integration (2026-01-02) ✅
-- ✅ Task 1: Implement `client/embedded.go` with NameClient interface (complete - ResolveName, GetInfo, Close, ListNames, GetNameHistory)
+**Status:** Foundation complete + ListNames + GetNameHistory + Full blockchain integration + RegisterName foundation (2026-01-03) ✅
+- ✅ Task 1: Implement `client/embedded.go` with NameClient interface (complete - ResolveName, GetInfo, Close, ListNames, GetNameHistory, RegisterName foundation)
 - ✅ Task 1.1: Created EmbeddedClient struct with nameDB, wallet, and blockchain
 - ✅ Task 1.2: Implemented NewEmbeddedClient() with configuration support (mainnet, testnet, regtest)
 - ✅ Task 1.3: Implemented ResolveName() method for reading names from local database
 - ✅ Task 1.4: Implemented GetInfo() method for node information
 - ✅ Task 1.5: Implemented Close() method with resource cleanup
-- ✅ Task 1.6: Added comprehensive tests (12 test functions, all passing)
+- ✅ Task 1.6: Added comprehensive tests (15+ test functions, all passing)
 - ✅ Task 1.7: Thread-safety verified with concurrent operations test
 - ✅ Task 1.8: Implemented ListNames() method with filtering and pagination support (2026-01-02)
 - ✅ Task 1.9: Implemented GetNameHistory() method for retrieving operation history (2026-01-02)
@@ -610,18 +610,25 @@ make test  # All tests passing
 - ✅ Task 2.1: **CRITICAL CONSENSUS BUG FIX:** Corrected Namecoin name operation opcodes in wallet package (2026-01-02)
 - ✅ Task 2.2: Implemented BuildNameNewScript and BuildNameFirstUpdateScript with comprehensive tests (2026-01-02)
 - ✅ Task 2.3: **CRITICAL CONSENSUS BUG FIX:** Fixed NAME_NEW hash computation to include chain ID (2026-01-02)
-- ⏳ Task 3: Implement RegisterName with NAME_NEW → NAME_FIRSTUPDATE flow (in progress)
-- ⏳ Task 4: Add support for custom Dialer and Listener for anonymous networks (deferred)
-- ⏳ Task 5: Implement UpdateName, WaitForConfirmation (deferred)
+- ✅ Task 3: Implement RegisterName with NAME_NEW → NAME_FIRSTUPDATE flow (2026-01-03) **FOUNDATION COMPLETE**
+- ✅ Task 3.1: Added CreateNameNewTx to wallet package (2026-01-03)
+- ✅ Task 3.2: Added CreateNameFirstUpdateTx to wallet package (2026-01-03)
+- ✅ Task 3.3: Implemented RegisterName in EmbeddedClient (NAME_NEW creation) (2026-01-03)
+- ✅ Task 3.4: Implemented WaitForConfirmation foundation (2026-01-03)
+- ✅ Task 3.5: Added comprehensive tests for transaction builders (12 test cases) (2026-01-03)
+- ✅ Task 3.6: Added comprehensive tests for RegisterName (9 test scenarios) (2026-01-03)
+- ⏳ Task 3.7: Full NAME_NEW → NAME_FIRSTUPDATE flow (requires network integration - Phase 3)
+- ⏳ Task 4: Add support for custom Dialer and Listener for anonymous networks (deferred to Phase 3)
+- ⏳ Task 5: Implement UpdateName (deferred to Phase 3)
 
 **Completed Deliverables:**
-- ✅ `client/embedded.go` - EmbeddedClient with ResolveName, GetInfo, Close, ListNames, GetNameHistory (534 lines)
-- ✅ `client/embedded_test.go` - Comprehensive test suite (886 lines, 12 test functions)
+- ✅ `client/embedded.go` - EmbeddedClient with ResolveName, GetInfo, Close, ListNames, GetNameHistory, RegisterName, WaitForConfirmation (735 lines)
+- ✅ `client/embedded_test.go` - Comprehensive test suite (1,100+ lines, 15+ test functions)
+- ✅ `wallet/wallet.go` - CreateNameNewTx, CreateNameFirstUpdateTx transaction builders (850+ lines)
+- ✅ `wallet/wallet_test.go` - Comprehensive tests including new transaction builders (700+ lines)
 - ✅ `chain/blockchain.go` - Full blockchain integration with ffldb database (2026-01-02)
 - ✅ `config/namecoin_params.go` - Fixed CRITICAL consensus bug: added TargetTimePerBlock and TargetTimespan (2026-01-02)
-- ✅ `wallet/wallet.go` - Fixed CRITICAL consensus bug: corrected name operation opcodes + added script builders (2026-01-02)
-- ✅ `wallet/wallet_test.go` - Comprehensive tests for all script builders (2026-01-02)
-- ✅ All tests passing (100% success rate)
+- ✅ All tests passing (100% success rate across all packages)
 
 **Phase 2 Integration Notes:**
 - Full blockchain integration complete (2026-01-02):
@@ -652,6 +659,15 @@ make test  # All tests passing
   - Updated signature: ComputeNameNewHash(rand, name, chainParams)
   - Hash now: RIPEMD160(SHA256(rand || name || chainID)) matching blockchain validation
   - Added tests to verify different networks produce different hashes
+- RegisterName implementation (2026-01-03):
+  - Creates valid NAME_NEW transactions ready for broadcast
+  - Full input validation (name length, value size, name existence)
+  - Wallet address management (use existing or generate new)
+  - UTXO retrieval and format conversion
+  - Returns TxResult with pending status for async workflows
+  - Comprehensive error handling with descriptive messages
+  - Context cancellation support
+  - Network integration (transaction broadcasting, confirmation waiting) deferred to Phase 3
 - Design allows easy integration of write operations in next iteration
 - ListNames implemented with comprehensive filtering (2026-01-02):
   - Namespace filtering (d/, id/, p/)
@@ -669,10 +685,11 @@ make test  # All tests passing
   - Empty history handling for non-existent names
 
 **Next Steps for Phase 2 Completion:**
-1. Implement RegisterName and UpdateName operations
-2. Add NAME_NEW tracker for pending registrations
-3. Implement WaitForConfirmation
-4. Add custom Dialer/Listener support for Tor/I2P
+1. ✅ Transaction creation for NAME_NEW and NAME_FIRSTUPDATE (COMPLETE)
+2. ✅ RegisterName foundation (COMPLETE - creates NAME_NEW, returns pending result)
+3. ⏳ Full NAME_NEW → NAME_FIRSTUPDATE flow (requires Phase 3 network integration)
+4. ⏳ Implement UpdateName operation (requires Phase 3 network integration)
+5. ⏳ Add custom Dialer/Listener support for Tor/I2P (deferred to future phase)
 
 **Tasks:**
 1. ✅ Implement `client/embedded.go` with NameClient interface (foundation + ListNames + GetNameHistory complete)
