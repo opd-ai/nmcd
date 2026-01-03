@@ -35,8 +35,10 @@ func (bc *BlockChain) ValidateMempoolTransaction(tx *wire.MsgTx) error
 
 **Name Operation Validation:**
 - **NAME_NEW**: Checks for duplicate commitments
-- **NAME_FIRSTUPDATE**: Verifies NAME_NEW exists, name doesn't exist (or is expired), timing constraints
+- **NAME_FIRSTUPDATE**: Verifies NAME_NEW exists and name doesn't exist (or is expired); 12-block minimum delay is enforced during block validation, not by `ValidateMempoolTransaction`
 - **NAME_UPDATE**: Verifies name exists, not expired, transaction spends correct UTXO
+
+> **Note:** Mempool validation does **not** enforce the 12-block minimum delay between `NAME_NEW` and `NAME_FIRSTUPDATE`. That consensus rule is applied only when mining/validating blocks.
 
 ### 2. Transaction Relay (network/peermgr.go)
 

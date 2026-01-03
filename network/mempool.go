@@ -149,6 +149,10 @@ func (mp *Mempool) AddTx(tx *wire.MsgTx) error {
 	}
 
 	// Validate transaction if validator is available
+	// LOCK ORDERING: This holds the mempool write lock while calling the validator,
+	// which acquires a blockchain read lock. To prevent deadlocks, ensure that no
+	// code path acquires the blockchain write lock and then calls mempool operations.
+	// Current lock order: Mempool write lock → Blockchain read lock
 	if mp.validator != nil {
 		if err := mp.validator.ValidateMempoolTransaction(tx); err != nil {
 			return fmt.Errorf("transaction validation failed: %w", err)

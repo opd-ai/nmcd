@@ -1711,6 +1711,25 @@ func (bc *BlockChain) GetNameDB() *namedb.NameDatabase {
 // - Name existence and expiration state
 // - UTXO availability for name updates
 //
+// IMPORTANT LIMITATIONS:
+// 1. This method does NOT validate script signatures or verify that transactions can
+//    actually spend the UTXOs they reference. Signature validation is expensive and
+//    deferred to block validation. Invalid transactions with incorrect signatures may
+//    be accepted into the mempool and relayed to peers, but will be rejected during
+//    block validation. This is an intentional trade-off between DoS resistance and
+//    validation cost.
+//
+// 2. Fee validation requires that all input UTXOs are present in this node's UTXO
+//    database. If any input UTXO cannot be found, the transaction is rejected, even
+//    if it might be valid on the network. This means a node with incomplete UTXO data
+//    (e.g., still syncing or missing historical data) cannot accept transactions that
+//    depend on:
+//      - UTXOs created in blocks before the node started tracking UTXOs
+//      - Recent unconfirmed transactions in other nodes' mempools
+//      - Transactions this node has not yet seen
+//    This behavior differs from Bitcoin Core's mempool, which can validate and store
+//    chains of unconfirmed transactions.
+//
 // This method is thread-safe and can be called concurrently.
 func (bc *BlockChain) ValidateMempoolTransaction(tx *wire.MsgTx) error {
 	if tx == nil {
@@ -1745,13 +1764,10 @@ func (bc *BlockChain) ValidateMempoolTransaction(tx *wire.MsgTx) error {
 		}
 		hasNameOp = true
 
-		// Use the output index for logging if needed
-		_ = i
-
 		// Validate output value meets dust limit
 		if txOut.Value < config.DustLimit {
-			return fmt.Errorf("name operation output value %d below dust limit %d",
-				txOut.Value, config.DustLimit)
+			return fmt.Errorf("name operation output index %d has value %d below dust limit %d",
+				i, txOut.Value, config.DustLimit)
 		}
 
 		// Validate name operation based on type

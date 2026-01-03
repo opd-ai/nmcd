@@ -385,7 +385,8 @@ func (pm *PeerManager) relayTransaction(tx *wire.MsgTx, excludePeer *peer.Peer) 
 	relayCount := 0
 	for _, targetPeer := range pm.peers {
 		// Skip the peer we received this from to avoid relay loops
-		if excludePeer != nil && targetPeer.Addr() == excludePeer.Addr() {
+		// Use pointer equality for reliable peer identity comparison
+		if excludePeer != nil && targetPeer == excludePeer {
 			continue
 		}
 
