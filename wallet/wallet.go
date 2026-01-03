@@ -793,14 +793,16 @@ func (w *Wallet) CreateNameFirstUpdateTx(
 	nameOutValue := int64(1000)
 
 	// Protocol-mandated burned fee for NAME_FIRSTUPDATE: at least MinNameOperationFee (0.01 NMC = 1,000,000 satoshis)
-	// This fee is "burned" - it's the difference between inputs and outputs that goes to miners
-	// but must be at least the minimum protocol fee
+	// This fee is destroyed (burned) as the difference between total inputs and total outputs.
+	// Miners receive this burned amount, but it must meet the minimum protocol requirement.
+	// If the calculated miner fee exceeds the minimum burn fee, use the larger amount.
 	burnFee := int64(config.MinNameOperationFee)
 	if minerFee > burnFee {
 		burnFee = minerFee
 	}
 
-	// Total required: name output + burn fee (which includes miner fee)
+	// Total required: name output + burn fee
+	// The burn fee implicitly includes the miner's reward
 	totalRequired := nameOutValue + burnFee
 
 	// Change calculation (inputs minus name output and burn fee)
