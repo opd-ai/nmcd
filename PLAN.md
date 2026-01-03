@@ -1,6 +1,6 @@
 # Embedded Namecoin Library API - Implementation Plan
 
-**Status:** ⏳ In Progress (Phase 1 ✅, Phase 2 ✅ Foundation, Phase 3 ✅)  
+**Status:** ⏳ In Progress (Phase 1 ✅, Phase 2 ✅ Foundation, Phase 3 ✅, Phase 4 ✅, Phase 5 🚧)  
 **Created:** 2026-01-02  
 **Updated:** 2026-01-03  
 **Target:** Embedded Go library for Namecoin name resolution and registration  
@@ -907,16 +907,25 @@ go run ./examples/list_names --namespace=d/
 go test -v ./client
 ```
 
-### Phase 5: Documentation and Examples (Week 5-6)
+### Phase 5: Documentation and Examples (Week 5-6) 🚧 **IN PROGRESS**
 
 **Goal:** Comprehensive documentation and real-world examples
 
+**Status:** Started 2026-01-03
+- ✅ Task 1: Created `docs/API.md` - Full API reference with examples (14KB)
+- ✅ Task 2: Created `docs/EMBEDDING.md` - Guide for embedding nmcd (12KB)
+- ⏳ Task 3: Create `docs/MODES.md` - Comparison of embedded vs daemon modes
+- ⏳ Task 4: Create `docs/PERFORMANCE.md` - Benchmarks and optimization guide
+- ⏳ Task 5: Create `docs/EXAMPLES.md` - Annotated example applications
+- ⏳ Task 6: Add benchmarks for performance testing
+- ⏳ Task 7: Generate godoc for all public APIs
+
 **Tasks:**
-1. Generate godoc for all public APIs
-2. Write usage guides for common scenarios
-3. Create example applications (DNS resolver, domain registry UI)
-4. Add benchmarks for performance testing
-5. Update README with library-first approach
+1. ✅ Write API reference documentation (docs/API.md)
+2. ✅ Write embedding guide (docs/EMBEDDING.md)
+3. ⏳ Write mode comparison documentation
+4. ⏳ Add benchmarks for performance testing
+5. ⏳ Update README with library-first approach
 
 **Documentation Structure:**
 ```
