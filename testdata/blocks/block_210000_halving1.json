@@ -1,0 +1,10 @@
+{
+  "description": "Block 210,000 - First Subsidy Halving",
+  "network": "mainnet",
+  "type": "block",
+  "height": 210000,
+  "hash": "PLACEHOLDER - Extract using: namecoin-cli getblockhash 210000",
+  "hex": "PLACEHOLDER - Extract using: namecoin-cli getblock $(namecoin-cli getblockhash 210000) 0",
+  "valid": true,
+  "notes": "First subsidy halving block. Block reward halves from 50 NMC to 25 NMC. Validates subsidy calculation at halving boundary. Includes AuxPoW validation. See testdata/EXTRACTION_GUIDE.md for extraction instructions."
+}
