@@ -3,6 +3,7 @@ package chain
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -321,15 +322,5 @@ func TestMainnetTestVector_String(t *testing.T) {
 }
 
 func contains(s, substr string) bool {
-	return len(s) > 0 && len(substr) > 0 && s != "" && 
-		(s == substr || (len(s) >= len(substr) && anyContains(s, substr)))
-}
-
-func anyContains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
+	return strings.Contains(s, substr)
 }

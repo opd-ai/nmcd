@@ -594,18 +594,18 @@ All expected deviations from Bitcoin are correctly implemented. nmcd does not in
 **Resolution Implemented (2026-01-03):**
 
 ✅ **Complete Testing Infrastructure:**
-1. **Test Vector Loader** (`chain/testvector.go` - 151 lines):
+1. **Test Vector Loader** (`chain/testvector.go` - 116 lines):
    - Loads real mainnet blocks from JSON format
    - Validates hex encoding and required fields
-   - 11 comprehensive unit tests
+   - 10 comprehensive unit tests
 
-2. **Mainnet Validation Suite** (`chain/mainnet_vectors_test.go` - 384 lines):
+2. **Mainnet Validation Suite** (`chain/mainnet_vectors_test.go` - 369 lines):
    - Tests block deserialization, hash verification, height validation
    - Validates AuxPoW: chain ID, merkle branches, parent PoW, version bits
    - Reports coverage for critical blocks
-   - 4 test functions with graceful placeholder handling
+   - 5 test functions with graceful placeholder handling
 
-3. **Automated Extraction** (`scripts/extract_test_vectors.sh` - 263 lines):
+3. **Automated Extraction** (`scripts/extract_test_vectors.sh` - 273 lines):
    - Connects to Namecoin Core RPC
    - Extracts blocks in hex format
    - Generates JSON test vectors

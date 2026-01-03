@@ -21,7 +21,7 @@ This was identified as a **CRITICAL** blocker for production use, as incorrect A
 
 ### 1. Test Vector Infrastructure
 
-**File:** `chain/testvector.go` (151 lines)
+**File:** `chain/testvector.go` (116 lines)
 
 Created a robust test vector loader that:
 - Loads real mainnet blocks from JSON format
@@ -46,9 +46,9 @@ type MainnetTestVector struct {
 
 ### 2. Comprehensive Test Suite
 
-**File:** `chain/mainnet_vectors_test.go` (384 lines)
+**File:** `chain/mainnet_vectors_test.go` (369 lines)
 
-Implemented 4 test functions covering:
+Implemented 5 test functions covering:
 
 1. **TestMainnetBlockVectors** - Main test that validates all available blocks
 2. **TestMainnetBlockVector_Genesis** - Specifically tests block 0
@@ -68,7 +68,7 @@ Implemented 4 test functions covering:
 
 ### 3. Automated Extraction Script
 
-**File:** `scripts/extract_test_vectors.sh` (263 lines)
+**File:** `scripts/extract_test_vectors.sh` (273 lines)
 
 Features:
 - Connects to Namecoin Core RPC
@@ -120,9 +120,9 @@ Each placeholder includes:
 
 ### 6. Unit Test Coverage
 
-**File:** `chain/testvector_test.go` (242 lines)
+**File:** `chain/testvector_test.go` (335 lines)
 
-11 test functions covering:
+10 test functions covering:
 - Loading single test vectors
 - Loading multiple test vectors
 - Missing file handling
@@ -133,7 +133,7 @@ Each placeholder includes:
 - Block type checking
 - String representation
 
-**All 11 tests passing** ✅
+**All 10 tests passing** ✅
 
 ## Test Results
 
@@ -152,13 +152,13 @@ All 50+ tests in the chain package pass, including:
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `chain/testvector.go` | 151 | Test vector data structures and loader |
-| `chain/testvector_test.go` | 242 | Unit tests for loader |
-| `chain/mainnet_vectors_test.go` | 384 | Mainnet validation test suite |
-| `scripts/extract_test_vectors.sh` | 263 | Automated extraction script |
-| `testdata/EXTRACTION_GUIDE.md` | 334 | Detailed extraction guide |
+| `chain/testvector.go` | 116 | Test vector data structures and loader |
+| `chain/testvector_test.go` | 335 | Unit tests for loader |
+| `chain/mainnet_vectors_test.go` | 369 | Mainnet validation test suite |
+| `scripts/extract_test_vectors.sh` | 273 | Automated extraction script |
+| `testdata/EXTRACTION_GUIDE.md` | 336 | Detailed extraction guide |
 | `testdata/blocks/*.json` | 6 files | Placeholder test vectors |
-| **Total** | **~1,520 lines** | Complete testing infrastructure |
+| **Total** | **~1,429 lines** | Complete testing infrastructure |
 
 ## Usage
 
