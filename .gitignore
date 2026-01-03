@@ -9,6 +9,12 @@
 *.dylib
 /nmcd
 
+# Example binaries (built from examples/)
+/simple_resolve
+/register_name
+/update_name
+/list_names
+
 # Test binary, built with `go test -c`
 *.test
 
