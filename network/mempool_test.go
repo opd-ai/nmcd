@@ -62,8 +62,8 @@ func TestMempoolAddTx(t *testing.T) {
 func TestMempoolAddNilTx(t *testing.T) {
 	mp := NewMempool()
 	err := mp.AddTx(nil)
-	if err != nil {
-		t.Errorf("AddTx(nil) returned error: %v", err)
+	if err == nil {
+		t.Error("AddTx(nil) should return an error")
 	}
 	if mp.Count() != 0 {
 		t.Errorf("Expected count 0 after adding nil, got %d", mp.Count())
