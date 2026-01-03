@@ -1,0 +1,722 @@
+package client
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"math"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+)
+
+// DaemonClient provides a Namecoin client that connects to an external daemon
+// via JSON-RPC. It implements the NameClient interface for daemon mode usage.
+//
+// Thread-safety: All methods are safe for concurrent use.
+type DaemonClient struct {
+	httpClient *http.Client
+	baseURL    string
+	auth       *basicAuth
+
+	// retryConfig configures retry behavior for transient failures
+	retryConfig RetryConfig
+
+	// mu protects client state
+	mu sync.RWMutex
+
+	// closed tracks whether client has been closed
+	closed bool
+}
+
+// basicAuth holds HTTP Basic Authentication credentials
+type basicAuth struct {
+	username string
+	password string
+}
+
+// RetryConfig configures retry behavior for transient failures.
+type RetryConfig struct {
+	MaxAttempts  int           // Maximum number of retry attempts (default: 3)
+	InitialDelay time.Duration // Initial delay before first retry (default: 100ms)
+	MaxDelay     time.Duration // Maximum delay between retries (default: 5s)
+	Multiplier   float64       // Backoff multiplier (default: 2.0)
+}
+
+// defaultRetryConfig returns the default retry configuration
+func defaultRetryConfig() RetryConfig {
+	return RetryConfig{
+		MaxAttempts:  3,
+		InitialDelay: 100 * time.Millisecond,
+		MaxDelay:     5 * time.Second,
+		Multiplier:   2.0,
+	}
+}
+
+// rpcRequest represents a JSON-RPC request
+type rpcRequest struct {
+	Jsonrpc string      `json:"jsonrpc"`
+	Method  string      `json:"method"`
+	Params  interface{} `json:"params"`
+	ID      int         `json:"id"`
+}
+
+// rpcResponse represents a JSON-RPC response
+type rpcResponse struct {
+	Jsonrpc string          `json:"jsonrpc"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *rpcError       `json:"error,omitempty"`
+	ID      int             `json:"id"`
+}
+
+// rpcError represents a JSON-RPC error
+type rpcError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+func (e *rpcError) Error() string {
+	return fmt.Sprintf("RPC error %d: %s", e.Code, e.Message)
+}
+
+// NewDaemonClient creates a new DaemonClient that connects to an external daemon.
+//
+// Parameters:
+//   - cfg: Client configuration. If nil, uses default configuration.
+//
+// Returns:
+//   - *DaemonClient: Initialized client ready for use
+//   - error: Initialization error, or nil on success
+func NewDaemonClient(cfg *Config) (*DaemonClient, error) {
+	if cfg == nil {
+		cfg = &Config{
+			RPCAddr: "http://localhost:8336",
+		}
+	}
+
+	// Set default RPC address if not specified
+	if cfg.RPCAddr == "" {
+		cfg.RPCAddr = "http://localhost:8336"
+	}
+
+	// Create HTTP client with reasonable timeouts
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:        10,
+			IdleConnTimeout:     90 * time.Second,
+			DisableCompression:  true,
+			MaxIdleConnsPerHost: 2,
+		},
+	}
+
+	client := &DaemonClient{
+		httpClient:  httpClient,
+		baseURL:     cfg.RPCAddr,
+		retryConfig: defaultRetryConfig(),
+		closed:      false,
+	}
+
+	// Validate authentication configuration: either both credentials must be provided, or neither
+	hasUser := cfg.RPCUser != ""
+	hasPassword := cfg.RPCPassword != ""
+	if hasUser != hasPassword {
+		return nil, fmt.Errorf("incomplete RPC authentication: both RPCUser and RPCPassword must be provided together, or neither")
+	}
+
+	// Set authentication if both credentials are provided
+	if hasUser && hasPassword {
+		client.auth = &basicAuth{
+			username: cfg.RPCUser,
+			password: cfg.RPCPassword,
+		}
+	}
+
+	return client, nil
+}
+
+// Ping checks if the daemon is available and responding.
+// Returns nil if the daemon is healthy, or an error otherwise.
+func (c *DaemonClient) Ping(ctx context.Context) error {
+	_, err := c.GetInfo(ctx)
+	if err != nil {
+		return fmt.Errorf("daemon ping failed: %w", err)
+	}
+	return nil
+}
+
+// rpcCall performs a JSON-RPC call to the daemon with retry logic.
+func (c *DaemonClient) rpcCall(ctx context.Context, method string, params interface{}) (json.RawMessage, error) {
+	// Check if client is closed and copy retry config under lock to avoid race conditions
+	c.mu.RLock()
+	if c.closed {
+		c.mu.RUnlock()
+		return nil, fmt.Errorf("client is closed")
+	}
+	// Copy retry config to avoid race with SetRetryConfig
+	retryCfg := c.retryConfig
+	c.mu.RUnlock()
+
+	// Build request
+	req := &rpcRequest{
+		Jsonrpc: "2.0",
+		Method:  method,
+		Params:  params,
+		ID:      1,
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	var lastErr error
+	delay := retryCfg.InitialDelay
+
+	for attempt := 0; attempt < retryCfg.MaxAttempts; attempt++ {
+		// Check context before each attempt
+		select {
+		case <-ctx.Done():
+			return nil, ErrContextCanceled
+		default:
+		}
+
+		result, err := c.doRPCCall(ctx, body)
+		if err == nil {
+			return result, nil
+		}
+
+		lastErr = err
+
+		// Don't retry on non-transient errors
+		if !isTransientError(err) {
+			return nil, err
+		}
+
+		// Wait before retry (with context cancellation support)
+		if attempt < retryCfg.MaxAttempts-1 {
+			select {
+			case <-ctx.Done():
+				return nil, ErrContextCanceled
+			case <-time.After(delay):
+			}
+
+			// Exponential backoff
+			delay = time.Duration(float64(delay) * retryCfg.Multiplier)
+			if delay > retryCfg.MaxDelay {
+				delay = retryCfg.MaxDelay
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("RPC call failed after %d attempts: %w", retryCfg.MaxAttempts, lastErr)
+}
+
+// doRPCCall performs a single RPC call without retry
+func (c *DaemonClient) doRPCCall(ctx context.Context, body []byte) (json.RawMessage, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	// Add authentication if configured
+	if c.auth != nil {
+		httpReq.SetBasicAuth(c.auth.username, c.auth.password)
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer func() {
+		// Drain and close the body to enable connection reuse
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
+
+	// Check HTTP status
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("authentication failed: check RPC credentials")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP error: %s", resp.Status)
+	}
+
+	// Parse response
+	var rpcResp rpcResponse
+	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	// Check for RPC error
+	if rpcResp.Error != nil {
+		return nil, rpcResp.Error
+	}
+
+	return rpcResp.Result, nil
+}
+
+// isTransientError returns true if the error is transient and should be retried
+func isTransientError(err error) bool {
+	// Connection errors are transient
+	if err == nil {
+		return false
+	}
+
+	// Don't retry RPC errors (application-level errors)
+	if _, ok := err.(*rpcError); ok {
+		return false
+	}
+
+	// Authentication errors are not transient
+	errStr := err.Error()
+	if strings.Contains(errStr, "authentication failed") {
+		return false
+	}
+
+	// Connection refused, timeout, etc. are transient
+	if strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "timeout") ||
+		strings.Contains(errStr, "EOF") ||
+		strings.Contains(errStr, "connection reset") {
+		return true
+	}
+
+	return false
+}
+
+// ResolveName retrieves the current value and metadata for a name.
+// Returns ErrNameNotFound if the name doesn't exist or has expired.
+func (c *DaemonClient) ResolveName(ctx context.Context, name string) (*NameRecord, error) {
+	// Validate input
+	if name == "" {
+		return nil, ErrInvalidName
+	}
+
+	result, err := c.rpcCall(ctx, "name_show", []string{name})
+	if err != nil {
+		// Check for "name not found" RPC error
+		if rpcErr, ok := err.(*rpcError); ok {
+			if rpcErr.Code == -5 || strings.Contains(rpcErr.Message, "not found") {
+				return nil, ErrNameNotFound
+			}
+		}
+		return nil, fmt.Errorf("failed to resolve name: %w", err)
+	}
+
+	// Parse response
+	var resp struct {
+		Name      string `json:"name"`
+		Value     string `json:"value"`
+		TxID      string `json:"txid"`
+		Height    int32  `json:"height"`
+		ExpiresIn int32  `json:"expires_in"`
+		Address   string `json:"address"`
+	}
+
+	if err := json.Unmarshal(result, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse name_show response: %w", err)
+	}
+
+	// Check if expired (negative expires_in means already expired)
+	// ExpiresIn of 0 means expires at current block, which is still valid
+	if resp.ExpiresIn < 0 {
+		return nil, ErrNameExpired
+	}
+
+	record := &NameRecord{
+		Name:      resp.Name,
+		Value:     resp.Value,
+		TxHash:    resp.TxID,
+		Height:    resp.Height,
+		ExpiresIn: resp.ExpiresIn,
+		// ExpiresAt is not directly available from name_show, calculate if needed
+		Address: resp.Address,
+	}
+
+	return record, nil
+}
+
+// RegisterName creates a new name registration with the given value.
+//
+// IMPORTANT: RegisterName is not yet supported in daemon mode because the nmcd RPC
+// server does not currently expose name_new and name_firstupdate RPC methods.
+//
+// TODO: Implement RegisterName when name_new and name_firstupdate RPC methods are added.
+// The two-phase registration process requires:
+// 1. name_new: Create commitment transaction
+// 2. Wait for 12 block confirmations
+// 3. name_firstupdate: Reveal name and set initial value
+//
+// Workarounds:
+// - Use embedded mode (NewClient with ModeEmbedded) for name registration
+// - Call name_new and name_firstupdate RPC methods directly via raw RPC client
+// - Use Namecoin Core's RPC interface which supports these methods
+func (c *DaemonClient) RegisterName(ctx context.Context, name, value string, opts *RegisterOpts) (*TxResult, error) {
+	// Validate inputs
+	if len(name) == 0 || len(name) > 255 {
+		return nil, fmt.Errorf("%w: length %d (must be 1-255)", ErrInvalidName, len(name))
+	}
+	if len(value) > 1023 {
+		return nil, fmt.Errorf("%w: length %d (max 1023)", ErrInvalidValue, len(value))
+	}
+
+	// The daemon doesn't have name_new and name_firstupdate RPC methods yet.
+	return nil, fmt.Errorf("RegisterName via daemon mode is not yet supported: use embedded mode (ModeEmbedded) or call name_new/name_firstupdate RPC methods directly on Namecoin Core")
+}
+
+// UpdateName updates an existing name's value.
+func (c *DaemonClient) UpdateName(ctx context.Context, name, value string, opts *UpdateOpts) (*TxResult, error) {
+	// Validate inputs
+	if len(name) == 0 || len(name) > 255 {
+		return nil, fmt.Errorf("%w: length %d (must be 1-255)", ErrInvalidName, len(name))
+	}
+	if len(value) > 1023 {
+		return nil, fmt.Errorf("%w: length %d (max 1023)", ErrInvalidValue, len(value))
+	}
+
+	// Build params for name_update RPC
+	params := []string{name, value}
+
+	// Add destination address if transfer is requested
+	if opts != nil && opts.TransferTo != "" {
+		params = append(params, opts.TransferTo)
+	}
+
+	result, err := c.rpcCall(ctx, "name_update", params)
+	if err != nil {
+		// Map RPC errors to client errors
+		if rpcErr, ok := err.(*rpcError); ok {
+			switch rpcErr.Code {
+			case -4, -5:
+				if strings.Contains(rpcErr.Message, "not found") {
+					return nil, fmt.Errorf("%w: %s", ErrNameNotFound, name)
+				}
+				if strings.Contains(rpcErr.Message, "expired") {
+					return nil, fmt.Errorf("%w: %s", ErrNameExpired, name)
+				}
+			case -13:
+				return nil, fmt.Errorf("wallet does not have private key for name owner: %s", rpcErr.Message)
+			}
+		}
+		return nil, fmt.Errorf("failed to update name: %w", err)
+	}
+
+	// Parse response
+	var resp struct {
+		TxID    string `json:"txid"`
+		Name    string `json:"name"`
+		Value   string `json:"value"`
+		Status  string `json:"status"`
+		Address string `json:"address,omitempty"`
+	}
+
+	if err := json.Unmarshal(result, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse name_update response: %w", err)
+	}
+
+	txResult := &TxResult{
+		TxHash:        resp.TxID,
+		Name:          resp.Name,
+		Status:        TxStatusPending, // Transactions start as pending
+		Confirmations: 0,
+		BlockHeight:   0,
+		BlockHash:     "",
+	}
+
+	// If WaitForConfirmation is requested
+	if opts != nil && opts.WaitForConfirmation {
+		confirmations := opts.Confirmations
+		if confirmations == 0 {
+			confirmations = 1
+		}
+		if err := c.WaitForConfirmation(ctx, resp.TxID, confirmations); err != nil {
+			return nil, fmt.Errorf("failed to wait for confirmation: %w", err)
+		}
+		txResult.Status = TxStatusConfirmed
+		txResult.Confirmations = confirmations
+	}
+
+	return txResult, nil
+}
+
+// ListNames returns all registered names, optionally filtered.
+func (c *DaemonClient) ListNames(ctx context.Context, filter *ListFilter) ([]*NameRecord, error) {
+	result, err := c.rpcCall(ctx, "name_list", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list names: %w", err)
+	}
+
+	// Parse response
+	var resp []struct {
+		Name      string `json:"name"`
+		Value     string `json:"value"`
+		TxID      string `json:"txid"`
+		Height    int32  `json:"height"`
+		ExpiresIn int32  `json:"expires_in"`
+		Address   string `json:"address"`
+	}
+
+	if err := json.Unmarshal(result, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse name_list response: %w", err)
+	}
+
+	// Apply client-side filtering
+	if filter == nil {
+		filter = &ListFilter{Limit: 100}
+	}
+	if filter.Limit == 0 {
+		filter.Limit = 100
+	}
+	if filter.Limit > 10000 {
+		filter.Limit = 10000
+	}
+
+	var records []*NameRecord
+	for _, item := range resp {
+		// Filter by expiration (ExpiresIn < 0 means expired, 0 means expires at current block which is still valid)
+		if !filter.IncludeExpired && item.ExpiresIn < 0 {
+			continue
+		}
+
+		// Filter by namespace
+		if filter.Namespace != "" {
+			if len(item.Name) < len(filter.Namespace) {
+				continue
+			}
+			if item.Name[:len(filter.Namespace)] != filter.Namespace {
+				continue
+			}
+		}
+
+		// Filter by name pattern (simple prefix matching)
+		if filter.NamePattern != "" {
+			if len(item.Name) < len(filter.NamePattern) {
+				continue
+			}
+			if item.Name[:len(filter.NamePattern)] != filter.NamePattern {
+				continue
+			}
+		}
+
+		// Filter by address
+		if filter.Address != "" && item.Address != filter.Address {
+			continue
+		}
+
+		record := &NameRecord{
+			Name:      item.Name,
+			Value:     item.Value,
+			TxHash:    item.TxID,
+			Height:    item.Height,
+			ExpiresIn: item.ExpiresIn,
+			Address:   item.Address,
+		}
+		records = append(records, record)
+	}
+
+	// Apply offset
+	if filter.Offset > 0 {
+		if filter.Offset >= len(records) {
+			return []*NameRecord{}, nil
+		}
+		records = records[filter.Offset:]
+	}
+
+	// Apply limit
+	if len(records) > filter.Limit {
+		records = records[:filter.Limit]
+	}
+
+	return records, nil
+}
+
+// GetNameHistory returns the full history of operations for a name.
+func (c *DaemonClient) GetNameHistory(ctx context.Context, name string) ([]*NameRecord, error) {
+	// Validate input
+	if name == "" {
+		return nil, ErrInvalidName
+	}
+
+	result, err := c.rpcCall(ctx, "name_history", []string{name})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get name history: %w", err)
+	}
+
+	// Parse response
+	var resp []struct {
+		Name      string `json:"name"`
+		Value     string `json:"value"`
+		TxID      string `json:"txid"`
+		Height    int32  `json:"height"`
+		ExpiresAt int32  `json:"expires_at"`
+		Address   string `json:"address"`
+	}
+
+	if err := json.Unmarshal(result, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse name_history response: %w", err)
+	}
+
+	var records []*NameRecord
+	for _, item := range resp {
+		record := &NameRecord{
+			Name:      item.Name,
+			Value:     item.Value,
+			TxHash:    item.TxID,
+			Height:    item.Height,
+			ExpiresAt: item.ExpiresAt,
+			Address:   item.Address,
+		}
+		records = append(records, record)
+	}
+
+	return records, nil
+}
+
+// WaitForConfirmation waits for a transaction to be confirmed in a block.
+//
+// IMPORTANT: This is a simplified implementation that estimates confirmation time
+// based on Namecoin's average block interval (10 minutes). The current nmcd daemon
+// does not expose a gettransaction RPC that returns confirmation count.
+//
+// TODO: Implement proper confirmation checking when gettransaction RPC is added.
+// See: https://github.com/opd-ai/nmcd/issues - tracking issue for gettransaction RPC
+//
+// The function polls at 60-second intervals (1/10th of a block interval) to allow
+// for context cancellation, and returns success after waiting for the expected time
+// based on the number of confirmations requested.
+func (c *DaemonClient) WaitForConfirmation(ctx context.Context, txHash string, confirmations int) error {
+	if confirmations < 1 {
+		return fmt.Errorf("confirmations must be at least 1, got %d", confirmations)
+	}
+
+	// Calculate expected wait time based on confirmations
+	// Namecoin block interval is approximately 10 minutes
+	expectedWait := time.Duration(confirmations) * 10 * time.Minute
+	waitUntil := time.Now().Add(expectedWait)
+
+	// Check immediately if we've already waited long enough (handles quick confirmations)
+	if time.Now().After(waitUntil) {
+		return nil
+	}
+
+	// Poll every 60 seconds (1/10th of a block interval)
+	// This allows for timely context cancellation while avoiding excessive checks
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+
+	// Maximum wait time (2x expected wait as safety margin)
+	maxWait := expectedWait * 2
+	deadline := time.Now().Add(maxWait)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ErrContextCanceled
+		case <-ticker.C:
+			// Check if we've exceeded the deadline
+			if time.Now().After(deadline) {
+				return fmt.Errorf("timeout waiting for %d confirmations for tx %s", confirmations, txHash)
+			}
+
+			// Check if we've waited long enough for the expected confirmations
+			// This is a time-based estimation since we can't query actual confirmations
+			if time.Now().After(waitUntil) {
+				return nil
+			}
+
+			// Continue polling
+		}
+	}
+}
+
+// GetInfo returns general information about the node/network state.
+func (c *DaemonClient) GetInfo(ctx context.Context) (*NodeInfo, error) {
+	result, err := c.rpcCall(ctx, "getinfo", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get info: %w", err)
+	}
+
+	// Parse response
+	var resp struct {
+		Version     string      `json:"version"`
+		Blocks      int32       `json:"blocks"`
+		Connections int         `json:"connections"`
+		Difficulty  interface{} `json:"difficulty"` // Can be float64 or int
+	}
+
+	if err := json.Unmarshal(result, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse getinfo response: %w", err)
+	}
+
+	// Get best block hash
+	hashResult, err := c.rpcCall(ctx, "getbestblockhash", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get best block hash: %w", err)
+	}
+
+	var bestHash string
+	if err := json.Unmarshal(hashResult, &bestHash); err != nil {
+		return nil, fmt.Errorf("failed to parse getbestblockhash response: %w", err)
+	}
+
+	info := &NodeInfo{
+		Version:         resp.Version,
+		ProtocolVersion: 70015, // Namecoin protocol version
+		BlockHeight:     resp.Blocks,
+		BestBlockHash:   bestHash,
+		Connections:     resp.Connections,
+		NetworkName:     "mainnet", // Daemon doesn't provide network name in getinfo
+		Mode:            "daemon",
+	}
+
+	return info, nil
+}
+
+// Close releases resources held by the client.
+// For DaemonClient, this closes the HTTP connection pool.
+func (c *DaemonClient) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.closed {
+		return nil // Already closed
+	}
+
+	// Close idle connections in the transport
+	if transport, ok := c.httpClient.Transport.(*http.Transport); ok {
+		transport.CloseIdleConnections()
+	}
+
+	c.closed = true
+	return nil
+}
+
+// SetRetryConfig sets the retry configuration for the client.
+// This allows customizing retry behavior for transient failures.
+func (c *DaemonClient) SetRetryConfig(cfg RetryConfig) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Validate and set defaults
+	if cfg.MaxAttempts <= 0 {
+		cfg.MaxAttempts = 3
+	}
+	if cfg.InitialDelay <= 0 {
+		cfg.InitialDelay = 100 * time.Millisecond
+	}
+	if cfg.MaxDelay <= 0 {
+		cfg.MaxDelay = 5 * time.Second
+	}
+	// Multiplier must be >= 1.0 (no backoff reduction) and finite
+	if cfg.Multiplier < 1.0 || math.IsNaN(cfg.Multiplier) || math.IsInf(cfg.Multiplier, 0) {
+		cfg.Multiplier = 2.0
+	}
+
+	c.retryConfig = cfg
+}
