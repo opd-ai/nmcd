@@ -12,6 +12,24 @@ validation logic matches Namecoin Core exactly. This includes:
 - Edge cases and consensus rules
 - Known invalid transactions/blocks that should be rejected
 
+## Current Status
+
+**AuxPoW Mainnet Testing Infrastructure:** ✅ **IMPLEMENTED**
+
+The infrastructure for testing AuxPoW validation against real Namecoin mainnet blocks is now complete:
+
+- ✅ Test vector JSON format specification
+- ✅ Test vector loader (`chain/testvector.go`)
+- ✅ Comprehensive test suite (`chain/mainnet_vectors_test.go`)
+- ✅ Extraction script (`scripts/extract_test_vectors.sh`)
+- ✅ Placeholder test vectors for critical blocks
+- ✅ Detailed extraction guide (`testdata/EXTRACTION_GUIDE.md`)
+
+**Next Steps:**
+1. Extract real mainnet blocks using `scripts/extract_test_vectors.sh` (requires Namecoin Core)
+2. Re-run tests with `go test -v ./chain -run TestMainnet`
+3. Mark PROTOCOL_COMPLIANCE_AUDIT.md Issue #1 as complete after successful validation
+
 ## Sources
 
 Test vectors should be extracted from:

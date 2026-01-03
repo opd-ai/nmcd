@@ -1,0 +1,10 @@
+{
+  "description": "AuxPoW Activation Block (Block 19,200) - CRITICAL TEST VECTOR",
+  "network": "mainnet",
+  "type": "block",
+  "height": 19200,
+  "hash": "PLACEHOLDER - Extract using: namecoin-cli getblockhash 19200",
+  "hex": "PLACEHOLDER - Extract using: namecoin-cli getblock $(namecoin-cli getblockhash 19200) 0",
+  "valid": true,
+  "notes": "**MOST CRITICAL TEST VECTOR** - First block with AuxPoW on Namecoin mainnet. Block version MUST have AuxPoW bit (0x100) set. Contains first merged mining proof with parent Bitcoin block. This block validates: (1) AuxPoW deserialization from network format, (2) Chain ID extraction (should be 1 for Namecoin), (3) Parent block PoW validation, (4) Merkle branch verification for both coinbase and chain merkle trees, (5) AuxPoW version bit enforcement. See testdata/EXTRACTION_GUIDE.md for extraction instructions."
+}

@@ -1,0 +1,10 @@
+{
+  "description": "Last Pre-AuxPoW Block (Block 19,199)",
+  "network": "mainnet",
+  "type": "block",
+  "height": 19199,
+  "hash": "PLACEHOLDER - Extract using: namecoin-cli getblockhash 19199",
+  "hex": "PLACEHOLDER - Extract using: namecoin-cli getblock $(namecoin-cli getblockhash 19199) 0",
+  "valid": true,
+  "notes": "Final block before AuxPoW activation. Block version should NOT have AuxPoW bit (0x100) set. This validates pre-AuxPoW block processing still works correctly. See testdata/EXTRACTION_GUIDE.md for extraction instructions."
+}

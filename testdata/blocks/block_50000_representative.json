@@ -1,0 +1,10 @@
+{
+  "description": "Block 50,000 - Representative AuxPoW Block",
+  "network": "mainnet",
+  "type": "block",
+  "height": 50000,
+  "hash": "PLACEHOLDER - Extract using: namecoin-cli getblockhash 50000",
+  "hex": "PLACEHOLDER - Extract using: namecoin-cli getblock $(namecoin-cli getblockhash 50000) 0",
+  "valid": true,
+  "notes": "Random AuxPoW block from well after activation. Validates typical merged mining operations with mature difficulty adjustments. See testdata/EXTRACTION_GUIDE.md for extraction instructions."
+}

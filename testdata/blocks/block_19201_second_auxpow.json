@@ -1,0 +1,10 @@
+{
+  "description": "Second AuxPoW Block (Block 19,201)",
+  "network": "mainnet",
+  "type": "block",
+  "height": 19201,
+  "hash": "PLACEHOLDER - Extract using: namecoin-cli getblockhash 19201",
+  "hex": "PLACEHOLDER - Extract using: namecoin-cli getblock $(namecoin-cli getblockhash 19201) 0",
+  "valid": true,
+  "notes": "Second AuxPoW block validates that activation wasn't a special case. Ensures AuxPoW validation consistency across multiple blocks. See testdata/EXTRACTION_GUIDE.md for extraction instructions."
+}
