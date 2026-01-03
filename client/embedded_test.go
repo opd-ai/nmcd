@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/txscript"
 	"github.com/opd-ai/nmcd/namedb"
 )
 
@@ -92,7 +94,7 @@ func TestNewEmbeddedClient(t *testing.T) {
 			if tt.wantError {
 				if err == nil {
 					t.Errorf("NewEmbeddedClient() expected error containing %q, got nil", tt.errorMsg)
-				} else if tt.errorMsg != "" && !contains(err.Error(), tt.errorMsg) {
+				} else if tt.errorMsg != "" && !strings.Contains(err.Error(), tt.errorMsg) {
 					t.Errorf("NewEmbeddedClient() error = %v, want error containing %q", err, tt.errorMsg)
 				}
 				return
@@ -847,7 +849,245 @@ func TestEmbeddedClient_GetNameHistory_ContextCancellation(t *testing.T) {
 	}
 }
 
-func TestEmbeddedClient_NotImplementedMethods(t *testing.T) {
+func TestEmbeddedClient_RegisterName(t *testing.T) {
+	// Create temporary directory for test
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name         string
+		regName      string
+		value        string
+		opts         *RegisterOpts
+		setupWallet  bool
+		setupUTXOs   bool
+		wantErr      bool
+		errContains  string
+	}{
+		{
+			name:        "successful registration without waiting",
+			regName:     "d/example",
+			value:       `{"ip":"1.2.3.4"}`,
+			opts:        &RegisterOpts{WaitForConfirmation: false, FeeRate: 1},
+			setupWallet: true,
+			setupUTXOs:  true,
+			wantErr:     false,
+		},
+		{
+			name:        "empty name error",
+			regName:     "",
+			value:       "test",
+			opts:        nil,
+			setupWallet: true,
+			setupUTXOs:  true,
+			wantErr:     true,
+			errContains: "invalid name",
+		},
+		{
+			name:        "name too long error",
+			regName:     string(make([]byte, 256)),
+			value:       "test",
+			opts:        nil,
+			setupWallet: true,
+			setupUTXOs:  true,
+			wantErr:     true,
+			errContains: "invalid name",
+		},
+		{
+			name:        "value too large error",
+			regName:     "d/test",
+			value:       string(make([]byte, 1024)),
+			opts:        nil,
+			setupWallet: true,
+			setupUTXOs:  true,
+			wantErr:     true,
+			errContains: "invalid value",
+		},
+		{
+			name:        "no wallet error",
+			regName:     "d/test",
+			value:       "value",
+			opts:        nil,
+			setupWallet: false,
+			setupUTXOs:  false,
+			wantErr:     true,
+			errContains: "wallet not initialized",
+		},
+		{
+			name:        "insufficient funds error",
+			regName:     "d/test",
+			value:       "value",
+			opts:        nil,
+			setupWallet: true,
+			setupUTXOs:  false,
+			wantErr:     true,
+			errContains: "insufficient funds",
+		},
+		{
+			name:        "wait for confirmation requires network",
+			regName:     "d/test",
+			value:       "value",
+			opts:        &RegisterOpts{WaitForConfirmation: true},
+			setupWallet: true,
+			setupUTXOs:  true,
+			wantErr:     true,
+			errContains: "requires network integration",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create unique data directory for each test
+			testDir := filepath.Join(tmpDir, tt.name)
+			
+			// Initialize client with or without wallet
+			cfg := &Config{
+				DataDir:       testDir,
+				Network:       "regtest",
+				DisableWallet: !tt.setupWallet,
+			}
+			client, err := NewEmbeddedClient(cfg)
+			if err != nil {
+				t.Fatalf("NewEmbeddedClient() error: %v", err)
+			}
+			defer client.Close()
+
+			// Setup wallet and UTXOs if needed
+			if tt.setupWallet && tt.setupUTXOs {
+				// Generate wallet address
+				addr, err := client.wallet.GenerateKey()
+				if err != nil {
+					t.Fatalf("failed to generate wallet address: %v", err)
+				}
+
+				// Add a UTXO to the name database for this address
+				// This simulates having funds available
+				txHash := mustParseHashFromString(t, "0000000000000000000000000000000000000000000000000000000000000001")
+				
+				// Get the wallet key to create proper P2PKH script
+				kp, err := client.wallet.GetKey(addr)
+				if err != nil {
+					t.Fatalf("failed to get wallet key: %v", err)
+				}
+				
+				// Create proper P2PKH script
+				pkScript, err := txscript.PayToAddrScript(kp.Address)
+				if err != nil {
+					t.Fatalf("failed to create P2PKH script: %v", err)
+				}
+				
+				utxo := &namedb.UTXO{
+					TxHash:   *txHash,
+					OutIndex: 0,
+					Value:    100000, // 100,000 satoshis
+					PkScript: pkScript,
+					Address:  addr,
+					Height:   1,
+				}
+				if err := client.nameDB.AddUTXO(utxo); err != nil {
+					t.Fatalf("failed to add UTXO: %v", err)
+				}
+			}
+
+			ctx := context.Background()
+
+			// Call RegisterName
+			result, err := client.RegisterName(ctx, tt.regName, tt.value, tt.opts)
+
+			// Check error expectations
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.errContains)
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("expected error containing %q, got %q", tt.errContains, err.Error())
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			// Verify result
+			if result == nil {
+				t.Fatal("result is nil")
+			}
+
+			if result.TxHash == "" {
+				t.Error("result TxHash is empty")
+			}
+
+			if result.Name != tt.regName {
+				t.Errorf("expected name %q, got %q", tt.regName, result.Name)
+			}
+
+			if result.Status != TxStatusPending {
+				t.Errorf("expected status %q, got %q", TxStatusPending, result.Status)
+			}
+		})
+	}
+}
+
+func TestEmbeddedClient_RegisterName_ContextCancellation(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &Config{
+		DataDir: tmpDir,
+		Network: "regtest",
+	}
+	client, err := NewEmbeddedClient(cfg)
+	if err != nil {
+		t.Fatalf("NewEmbeddedClient() error: %v", err)
+	}
+	defer client.Close()
+
+	// Create canceled context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = client.RegisterName(ctx, "d/test", "value", nil)
+	if err != ErrContextCanceled {
+		t.Errorf("expected ErrContextCanceled, got %v", err)
+	}
+}
+
+func TestEmbeddedClient_WaitForConfirmation(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &Config{
+		DataDir: tmpDir,
+		Network: "regtest",
+	}
+	client, err := NewEmbeddedClient(cfg)
+	if err != nil {
+		t.Fatalf("NewEmbeddedClient() error: %v", err)
+	}
+	defer client.Close()
+
+	ctx := context.Background()
+
+	// Test with valid parameters (should return not implemented for now)
+	err = client.WaitForConfirmation(ctx, "abc123", 1)
+	if err == nil {
+		t.Error("expected error for not implemented functionality")
+	}
+
+	// Test with invalid confirmations
+	err = client.WaitForConfirmation(ctx, "abc123", 0)
+	if err == nil {
+		t.Error("expected error for invalid confirmations")
+	}
+
+	// Test with canceled context
+	ctx2, cancel := context.WithCancel(context.Background())
+	cancel()
+	err = client.WaitForConfirmation(ctx2, "abc123", 1)
+	if err != ErrContextCanceled {
+		t.Errorf("expected ErrContextCanceled, got %v", err)
+	}
+}
+
+func TestEmbeddedClient_UpdateName_NotImplemented(t *testing.T) {
 	// Create temporary directory for test
 	tmpDir := t.TempDir()
 
@@ -864,20 +1104,10 @@ func TestEmbeddedClient_NotImplementedMethods(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Test not-yet-implemented methods return appropriate errors
-	_, err = client.RegisterName(ctx, "d/test", "value", nil)
-	if err == nil {
-		t.Error("RegisterName() should return not implemented error")
-	}
-
+	// Test UpdateName returns not implemented error
 	_, err = client.UpdateName(ctx, "d/test", "value", nil)
 	if err == nil {
 		t.Error("UpdateName() should return not implemented error")
-	}
-
-	err = client.WaitForConfirmation(ctx, "txhash", 1)
-	if err == nil {
-		t.Error("WaitForConfirmation() should return not implemented error")
 	}
 }
 
@@ -984,22 +1214,17 @@ func TestEmbeddedClient_ThreadSafety(t *testing.T) {
 
 // Helper functions
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		(len(s) > 0 && len(substr) > 0 && findSubstring(s, substr)))
-}
-
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
-
 func canceledContext() context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	return ctx
+}
+
+func mustParseHashFromString(t *testing.T, hexStr string) *chainhash.Hash {
+	t.Helper()
+	hash, err := chainhash.NewHashFromStr(hexStr)
+	if err != nil {
+		t.Fatalf("failed to parse hash from string: %v", err)
+	}
+	return hash
 }

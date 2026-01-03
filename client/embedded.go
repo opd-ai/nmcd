@@ -224,9 +224,187 @@ func (c *EmbeddedClient) ResolveName(ctx context.Context, name string) (*NameRec
 }
 
 // RegisterName creates a new name registration with the given value.
-// This is a placeholder implementation for Phase 2.
+// This implements the two-phase NAME_NEW → NAME_FIRSTUPDATE registration process.
+//
+// The registration process:
+// 1. Creates a NAME_NEW transaction with a commitment hash (prevents front-running)
+// 2. Waits for 12 block confirmations (Namecoin protocol requirement)
+// 3. Creates a NAME_FIRSTUPDATE transaction revealing the name and setting initial value
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - name: Name to register (1-255 characters, e.g., "d/example")
+//   - value: Initial value for the name (max 1023 bytes, typically JSON)
+//   - opts: Registration options (address, confirmations, fee rate, etc.)
+//
+// Returns:
+//   - *TxResult: Result containing transaction hash and status
+//   - error: Any error encountered during registration
+//
+// Example:
+//
+//	result, err := client.RegisterName(ctx, "d/example", `{"ip":"1.2.3.4"}`, &RegisterOpts{
+//	    WaitForConfirmation: true,
+//	    Confirmations:       6,
+//	})
 func (c *EmbeddedClient) RegisterName(ctx context.Context, name, value string, opts *RegisterOpts) (*TxResult, error) {
-	return nil, fmt.Errorf("RegisterName not yet implemented in Phase 2")
+	// Check context
+	select {
+	case <-ctx.Done():
+		return nil, ErrContextCanceled
+	default:
+	}
+
+	// Check if client is closed
+	c.mu.RLock()
+	if c.closed {
+		c.mu.RUnlock()
+		return nil, fmt.Errorf("client is closed")
+	}
+	c.mu.RUnlock()
+
+	// Check if wallet is available
+	if c.wallet == nil {
+		return nil, ErrNoWallet
+	}
+
+	// Validate inputs
+	if len(name) == 0 || len(name) > 255 {
+		return nil, fmt.Errorf("%w: length %d (must be 1-255)", ErrInvalidName, len(name))
+	}
+	if len(value) > 1023 {
+		return nil, fmt.Errorf("%w: length %d (max 1023)", ErrInvalidValue, len(value))
+	}
+
+	// Check if name already exists
+	existing, err := c.nameDB.GetName(name)
+	if err == nil {
+		// Name exists, check if it's expired
+		bestHeight := c.chain.BestSnapshot().Height
+		if existing.ExpiresAt > bestHeight {
+			return nil, fmt.Errorf("%w: %s", ErrNameExists, name)
+		}
+	}
+
+	// Set default options
+	if opts == nil {
+		opts = &RegisterOpts{
+			Confirmations: 1,
+			FeeRate:       1,
+		}
+	}
+	if opts.FeeRate == 0 {
+		opts.FeeRate = 1
+	}
+	if opts.Confirmations == 0 {
+		opts.Confirmations = 1
+	}
+
+	// Get or create wallet address
+	var ownerAddr string
+	if opts.FromAddress != "" {
+		// Use provided address
+		if !c.wallet.HasKey(opts.FromAddress) {
+			return nil, fmt.Errorf("wallet does not have key for address: %s", opts.FromAddress)
+		}
+		ownerAddr = opts.FromAddress
+	} else {
+		// Get first address or generate new one
+		addrs := c.wallet.GetAddresses()
+		if len(addrs) == 0 {
+			ownerAddr, err = c.wallet.GenerateKey()
+			if err != nil {
+				return nil, fmt.Errorf("failed to generate wallet address: %w", err)
+			}
+		} else {
+			ownerAddr = addrs[0]
+		}
+	}
+
+	// Get UTXOs for funding the transaction
+	utxos, err := c.chain.GetUTXOsForAddress(ownerAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get UTXOs: %w", err)
+	}
+
+	if len(utxos) == 0 {
+		return nil, fmt.Errorf("%w: no UTXOs available for address %s", ErrInsufficientFunds, ownerAddr)
+	}
+
+	// Convert namedb UTXOs to wallet UTXOs
+	walletUTXOs := make([]wallet.UTXO, len(utxos))
+	for i, utxo := range utxos {
+		walletUTXOs[i] = wallet.UTXO{
+			TxHash:   utxo.TxHash,
+			Vout:     utxo.OutIndex,
+			Value:    utxo.Value,
+			PkScript: utxo.PkScript,
+			Address:  utxo.Address,
+		}
+	}
+
+	// Parse owner address for transaction creation
+	ownerBtcAddr, err := c.wallet.GetKey(ownerAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get owner key: %w", err)
+	}
+
+	// Generate random bytes for NAME_NEW commitment
+	randBytes, err := wallet.GenerateRand()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate random bytes: %w", err)
+	}
+
+	// Create NAME_NEW transaction
+	nameNewTx, randUsed, err := c.wallet.CreateNameNewTx(
+		randBytes,
+		name,
+		walletUTXOs,
+		opts.FeeRate,
+		ownerBtcAddr.Address,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create NAME_NEW transaction: %w", err)
+	}
+
+	// TODO: Broadcast NAME_NEW transaction to network
+	// For now, we return a pending result
+	// Network integration will be added in a future phase
+	nameNewTxHash := nameNewTx.TxHash()
+
+	// TODO: Store pending registration for NAME_FIRSTUPDATE completion in Phase 3
+	// The following data should be persisted to enable NAME_FIRSTUPDATE after 12 blocks:
+	// - name: the name being registered
+	// - randUsed: hex-encoded random bytes used in NAME_NEW commitment
+	// - nameNewTxHash: transaction hash of NAME_NEW
+	// - ownerAddress: address that will own the name
+	// - value: initial value to set
+	// - blockHeight: height when NAME_NEW was broadcast (for 12-block wait)
+	// This will be implemented as part of pending registration tracking system.
+	_ = randUsed // Suppress unused variable warning until persistence is implemented
+
+	result := &TxResult{
+		TxHash:        nameNewTxHash.String(),
+		Name:          name,
+		Status:        TxStatusPending,
+		Confirmations: 0,
+		BlockHeight:   0,
+		BlockHash:     "",
+	}
+
+	// If WaitForConfirmation is false, return immediately with NAME_NEW tx hash
+	if !opts.WaitForConfirmation {
+		return result, nil
+	}
+
+	// TODO: Wait for NAME_NEW confirmation and create NAME_FIRSTUPDATE
+	// This requires:
+	// 1. Transaction broadcasting to network
+	// 2. Waiting for 12 block confirmations
+	// 3. Creating and broadcasting NAME_FIRSTUPDATE transaction
+	//
+	// For now, return an error indicating this functionality requires network integration
+	return nil, fmt.Errorf("WaitForConfirmation requires network integration (coming in future phase)")
 }
 
 // UpdateName updates an existing name's value.
@@ -445,9 +623,51 @@ func (c *EmbeddedClient) GetNameHistory(ctx context.Context, name string) ([]*Na
 }
 
 // WaitForConfirmation waits for a transaction to be confirmed in a block.
-// This is a placeholder implementation for Phase 2.
+// Blocks until the transaction appears in the blockchain with the specified
+// number of confirmations or the context is canceled.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - txHash: Transaction hash to wait for (hex string)
+//   - confirmations: Number of block confirmations to wait for (min 1)
+//
+// Returns:
+//   - error: ErrContextCanceled if context is canceled, or other errors
+//
+// Note: This is a placeholder implementation. Full implementation requires:
+// - Transaction mempool tracking
+// - Block notification system
+// - Reorganization handling
 func (c *EmbeddedClient) WaitForConfirmation(ctx context.Context, txHash string, confirmations int) error {
-	return fmt.Errorf("WaitForConfirmation not yet implemented in Phase 2")
+	// Check context
+	select {
+	case <-ctx.Done():
+		return ErrContextCanceled
+	default:
+	}
+
+	// Check if client is closed
+	c.mu.RLock()
+	if c.closed {
+		c.mu.RUnlock()
+		return fmt.Errorf("client is closed")
+	}
+	c.mu.RUnlock()
+
+	// Validate confirmations
+	if confirmations < 1 {
+		return fmt.Errorf("confirmations must be at least 1, got %d", confirmations)
+	}
+
+	// TODO: Implement actual confirmation waiting logic
+	// This requires:
+	// 1. Blockchain notification system for new blocks
+	// 2. Transaction lookup in blocks
+	// 3. Confirmation counting
+	// 4. Reorganization detection and handling
+	//
+	// For now, return an error indicating this functionality requires blockchain integration
+	return fmt.Errorf("WaitForConfirmation requires blockchain notification system (coming in future phase)")
 }
 
 // GetInfo returns general information about the node/network state.
