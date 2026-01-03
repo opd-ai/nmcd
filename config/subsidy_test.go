@@ -267,15 +267,16 @@ func TestSubsidyDecreases(t *testing.T) {
 // https://github.com/namecoin/namecoin-core/blob/master/src/validation.cpp
 //
 // The GetBlockSubsidy function in Namecoin Core uses the exact same logic:
-//   CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
-//   {
-//       int halvings = nHeight / consensusParams.nSubsidyHalvingInterval;
-//       if (halvings >= 64)
-//           return 0;
-//       CAmount nSubsidy = 50 * COIN;
-//       nSubsidy >>= halvings;
-//       return nSubsidy;
-//   }
+//
+//	CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
+//	{
+//	    int halvings = nHeight / consensusParams.nSubsidyHalvingInterval;
+//	    if (halvings >= 64)
+//	        return 0;
+//	    CAmount nSubsidy = 50 * COIN;
+//	    nSubsidy >>= halvings;
+//	    return nSubsidy;
+//	}
 //
 // This test verifies bit-for-bit compatibility with Namecoin Core's subsidy calculation.
 func TestSubsidyMatchesNamecoinCore(t *testing.T) {
@@ -497,18 +498,18 @@ func TestSubsidyBitShiftMatchesNamecoinCore(t *testing.T) {
 		halvings      int32
 		expectedShift int64
 	}{
-		{0, 5000000000},                                    // 50 NMC (no shift)
-		{1, 2500000000},                                    // 50 >> 1 = 25 NMC
-		{2, 1250000000},                                    // 50 >> 2 = 12.5 NMC
-		{3, 625000000},                                     // 50 >> 3 = 6.25 NMC
-		{4, 312500000},                                     // 50 >> 4 = 3.125 NMC
-		{10, 4882812},                                      // 50 >> 10 = 0.04882812... NMC
-		{20, 4768},                                         // 50 >> 20 = 0.00004768... NMC
-		{30, 4},                                            // 50 >> 30 = 0.00000004... NMC (4 satoshis)
-		{32, 1},                                            // 50 >> 32 = 0.00000001... NMC (1 satoshi)
-		{33, 0},                                            // 50 >> 33 = 0 (rounds to 0 satoshis)
-		{63, 0},                                            // 50 >> 63 = 0
-		{64, 0},                                            // Explicitly set to 0 by halvings >= 64 check
+		{0, 5000000000}, // 50 NMC (no shift)
+		{1, 2500000000}, // 50 >> 1 = 25 NMC
+		{2, 1250000000}, // 50 >> 2 = 12.5 NMC
+		{3, 625000000},  // 50 >> 3 = 6.25 NMC
+		{4, 312500000},  // 50 >> 4 = 3.125 NMC
+		{10, 4882812},   // 50 >> 10 = 0.04882812... NMC
+		{20, 4768},      // 50 >> 20 = 0.00004768... NMC
+		{30, 4},         // 50 >> 30 = 0.00000004... NMC (4 satoshis)
+		{32, 1},         // 50 >> 32 = 0.00000001... NMC (1 satoshi)
+		{33, 0},         // 50 >> 33 = 0 (rounds to 0 satoshis)
+		{63, 0},         // 50 >> 63 = 0
+		{64, 0},         // Explicitly set to 0 by halvings >= 64 check
 	}
 
 	for _, tc := range testCases {

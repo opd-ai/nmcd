@@ -626,15 +626,15 @@ func TestCreateNameFirstUpdateTx(t *testing.T) {
 	}
 
 	tests := []struct {
-		name            string
-		nameToReg       string
-		randHex         string
-		value           string
-		utxos           []UTXO
-		nameNewUtxoIdx  int
-		feeRate         int64
-		wantErr         bool
-		errContains     string
+		name           string
+		nameToReg      string
+		randHex        string
+		value          string
+		utxos          []UTXO
+		nameNewUtxoIdx int
+		feeRate        int64
+		wantErr        bool
+		errContains    string
 	}{
 		{
 			name:      "valid NAME_FIRSTUPDATE",

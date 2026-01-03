@@ -103,13 +103,13 @@ func TestBlockVectors(t *testing.T) {
 			t.Errorf("Failed to read %s: %v", file, err)
 			continue
 		}
-		
+
 		// Skip placeholder files (new mainnet test vector format)
 		if bytes.Contains(data, []byte("PLACEHOLDER")) {
 			t.Logf("Skipping placeholder test vector: %s", filepath.Base(file))
 			continue
 		}
-		
+
 		vectors, err := loadTestVectors(file)
 		if err != nil {
 			t.Errorf("Failed to load test vectors from %s: %v", file, err)
