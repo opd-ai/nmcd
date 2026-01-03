@@ -16,7 +16,7 @@ func TestMainnetBlockVectors(t *testing.T) {
 	// Skip if test vectors haven't been extracted yet (contains PLACEHOLDER)
 	// To populate real test vectors, run: scripts/extract_test_vectors.sh
 	// See testdata/EXTRACTION_GUIDE.md for instructions
-	
+
 	vectorsDir := filepath.Join("..", "testdata", "blocks")
 	vectors, err := LoadMainnetTestVectors(vectorsDir, "block_*.json")
 	if err != nil {
@@ -164,14 +164,14 @@ func testMainnetBlock(t *testing.T, vector *MainnetTestVector) {
 		// Validate parent block PoW
 		// Note: We use the block's difficulty target from the header
 		targetDifficulty := blockchain.CompactToBig(block.MsgBlock().Header.Bits)
-		
+
 		// Convert to chainhash.Hash (big.Int is big-endian, Hash expects little-endian for HashToBig)
 		var targetHash chainhash.Hash
 		targetBytes := targetDifficulty.Bytes()
 		for i := 0; i < len(targetBytes); i++ {
 			targetHash[len(targetBytes)-1-i] = targetBytes[i]
 		}
-		
+
 		err = auxPow.ValidateAuxPow(blockHash, NamecoinChainID, &targetHash)
 		if err != nil {
 			t.Errorf("AuxPoW validation failed: %v", err)

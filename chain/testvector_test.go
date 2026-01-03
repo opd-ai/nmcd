@@ -248,10 +248,10 @@ func TestMainnetTestVector_DecodeHex(t *testing.T) {
 
 func TestMainnetTestVector_NetworkChecks(t *testing.T) {
 	tests := []struct {
-		network     string
-		isMainnet   bool
-		isTestnet   bool
-		isRegtest   bool
+		network   string
+		isMainnet bool
+		isTestnet bool
+		isRegtest bool
 	}{
 		{"mainnet", true, false, false},
 		{"testnet", false, true, false},
@@ -305,7 +305,7 @@ func TestMainnetTestVector_String(t *testing.T) {
 	}
 
 	str := vector.String()
-	
+
 	// Verify string contains key information
 	if !contains(str, "19200") {
 		t.Error("String should contain height")

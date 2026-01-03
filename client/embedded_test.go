@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -854,14 +855,14 @@ func TestEmbeddedClient_RegisterName(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	tests := []struct {
-		name         string
-		regName      string
-		value        string
-		opts         *RegisterOpts
-		setupWallet  bool
-		setupUTXOs   bool
-		wantErr      bool
-		errContains  string
+		name        string
+		regName     string
+		value       string
+		opts        *RegisterOpts
+		setupWallet bool
+		setupUTXOs  bool
+		wantErr     bool
+		errContains string
 	}{
 		{
 			name:        "successful registration without waiting",
@@ -938,7 +939,7 @@ func TestEmbeddedClient_RegisterName(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create unique data directory for each test
 			testDir := filepath.Join(tmpDir, tt.name)
-			
+
 			// Initialize client with or without wallet
 			cfg := &Config{
 				DataDir:       testDir,
@@ -962,19 +963,19 @@ func TestEmbeddedClient_RegisterName(t *testing.T) {
 				// Add a UTXO to the name database for this address
 				// This simulates having funds available
 				txHash := mustParseHashFromString(t, "0000000000000000000000000000000000000000000000000000000000000001")
-				
+
 				// Get the wallet key to create proper P2PKH script
 				kp, err := client.wallet.GetKey(addr)
 				if err != nil {
 					t.Fatalf("failed to get wallet key: %v", err)
 				}
-				
+
 				// Create proper P2PKH script
 				pkScript, err := txscript.PayToAddrScript(kp.Address)
 				if err != nil {
 					t.Fatalf("failed to create P2PKH script: %v", err)
 				}
-				
+
 				utxo := &namedb.UTXO{
 					TxHash:   *txHash,
 					OutIndex: 0,
@@ -1087,7 +1088,273 @@ func TestEmbeddedClient_WaitForConfirmation(t *testing.T) {
 	}
 }
 
-func TestEmbeddedClient_UpdateName_NotImplemented(t *testing.T) {
+func TestEmbeddedClient_UpdateName(t *testing.T) {
+	// Create temporary directory for test
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name        string
+		updateName  string
+		value       string
+		opts        *UpdateOpts
+		setupWallet bool
+		setupUTXOs  bool
+		setupName   bool
+		nameExpired bool
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:        "successful update without waiting",
+			updateName:  "d/example",
+			value:       `{"ip":"5.6.7.8"}`,
+			opts:        &UpdateOpts{WaitForConfirmation: false, FeeRate: 1},
+			setupWallet: true,
+			setupUTXOs:  true,
+			setupName:   true,
+			wantErr:     false,
+		},
+		{
+			name:        "empty name error",
+			updateName:  "",
+			value:       "test",
+			opts:        nil,
+			setupWallet: true,
+			setupUTXOs:  true,
+			setupName:   false,
+			wantErr:     true,
+			errContains: "invalid name",
+		},
+		{
+			name:        "name too long error",
+			updateName:  string(make([]byte, 256)),
+			value:       "test",
+			opts:        nil,
+			setupWallet: true,
+			setupUTXOs:  true,
+			setupName:   false,
+			wantErr:     true,
+			errContains: "invalid name",
+		},
+		{
+			name:        "value too large error",
+			updateName:  "d/test",
+			value:       string(make([]byte, 1024)),
+			opts:        nil,
+			setupWallet: true,
+			setupUTXOs:  true,
+			setupName:   true,
+			wantErr:     true,
+			errContains: "invalid value",
+		},
+		{
+			name:        "no wallet error",
+			updateName:  "d/test",
+			value:       "value",
+			opts:        nil,
+			setupWallet: false,
+			setupUTXOs:  false,
+			setupName:   false,
+			wantErr:     true,
+			errContains: "wallet not initialized",
+		},
+		{
+			name:        "name not found error",
+			updateName:  "d/nonexistent",
+			value:       "value",
+			opts:        nil,
+			setupWallet: true,
+			setupUTXOs:  true,
+			setupName:   false,
+			wantErr:     true,
+			errContains: "name not found",
+		},
+		{
+			name:        "name expired error",
+			updateName:  "d/expired",
+			value:       "value",
+			opts:        nil,
+			setupWallet: true,
+			setupUTXOs:  true,
+			setupName:   true,
+			nameExpired: true,
+			wantErr:     true,
+			errContains: "expired",
+		},
+		{
+			name:        "insufficient funds error",
+			updateName:  "d/test",
+			value:       "value",
+			opts:        nil,
+			setupWallet: true,
+			setupUTXOs:  false,
+			setupName:   true,
+			wantErr:     true,
+			errContains: "insufficient funds",
+		},
+		{
+			name:        "wait for confirmation requires network",
+			updateName:  "d/test",
+			value:       "value",
+			opts:        &UpdateOpts{WaitForConfirmation: true},
+			setupWallet: true,
+			setupUTXOs:  true,
+			setupName:   true,
+			wantErr:     true,
+			errContains: "requires network integration",
+		},
+		{
+			name:        "transfer to new address requires network",
+			updateName:  "d/test",
+			value:       "value",
+			opts:        &UpdateOpts{TransferTo: "N1A2B3C4D5E6F7G8H9"},
+			setupWallet: true,
+			setupUTXOs:  true,
+			setupName:   true,
+			wantErr:     true,
+			errContains: "require network integration",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create unique data directory for each test
+			testDir := filepath.Join(tmpDir, tt.name)
+
+			// Initialize client with or without wallet
+			cfg := &Config{
+				DataDir:       testDir,
+				Network:       "regtest",
+				DisableWallet: !tt.setupWallet,
+			}
+			client, err := NewEmbeddedClient(cfg)
+			if err != nil {
+				t.Fatalf("NewEmbeddedClient() error: %v", err)
+			}
+			defer client.Close()
+
+			var ownerAddr string
+			var txHash *chainhash.Hash
+			var pkScript []byte
+
+			// Setup wallet and UTXOs if needed
+			if tt.setupWallet {
+				// Generate wallet address
+				ownerAddr, err = client.wallet.GenerateKey()
+				if err != nil {
+					t.Fatalf("failed to generate wallet address: %v", err)
+				}
+
+				// Get the wallet key to create proper P2PKH script
+				kp, err := client.wallet.GetKey(ownerAddr)
+				if err != nil {
+					t.Fatalf("failed to get wallet key: %v", err)
+				}
+
+				// Create proper P2PKH script
+				pkScript, err = txscript.PayToAddrScript(kp.Address)
+				if err != nil {
+					t.Fatalf("failed to create P2PKH script: %v", err)
+				}
+
+				if tt.setupName {
+					// Add name record to database
+					txHash = mustParseHashFromString(t, "0000000000000000000000000000000000000000000000000000000000000001")
+
+					// Determine expiration based on test case
+					bestHeight := client.chain.BestSnapshot().Height
+					expiresAt := bestHeight + 36000
+					if tt.nameExpired {
+						expiresAt = bestHeight - 1 // Expired
+					}
+
+					nameRecord := &namedb.NameRecord{
+						Name:      tt.updateName,
+						Value:     `{"ip":"1.2.3.4"}`,
+						TxHash:    *txHash,
+						OutIndex:  0,
+						Height:    bestHeight,
+						ExpiresAt: expiresAt,
+						Address:   ownerAddr,
+						UpdatedAt: time.Now(),
+					}
+					if err := client.nameDB.PutName(tt.updateName, nameRecord); err != nil {
+						t.Fatalf("failed to add name: %v", err)
+					}
+
+					if tt.setupUTXOs {
+						// Add the name UTXO to the database
+						nameUTXO := &namedb.UTXO{
+							TxHash:   *txHash,
+							OutIndex: 0,
+							Value:    100000, // 100,000 satoshis
+							PkScript: pkScript,
+							Address:  ownerAddr,
+							Height:   bestHeight,
+						}
+						if err := client.nameDB.AddUTXO(nameUTXO); err != nil {
+							t.Fatalf("failed to add name UTXO: %v", err)
+						}
+					}
+				} else if tt.setupUTXOs {
+					// Add a regular UTXO (not associated with a name)
+					txHash = mustParseHashFromString(t, "0000000000000000000000000000000000000000000000000000000000000002")
+
+					utxo := &namedb.UTXO{
+						TxHash:   *txHash,
+						OutIndex: 0,
+						Value:    100000,
+						PkScript: pkScript,
+						Address:  ownerAddr,
+						Height:   1,
+					}
+					if err := client.nameDB.AddUTXO(utxo); err != nil {
+						t.Fatalf("failed to add UTXO: %v", err)
+					}
+				}
+			}
+
+			ctx := context.Background()
+
+			// Call UpdateName
+			result, err := client.UpdateName(ctx, tt.updateName, tt.value, tt.opts)
+
+			// Check error expectations
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.errContains)
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("expected error containing %q, got %q", tt.errContains, err.Error())
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			// Verify result
+			if result == nil {
+				t.Fatal("result is nil")
+			}
+
+			if result.TxHash == "" {
+				t.Error("result TxHash is empty")
+			}
+
+			if result.Name != tt.updateName {
+				t.Errorf("expected name %q, got %q", tt.updateName, result.Name)
+			}
+
+			if result.Status != TxStatusPending {
+				t.Errorf("expected status %q, got %q", TxStatusPending, result.Status)
+			}
+		})
+	}
+}
+
+func TestEmbeddedClient_UpdateName_ContextCancellation(t *testing.T) {
 	// Create temporary directory for test
 	tmpDir := t.TempDir()
 
@@ -1102,12 +1369,17 @@ func TestEmbeddedClient_UpdateName_NotImplemented(t *testing.T) {
 	}
 	defer client.Close()
 
-	ctx := context.Background()
+	// Create canceled context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 
-	// Test UpdateName returns not implemented error
+	// Test UpdateName returns context canceled error
 	_, err = client.UpdateName(ctx, "d/test", "value", nil)
 	if err == nil {
-		t.Error("UpdateName() should return not implemented error")
+		t.Error("UpdateName() should return context canceled error")
+	}
+	if !errors.Is(err, ErrContextCanceled) {
+		t.Errorf("expected ErrContextCanceled, got %v", err)
 	}
 }
 

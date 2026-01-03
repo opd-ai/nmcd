@@ -785,7 +785,7 @@ func (w *Wallet) CreateNameFirstUpdateTx(
 
 	// Estimate transaction size
 	estimatedSize := int64(10 + len(utxos)*148 + len(nameScript) + 34)
-	
+
 	// Miner fee based on fee rate and estimated size
 	minerFee := feeRate * estimatedSize
 

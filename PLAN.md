@@ -619,12 +619,12 @@ make test  # All tests passing
 - ✅ Task 3.6: Added comprehensive tests for RegisterName (9 test scenarios) (2026-01-03)
 - ⏳ Task 3.7: Full NAME_NEW → NAME_FIRSTUPDATE flow (requires network integration - Phase 3)
 - ⏳ Task 4: Add support for custom Dialer and Listener for anonymous networks (deferred to Phase 3)
-- ⏳ Task 5: Implement UpdateName (deferred to Phase 3)
+- ✅ Task 5: Implement UpdateName (2026-01-03) **COMPLETE**
 
 **Completed Deliverables:**
-- ✅ `client/embedded.go` - EmbeddedClient with ResolveName, GetInfo, Close, ListNames, GetNameHistory, RegisterName, WaitForConfirmation (735 lines)
-- ✅ `client/embedded_test.go` - Comprehensive test suite (1,100+ lines, 15+ test functions)
-- ✅ `wallet/wallet.go` - CreateNameNewTx, CreateNameFirstUpdateTx transaction builders (850+ lines)
+- ✅ `client/embedded.go` - EmbeddedClient with ResolveName, GetInfo, Close, ListNames, GetNameHistory, RegisterName, UpdateName, WaitForConfirmation (880+ lines)
+- ✅ `client/embedded_test.go` - Comprehensive test suite (1,380+ lines, 17+ test functions)
+- ✅ `wallet/wallet.go` - CreateNameNewTx, CreateNameFirstUpdateTx, CreateNameUpdateTx transaction builders (850+ lines)
 - ✅ `wallet/wallet_test.go` - Comprehensive tests including new transaction builders (700+ lines)
 - ✅ `chain/blockchain.go` - Full blockchain integration with ffldb database (2026-01-02)
 - ✅ `config/namecoin_params.go` - Fixed CRITICAL consensus bug: added TargetTimePerBlock and TargetTimespan (2026-01-02)
@@ -668,6 +668,16 @@ make test  # All tests passing
   - Comprehensive error handling with descriptive messages
   - Context cancellation support
   - Network integration (transaction broadcasting, confirmation waiting) deferred to Phase 3
+- UpdateName implementation (2026-01-03):
+  - Creates valid NAME_UPDATE transactions ready for broadcast
+  - Full input validation (name exists, not expired, value size, ownership)
+  - Name UTXO identification and chain verification
+  - UTXO retrieval and format conversion
+  - Returns TxResult with pending status for async workflows
+  - Comprehensive error handling with descriptive messages
+  - Context cancellation support
+  - Transfer support (TransferTo) deferred to Phase 3 network integration
+  - Network integration (transaction broadcasting, confirmation waiting) deferred to Phase 3
 - Design allows easy integration of write operations in next iteration
 - ListNames implemented with comprehensive filtering (2026-01-02):
   - Namespace filtering (d/, id/, p/)
@@ -687,20 +697,21 @@ make test  # All tests passing
 **Next Steps for Phase 2 Completion:**
 1. ✅ Transaction creation for NAME_NEW and NAME_FIRSTUPDATE (COMPLETE)
 2. ✅ RegisterName foundation (COMPLETE - creates NAME_NEW, returns pending result)
-3. ⏳ Full NAME_NEW → NAME_FIRSTUPDATE flow (requires Phase 3 network integration)
-4. ⏳ Implement UpdateName operation (requires Phase 3 network integration)
+3. ✅ UpdateName operation (COMPLETE - creates NAME_UPDATE, returns pending result) (2026-01-03)
+4. ⏳ Full NAME_NEW → NAME_FIRSTUPDATE flow (requires Phase 3 network integration)
 5. ⏳ Add custom Dialer/Listener support for Tor/I2P (deferred to future phase)
 
 **Tasks:**
-1. ✅ Implement `client/embedded.go` with NameClient interface (foundation + ListNames + GetNameHistory complete)
+1. ✅ Implement `client/embedded.go` with NameClient interface (complete - ResolveName, GetInfo, Close, ListNames, GetNameHistory, RegisterName, UpdateName)
 2. ⏳ Initialize blockchain, namedb, network components in-process
 3. ✅ Implement thread-safe access to shared state (blockchain, namedb)
 4. ✅ Add graceful shutdown with resource cleanup
-5. ⏳ Implement `RegisterName` with NAME_NEW → NAME_FIRSTUPDATE flow
+5. ⏳ Implement `RegisterName` with NAME_NEW → NAME_FIRSTUPDATE flow (foundation complete, full flow requires network)
 6. ⏳ Add support for custom Dialer and Listener (anonymous networks)
-7. ✅ Add unit tests for EmbeddedClient methods
+7. ✅ Add unit tests for EmbeddedClient methods (17+ test functions, all passing)
 8. ✅ Implement `ListNames` with filtering and pagination (2026-01-02)
 9. ✅ Implement `GetNameHistory` for operation history retrieval (2026-01-02)
+10. ✅ Implement `UpdateName` for name value updates (2026-01-03)
 
 **Technical Challenges:**
 

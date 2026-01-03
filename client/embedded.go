@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/opd-ai/nmcd/chain"
 	"github.com/opd-ai/nmcd/config"
@@ -410,7 +411,164 @@ func (c *EmbeddedClient) RegisterName(ctx context.Context, name, value string, o
 // UpdateName updates an existing name's value.
 // This is a placeholder implementation for Phase 2.
 func (c *EmbeddedClient) UpdateName(ctx context.Context, name, value string, opts *UpdateOpts) (*TxResult, error) {
-	return nil, fmt.Errorf("UpdateName not yet implemented in Phase 2")
+	// Check context
+	select {
+	case <-ctx.Done():
+		return nil, ErrContextCanceled
+	default:
+	}
+
+	// Check if client is closed
+	c.mu.RLock()
+	if c.closed {
+		c.mu.RUnlock()
+		return nil, fmt.Errorf("client is closed")
+	}
+	c.mu.RUnlock()
+
+	// Check if wallet is available
+	if c.wallet == nil {
+		return nil, ErrNoWallet
+	}
+
+	// Validate inputs
+	if len(name) == 0 || len(name) > 255 {
+		return nil, fmt.Errorf("%w: length %d (must be 1-255)", ErrInvalidName, len(name))
+	}
+	if len(value) > 1023 {
+		return nil, fmt.Errorf("%w: length %d (max 1023)", ErrInvalidValue, len(value))
+	}
+
+	// Check if name exists and get current record
+	nameRecord, err := c.nameDB.GetName(name)
+	if err != nil {
+		if errors.Is(err, namedb.ErrNameNotFound) {
+			return nil, fmt.Errorf("%w: %s", ErrNameNotFound, name)
+		}
+		return nil, fmt.Errorf("failed to get name record: %w", err)
+	}
+
+	// Check if name is expired
+	bestHeight := c.chain.BestSnapshot().Height
+	if nameRecord.ExpiresAt <= bestHeight {
+		return nil, fmt.Errorf("%w: %s (expired at height %d, current height %d)",
+			ErrNameExpired, name, nameRecord.ExpiresAt, bestHeight)
+	}
+
+	// Verify wallet has key for the current owner address
+	if !c.wallet.HasKey(nameRecord.Address) {
+		return nil, fmt.Errorf("wallet does not have key for name owner address: %s", nameRecord.Address)
+	}
+
+	// Set default options
+	if opts == nil {
+		opts = &UpdateOpts{
+			Confirmations: 1,
+			FeeRate:       1,
+		}
+	}
+	if opts.FeeRate == 0 {
+		opts.FeeRate = 1
+	}
+	if opts.Confirmations == 0 {
+		opts.Confirmations = 1
+	}
+
+	// Get UTXOs for the current owner address
+	utxos, err := c.chain.GetUTXOsForAddress(nameRecord.Address)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get UTXOs: %w", err)
+	}
+
+	if len(utxos) == 0 {
+		return nil, fmt.Errorf("%w: no UTXOs available for address %s", ErrInsufficientFunds, nameRecord.Address)
+	}
+
+	// Find the name UTXO (the one that holds the name)
+	var nameUTXOIndex int
+	found := false
+	for i, utxo := range utxos {
+		if utxo.TxHash.IsEqual(&nameRecord.TxHash) && utxo.OutIndex == nameRecord.OutIndex {
+			nameUTXOIndex = i
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return nil, fmt.Errorf("name UTXO not found in available UTXOs (expected tx %s, output %d)",
+			nameRecord.TxHash.String(), nameRecord.OutIndex)
+	}
+
+	// Convert namedb UTXOs to wallet UTXOs
+	walletUTXOs := make([]wallet.UTXO, len(utxos))
+	for i, utxo := range utxos {
+		walletUTXOs[i] = wallet.UTXO{
+			TxHash:   utxo.TxHash,
+			Vout:     utxo.OutIndex,
+			Value:    utxo.Value,
+			PkScript: utxo.PkScript,
+			Address:  utxo.Address,
+		}
+	}
+
+	// Parse destination address if transfer is requested
+	var destAddr btcutil.Address
+	if opts.TransferTo != "" {
+		// Validate the destination address format
+		// For now, we support standard P2PKH addresses
+		// The wallet.CreateNameUpdateTx will handle address parsing internally
+		// We just need to check if it's a valid address string
+		if opts.TransferTo == nameRecord.Address {
+			// Transferring to same address is redundant but allowed
+			destAddr = nil
+		} else {
+			// For Phase 2, we'll use nil for transfer (keeping at same address)
+			// Full transfer support will be added in Phase 3 with address validation
+			return nil, fmt.Errorf("name transfers (TransferTo) require network integration (coming in future phase)")
+		}
+	}
+
+	// Create NAME_UPDATE transaction
+	updateTx, err := c.wallet.CreateNameUpdateTx(
+		name,
+		value,
+		walletUTXOs,
+		nameUTXOIndex,
+		opts.FeeRate,
+		destAddr,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create NAME_UPDATE transaction: %w", err)
+	}
+
+	// TODO: Broadcast NAME_UPDATE transaction to network
+	// For now, we return a pending result
+	// Network integration will be added in a future phase
+	updateTxHash := updateTx.TxHash()
+
+	result := &TxResult{
+		TxHash:        updateTxHash.String(),
+		Name:          name,
+		Status:        TxStatusPending,
+		Confirmations: 0,
+		BlockHeight:   0,
+		BlockHash:     "",
+	}
+
+	// If WaitForConfirmation is false, return immediately with NAME_UPDATE tx hash
+	if !opts.WaitForConfirmation {
+		return result, nil
+	}
+
+	// TODO: Wait for NAME_UPDATE confirmation
+	// This requires:
+	// 1. Transaction broadcasting to network
+	// 2. Waiting for block confirmations
+	// 3. Updating name record in database
+	//
+	// For now, return an error indicating this functionality requires network integration
+	return nil, fmt.Errorf("WaitForConfirmation requires network integration (coming in future phase)")
 }
 
 // ListNames returns all registered names, optionally filtered.
