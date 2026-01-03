@@ -914,7 +914,7 @@ go test -v ./client
 **Status:** Started 2026-01-03
 - ✅ Task 1: Created `docs/API.md` - Full API reference with examples (14KB)
 - ✅ Task 2: Created `docs/EMBEDDING.md` - Guide for embedding nmcd (12KB)
-- ⏳ Task 3: Create `docs/MODES.md` - Comparison of embedded vs daemon modes
+- ✅ Task 3: Created `docs/MODES.md` - Comparison of embedded vs daemon modes (18KB)
 - ⏳ Task 4: Create `docs/PERFORMANCE.md` - Benchmarks and optimization guide
 - ⏳ Task 5: Create `docs/EXAMPLES.md` - Annotated example applications
 - ⏳ Task 6: Add benchmarks for performance testing
@@ -923,7 +923,7 @@ go test -v ./client
 **Tasks:**
 1. ✅ Write API reference documentation (docs/API.md)
 2. ✅ Write embedding guide (docs/EMBEDDING.md)
-3. ⏳ Write mode comparison documentation
+3. ✅ Write mode comparison documentation (docs/MODES.md)
 4. ⏳ Add benchmarks for performance testing
 5. ⏳ Update README with library-first approach
 
