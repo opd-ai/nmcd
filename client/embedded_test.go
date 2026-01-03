@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,7 +94,7 @@ func TestNewEmbeddedClient(t *testing.T) {
 			if tt.wantError {
 				if err == nil {
 					t.Errorf("NewEmbeddedClient() expected error containing %q, got nil", tt.errorMsg)
-				} else if tt.errorMsg != "" && !contains(err.Error(), tt.errorMsg) {
+				} else if tt.errorMsg != "" && !strings.Contains(err.Error(), tt.errorMsg) {
 					t.Errorf("NewEmbeddedClient() error = %v, want error containing %q", err, tt.errorMsg)
 				}
 				return
@@ -997,7 +998,7 @@ func TestEmbeddedClient_RegisterName(t *testing.T) {
 				if err == nil {
 					t.Fatalf("expected error containing %q, got nil", tt.errContains)
 				}
-				if tt.errContains != "" && !contains(err.Error(), tt.errContains) {
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 					t.Errorf("expected error containing %q, got %q", tt.errContains, err.Error())
 				}
 				return
@@ -1212,20 +1213,6 @@ func TestEmbeddedClient_ThreadSafety(t *testing.T) {
 }
 
 // Helper functions
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		(len(s) > 0 && len(substr) > 0 && findSubstring(s, substr)))
-}
-
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
 
 func canceledContext() context.Context {
 	ctx, cancel := context.WithCancel(context.Background())

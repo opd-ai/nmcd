@@ -3,6 +3,7 @@ package wallet
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/btcsuite/btcd/btcutil"
@@ -564,7 +565,7 @@ func TestCreateNameNewTx(t *testing.T) {
 				if err == nil {
 					t.Fatalf("expected error containing %q, got nil", tt.errContains)
 				}
-				if tt.errContains != "" && !contains(err.Error(), tt.errContains) {
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 					t.Errorf("expected error containing %q, got %q", tt.errContains, err.Error())
 				}
 				return
@@ -734,7 +735,7 @@ func TestCreateNameFirstUpdateTx(t *testing.T) {
 				if err == nil {
 					t.Fatalf("expected error containing %q, got nil", tt.errContains)
 				}
-				if tt.errContains != "" && !contains(err.Error(), tt.errContains) {
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 					t.Errorf("expected error containing %q, got %q", tt.errContains, err.Error())
 				}
 				return
@@ -773,19 +774,6 @@ func TestCreateNameFirstUpdateTx(t *testing.T) {
 }
 
 // Helper function to check if a string contains a substring
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 || s[:len(substr)] == substr || s[len(s)-len(substr):] == substr || s[1:len(s)-1] == substr || findSubstring(s, substr))
-}
-
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
-
 // mustParseHash parses a hex string into a chainhash.Hash and panics on error
 func mustParseHash(t *testing.T, hexStr string) chainhash.Hash {
 	t.Helper()
