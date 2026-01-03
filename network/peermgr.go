@@ -10,6 +10,7 @@ import (
 	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/peer"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/opd-ai/nmcd/chain"
@@ -41,10 +42,18 @@ type Config struct {
 
 // NewPeerManager creates a new peer manager
 func NewPeerManager(cfg *Config) (*PeerManager, error) {
+	// Create mempool with validation
+	mempoolCfg := &MempoolConfig{
+		Validator:   cfg.Blockchain, // BlockChain implements TxValidator
+		MaxTxs:      5000,
+		TxExpiry:    24 * time.Hour,
+		CleanupTick: 10 * time.Minute,
+	}
+
 	pm := &PeerManager{
 		peers:       make(map[string]*peer.Peer),
 		blockchain:  cfg.Blockchain,
-		mempool:     NewMempool(),
+		mempool:     NewMempoolWithConfig(mempoolCfg),
 		chainParams: cfg.ChainParams,
 		maxPeers:    cfg.MaxPeers,
 		quit:        make(chan struct{}),
@@ -302,6 +311,18 @@ func (pm *PeerManager) onBlock(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
 		pm.syncManager.BlockReceived(blockHash)
 	}
 
+	// If block was accepted on the main chain, remove confirmed transactions from mempool
+	if isMainChain {
+		// Collect transaction hashes from the block
+		txHashes := make([]chainhash.Hash, 0, len(msg.Transactions))
+		for _, tx := range msg.Transactions {
+			txHashes = append(txHashes, tx.TxHash())
+		}
+
+		// Remove confirmed transactions from mempool
+		pm.mempool.RemoveTxs(txHashes)
+	}
+
 	// Log the result for debugging
 	if isOrphan {
 		log.Printf("Received orphan block %s from peer %s",
@@ -316,19 +337,67 @@ func (pm *PeerManager) onBlock(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
 }
 
 func (pm *PeerManager) onTx(p *peer.Peer, msg *wire.MsgTx) {
-	// Handle transaction message by adding to mempool
+	// Handle transaction message by validating and adding to mempool
 	if msg == nil {
 		return
 	}
 
-	// Add transaction to mempool
-	err := pm.mempool.AddTx(msg)
-	if err != nil {
-		log.Printf("Failed to add transaction to mempool: %v", err)
+	txHash := msg.TxHash()
+
+	// Check if we already have this transaction in mempool
+	if pm.mempool.HasTx(&txHash) {
+		// Already have this transaction, no need to process again
 		return
 	}
 
-	log.Printf("Added transaction %s to mempool (total: %d)", msg.TxHash(), pm.mempool.Count())
+	// Add transaction to mempool (includes validation)
+	err := pm.mempool.AddTx(msg)
+	if err != nil {
+		log.Printf("Rejected transaction %s from peer %s: %v",
+			txHash, p.Addr(), err)
+		return
+	}
+
+	log.Printf("Accepted transaction %s from peer %s (mempool: %d)",
+		txHash, p.Addr(), pm.mempool.Count())
+
+	// Relay transaction to other peers (transaction propagation)
+	// This implements the critical transaction relay functionality
+	pm.relayTransaction(msg, p)
+}
+
+// relayTransaction broadcasts a transaction to all peers except the source
+func (pm *PeerManager) relayTransaction(tx *wire.MsgTx, excludePeer *peer.Peer) {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	if len(pm.peers) == 0 {
+		return
+	}
+
+	txHash := tx.TxHash()
+
+	// Create inventory message for the transaction
+	inv := wire.NewMsgInv()
+	inv.AddInvVect(wire.NewInvVect(wire.InvTypeTx, &txHash))
+
+	// Broadcast to all connected peers except the source
+	relayCount := 0
+	for _, targetPeer := range pm.peers {
+		// Skip the peer we received this from to avoid relay loops
+		if excludePeer != nil && targetPeer.Addr() == excludePeer.Addr() {
+			continue
+		}
+
+		if targetPeer.Connected() {
+			targetPeer.QueueMessage(inv, nil)
+			relayCount++
+		}
+	}
+
+	if relayCount > 0 {
+		log.Printf("Relayed transaction %s to %d peers", txHash, relayCount)
+	}
 }
 
 func (pm *PeerManager) onGetData(p *peer.Peer, msg *wire.MsgGetData) {
@@ -336,9 +405,24 @@ func (pm *PeerManager) onGetData(p *peer.Peer, msg *wire.MsgGetData) {
 	for _, inv := range msg.InvList {
 		switch inv.Type {
 		case wire.InvTypeBlock:
-			// Would fetch and send block
+			// Block requests are handled but not fully implemented
+			// This would require fetching blocks from the blockchain database
+			log.Printf("Received block request from %s: %s (not implemented)",
+				p.Addr(), inv.Hash.String())
+
 		case wire.InvTypeTx:
-			// Would fetch and send transaction
+			// Send transaction from mempool if we have it
+			tx, exists := pm.mempool.GetTx(&inv.Hash)
+			if exists {
+				p.QueueMessage(tx, nil)
+				log.Printf("Sent transaction %s to peer %s",
+					inv.Hash.String(), p.Addr())
+			} else {
+				// Transaction not found in mempool
+				// Could also check blockchain for confirmed transactions
+				log.Printf("Transaction %s not found in mempool (requested by %s)",
+					inv.Hash.String(), p.Addr())
+			}
 		}
 	}
 }
@@ -410,17 +494,41 @@ func (pm *PeerManager) BroadcastBlock(block *wire.MsgBlock) {
 }
 
 // BroadcastTx broadcasts a transaction to all peers
-func (pm *PeerManager) BroadcastTx(tx *wire.MsgTx) {
+// This is used when locally creating transactions (e.g., from RPC calls)
+func (pm *PeerManager) BroadcastTx(tx *wire.MsgTx) error {
+	if tx == nil {
+		return fmt.Errorf("cannot broadcast nil transaction")
+	}
+
+	// First, add to our own mempool (with validation)
+	if err := pm.mempool.AddTx(tx); err != nil {
+		return fmt.Errorf("failed to add transaction to mempool: %w", err)
+	}
+
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 
+	if len(pm.peers) == 0 {
+		log.Printf("Warning: no peers connected, transaction %s not relayed", tx.TxHash())
+		return nil
+	}
+
+	// Create inventory message
 	inv := wire.NewMsgInv()
 	txHash := tx.TxHash()
 	inv.AddInvVect(wire.NewInvVect(wire.InvTypeTx, &txHash))
 
+	// Broadcast to all connected peers
+	broadcastCount := 0
 	for _, p := range pm.peers {
-		p.QueueMessage(inv, nil)
+		if p.Connected() {
+			p.QueueMessage(inv, nil)
+			broadcastCount++
+		}
 	}
+
+	log.Printf("Broadcast transaction %s to %d peers", txHash, broadcastCount)
+	return nil
 }
 
 // GetConnectedPeers returns the number of connected peers
@@ -506,6 +614,11 @@ func (pm *PeerManager) Stop() {
 	// Stop sync manager first
 	if pm.syncManager != nil {
 		pm.syncManager.Stop()
+	}
+
+	// Stop mempool cleanup
+	if pm.mempool != nil {
+		pm.mempool.Stop()
 	}
 
 	close(pm.quit)

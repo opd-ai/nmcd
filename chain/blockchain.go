@@ -1701,3 +1701,159 @@ func (bc *BlockChain) GetBlockHeader(hash *chainhash.Hash) (wire.BlockHeader, er
 func (bc *BlockChain) GetNameDB() *namedb.NameDatabase {
 	return bc.nameDB
 }
+
+// ValidateMempoolTransaction validates a transaction for inclusion in the mempool
+// This performs consensus validation on name operations without requiring the transaction
+// to be part of a block. It checks:
+// - Basic transaction structure and format
+// - Name operation syntax and semantics
+// - Minimum fees for name operations
+// - Name existence and expiration state
+// - UTXO availability for name updates
+//
+// This method is thread-safe and can be called concurrently.
+func (bc *BlockChain) ValidateMempoolTransaction(tx *wire.MsgTx) error {
+	if tx == nil {
+		return fmt.Errorf("transaction is nil")
+	}
+
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+
+	// Get current blockchain height for validation
+	bestSnapshot := bc.BlockChain.BestSnapshot()
+	currentHeight := bestSnapshot.Height
+
+	// Scan transaction outputs for name operations
+	var hasNameOp bool
+
+	for i, txOut := range tx.TxOut {
+		if len(txOut.PkScript) == 0 {
+			continue
+		}
+
+		// Try to parse as name operation
+		op, name, value, extra, err := parseNameScriptFull(txOut.PkScript)
+		if err != nil {
+			// Not a name operation, skip
+			continue
+		}
+
+		// Found a name operation
+		if hasNameOp {
+			return fmt.Errorf("transaction has multiple name operations (not allowed)")
+		}
+		hasNameOp = true
+
+		// Use the output index for logging if needed
+		_ = i
+
+		// Validate output value meets dust limit
+		if txOut.Value < config.DustLimit {
+			return fmt.Errorf("name operation output value %d below dust limit %d",
+				txOut.Value, config.DustLimit)
+		}
+
+		// Validate name operation based on type
+		switch op {
+		case namedb.NameNew:
+			// NAME_NEW validation
+			// Check if commitment already exists in database
+			if _, err := bc.nameDB.GetNameNew(extra); err == nil {
+				return fmt.Errorf("name_new commitment already exists")
+			}
+			// NAME_NEW is valid - commitment will be stored when transaction is mined
+
+		case namedb.NameFirstUpdate:
+			// NAME_FIRSTUPDATE validation
+			// Verify name doesn't already exist
+			if existingRecord, err := bc.nameDB.GetName(name); err == nil {
+				// Name exists - check if it's expired
+				if existingRecord.ExpiresAt > currentHeight {
+					return fmt.Errorf("name already exists and not expired: %s (expires at block %d)",
+						name, existingRecord.ExpiresAt)
+				}
+				// Name exists but is expired - can be re-registered
+			}
+
+			// Verify NAME_NEW commitment exists
+			commitHash := computeCommitHash(extra, name, bc.chainParams)
+			nameNewRecord, err := bc.nameDB.GetNameNew(commitHash)
+			if err != nil {
+				return fmt.Errorf("no matching name_new found for name: %s", name)
+			}
+
+			// Note: We can't validate the block delay here because we don't know
+			// when this transaction will be mined. The miner will validate this
+			// when including in a block. We only check that the NAME_NEW exists.
+			_ = nameNewRecord // Mark as used
+
+			// Validate name format and value
+			if err := validateNameFormat(name, value); err != nil {
+				return fmt.Errorf("invalid name format: %w", err)
+			}
+
+		case namedb.NameUpdate:
+			// NAME_UPDATE validation
+			// Verify name exists and not expired
+			record, err := bc.nameDB.GetName(name)
+			if err != nil {
+				return fmt.Errorf("name not found for update: %s", name)
+			}
+			if record.ExpiresAt <= currentHeight {
+				return fmt.Errorf("name expired: %s (expired at block %d, current %d)",
+					name, record.ExpiresAt, currentHeight)
+			}
+
+			// UTXO chain validation: Verify transaction spends the current name UTXO
+			currentUTXO := wire.OutPoint{
+				Hash:  record.TxHash,
+				Index: record.OutIndex,
+			}
+
+			found := false
+			for _, txIn := range tx.TxIn {
+				if txIn.PreviousOutPoint.Hash.IsEqual(&currentUTXO.Hash) &&
+					txIn.PreviousOutPoint.Index == currentUTXO.Index {
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				return fmt.Errorf("name_update does not spend current name UTXO: name theft attempt for %s", name)
+			}
+
+			// Validate name format and value
+			if err := validateNameFormat(name, value); err != nil {
+				return fmt.Errorf("invalid name format: %w", err)
+			}
+		}
+
+		// Validate transaction fee for name operations
+		if err := bc.validateTransactionFee(tx, op, currentHeight); err != nil {
+			return fmt.Errorf("fee validation failed: %w", err)
+		}
+	}
+
+	// If this is a regular transaction (no name operations), apply basic validation
+	if !hasNameOp {
+		// Basic transaction validation
+		// Check that transaction has at least one output
+		if len(tx.TxOut) == 0 {
+			return fmt.Errorf("transaction has no outputs")
+		}
+
+		// Check that transaction has at least one input (not a coinbase)
+		if len(tx.TxIn) == 0 {
+			return fmt.Errorf("transaction has no inputs")
+		}
+
+		// Check for coinbase transaction (not allowed in mempool)
+		if tx.TxIn[0].PreviousOutPoint.Hash.IsEqual(&chainhash.Hash{}) {
+			return fmt.Errorf("coinbase transactions not allowed in mempool")
+		}
+	}
+
+	return nil
+}
