@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/opd-ai/nmcd/chain"
 	"github.com/opd-ai/nmcd/metrics"
 	"github.com/opd-ai/nmcd/network"
@@ -185,6 +188,12 @@ func (s *Server) processRequest(req *Request) *Response {
 		return s.getNewAddress(req)
 	case "listaddresses":
 		return s.listAddresses(req)
+	case "getblock":
+		return s.getBlock(req)
+	case "getblockhash":
+		return s.getBlockHash(req)
+	case "getrawtransaction":
+		return s.getRawTransaction(req)
 	default:
 		return &Response{
 			Jsonrpc: "2.0",
@@ -688,6 +697,374 @@ func (s *Server) listAddresses(req *Request) *Response {
 	return &Response{
 		Jsonrpc: "2.0",
 		Result:  addresses,
+		ID:      req.ID,
+	}
+}
+
+// getBlock returns a block by hash with optional verbose mode.
+// Parameters: [blockhash] or [blockhash, verbose]
+// - blockhash (string, required): The block hash as hex string
+// - verbose (bool, optional): If false (default), returns hex-encoded block data.
+//                             If true, returns JSON object with block details.
+func (s *Server) getBlock(req *Request) *Response {
+	var params []interface{}
+	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32602,
+				Message: "Invalid params: expected [blockhash] or [blockhash, verbose]",
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Parse block hash
+	hashStr, ok := params[0].(string)
+	if !ok {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32602,
+				Message: "Invalid params: blockhash must be a string",
+			},
+			ID: req.ID,
+		}
+	}
+
+	hash, err := chainhash.NewHashFromStr(hashStr)
+	if err != nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -5,
+				Message: fmt.Sprintf("Invalid block hash: %v", err),
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Parse optional verbose parameter (default is false for hex output)
+	verbose := false
+	if len(params) >= 2 {
+		if v, ok := params[1].(bool); ok {
+			verbose = v
+		}
+	}
+
+	// Get the block from blockchain
+	block, err := s.blockchain.GetBlockByHash(hash)
+	if err != nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -5,
+				Message: fmt.Sprintf("Block not found: %v", err),
+			},
+			ID: req.ID,
+		}
+	}
+
+	if !verbose {
+		// Return hex-encoded block data
+		blockBytes, err := block.Bytes()
+		if err != nil {
+			return &Response{
+				Jsonrpc: "2.0",
+				Error: &Error{
+					Code:    -1,
+					Message: fmt.Sprintf("Failed to serialize block: %v", err),
+				},
+				ID: req.ID,
+			}
+		}
+
+		return &Response{
+			Jsonrpc: "2.0",
+			Result:  fmt.Sprintf("%x", blockBytes),
+			ID:      req.ID,
+		}
+	}
+
+	// Return verbose JSON object
+	msgBlock := block.MsgBlock()
+	header := msgBlock.Header
+
+	// Get block height
+	height, err := s.blockchain.BlockHeightByHash(hash)
+	if err != nil {
+		// If we can't get height, return -1 (for orphan blocks)
+		height = -1
+	}
+
+	// Build transaction list
+	txs := make([]string, len(msgBlock.Transactions))
+	for i, tx := range msgBlock.Transactions {
+		txs[i] = tx.TxHash().String()
+	}
+
+	result := map[string]interface{}{
+		"hash":          hash.String(),
+		"confirmations": s.blockchain.BestSnapshot().Height - height + 1,
+		"height":        height,
+		"version":       header.Version,
+		"merkleroot":    header.MerkleRoot.String(),
+		"time":          header.Timestamp.Unix(),
+		"nonce":         header.Nonce,
+		"bits":          fmt.Sprintf("%08x", header.Bits),
+		"difficulty":    header.Bits,
+		"previousblockhash": header.PrevBlock.String(),
+		"tx":            txs,
+	}
+
+	// Add next block hash if not the best block
+	if height < s.blockchain.BestSnapshot().Height {
+		nextHash, err := s.blockchain.BlockHashByHeight(height + 1)
+		if err == nil {
+			result["nextblockhash"] = nextHash.String()
+		}
+	}
+
+	return &Response{
+		Jsonrpc: "2.0",
+		Result:  result,
+		ID:      req.ID,
+	}
+}
+
+// getBlockHash returns the block hash for a given height.
+// Parameters: [height]
+// - height (int): The block height
+func (s *Server) getBlockHash(req *Request) *Response {
+	var params []interface{}
+	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32602,
+				Message: "Invalid params: expected [height]",
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Parse height - handle both int and float64 from JSON
+	var height int32
+	switch v := params[0].(type) {
+	case float64:
+		height = int32(v)
+	case int:
+		height = int32(v)
+	case int32:
+		height = v
+	default:
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32602,
+				Message: fmt.Sprintf("Invalid params: height must be a number, got %T", params[0]),
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Validate height is non-negative
+	if height < 0 {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -8,
+				Message: "Block height out of range",
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Get hash by height
+	hash, err := s.blockchain.BlockHashByHeight(height)
+	if err != nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -8,
+				Message: fmt.Sprintf("Block height out of range: %v", err),
+			},
+			ID: req.ID,
+		}
+	}
+
+	return &Response{
+		Jsonrpc: "2.0",
+		Result:  hash.String(),
+		ID:      req.ID,
+	}
+}
+
+// getRawTransaction returns the raw transaction data.
+// Parameters: [txid] or [txid, verbose]
+// - txid (string, required): The transaction ID
+// - verbose (bool, optional): If false (default), returns hex-encoded transaction.
+//                             If true, returns JSON object with transaction details.
+//
+// Note: This implementation searches through recent blocks to find transactions.
+// It does not currently support mempool transactions or a full transaction index.
+func (s *Server) getRawTransaction(req *Request) *Response {
+	var params []interface{}
+	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32602,
+				Message: "Invalid params: expected [txid] or [txid, verbose]",
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Parse transaction ID
+	txidStr, ok := params[0].(string)
+	if !ok {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32602,
+				Message: "Invalid params: txid must be a string",
+			},
+			ID: req.ID,
+		}
+	}
+
+	txid, err := chainhash.NewHashFromStr(txidStr)
+	if err != nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -5,
+				Message: fmt.Sprintf("Invalid transaction ID: %v", err),
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Parse optional verbose parameter
+	verbose := false
+	if len(params) >= 2 {
+		if v, ok := params[1].(bool); ok {
+			verbose = v
+		}
+	}
+
+	// Search for transaction in recent blocks
+	// We search backwards from the current best block
+	bestHeight := s.blockchain.BestSnapshot().Height
+	
+	// Limit search to last 1000 blocks to prevent excessive lookups
+	// For a full transaction index, use btcd's txindex
+	startHeight := bestHeight - 1000
+	if startHeight < 0 {
+		startHeight = 0
+	}
+
+	var foundTx *wire.MsgTx
+	var foundBlockHash *chainhash.Hash
+	var foundHeight int32
+
+	for height := bestHeight; height >= startHeight; height-- {
+		hash, err := s.blockchain.BlockHashByHeight(height)
+		if err != nil {
+			continue
+		}
+
+		block, err := s.blockchain.GetBlockByHash(hash)
+		if err != nil {
+			continue
+		}
+
+		// Search transactions in this block
+		for _, tx := range block.MsgBlock().Transactions {
+			txHash := tx.TxHash()
+			if txHash.IsEqual(txid) {
+				foundTx = tx
+				foundBlockHash = hash
+				foundHeight = height
+				break
+			}
+		}
+
+		if foundTx != nil {
+			break
+		}
+	}
+
+	if foundTx == nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -5,
+				Message: fmt.Sprintf("Transaction not found (searched last 1000 blocks): %s", txidStr),
+			},
+			ID: req.ID,
+		}
+	}
+
+	if !verbose {
+		// Return hex-encoded transaction
+		var buf bytes.Buffer
+		if err := foundTx.Serialize(&buf); err != nil {
+			return &Response{
+				Jsonrpc: "2.0",
+				Error: &Error{
+					Code:    -1,
+					Message: fmt.Sprintf("Failed to serialize transaction: %v", err),
+				},
+				ID: req.ID,
+			}
+		}
+
+		return &Response{
+			Jsonrpc: "2.0",
+			Result:  fmt.Sprintf("%x", buf.Bytes()),
+			ID:      req.ID,
+		}
+	}
+
+	// Build verbose JSON response
+	result := map[string]interface{}{
+		"txid":     foundTx.TxHash().String(),
+		"version":  foundTx.Version,
+		"locktime": foundTx.LockTime,
+		"blockhash": foundBlockHash.String(),
+		"blockheight": foundHeight,
+		"confirmations": s.blockchain.BestSnapshot().Height - foundHeight + 1,
+	}
+
+	// Add inputs
+	vin := make([]map[string]interface{}, len(foundTx.TxIn))
+	for i, txIn := range foundTx.TxIn {
+		vin[i] = map[string]interface{}{
+			"txid":     txIn.PreviousOutPoint.Hash.String(),
+			"vout":     txIn.PreviousOutPoint.Index,
+			"sequence": txIn.Sequence,
+		}
+	}
+	result["vin"] = vin
+
+	// Add outputs
+	vout := make([]map[string]interface{}, len(foundTx.TxOut))
+	for i, txOut := range foundTx.TxOut {
+		vout[i] = map[string]interface{}{
+			"value": float64(txOut.Value) / 1e8, // Convert satoshis to NMC
+			"n":     i,
+			"scriptPubKey": map[string]interface{}{
+				"hex": fmt.Sprintf("%x", txOut.PkScript),
+			},
+		}
+	}
+	result["vout"] = vout
+
+	return &Response{
+		Jsonrpc: "2.0",
+		Result:  result,
 		ID:      req.ID,
 	}
 }
