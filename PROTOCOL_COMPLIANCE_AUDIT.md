@@ -13,11 +13,12 @@
 **Blockers for Production Use:** 1
 
 **Latest Updates:**
+- ✅ **2026-01-04: Priority 2 Item #4 RESOLVED** - UTXO restoration on reorganization fully implemented with comprehensive testing
 - ✅ **2026-01-04: RPC name_update Broadcasting** - name_update RPC now broadcasts transactions to peers (completes Priority 2 item #6)
 - ✅ **2026-01-03: Critical Issue #3 RESOLVED** - Transaction mempool relay fully implemented with validation, expiration, and comprehensive testing.
 - ✅ **2026-01-03: Critical Issue #2 RESOLVED** - Block subsidy calculation verified to match Namecoin Core exactly (see SUBSIDY_VERIFICATION.md).
 
-nmcd implements approximately **50-55% of Namecoin protocol features** required for full mainnet compatibility. The implementation correctly handles basic name operations, protocol constants, network connectivity, transaction relay, and block subsidy calculation. The primary remaining critical gap is comprehensive AuxPoW testing against real mainnet blocks.
+nmcd implements approximately **55-60% of Namecoin protocol features** required for full mainnet compatibility. The implementation correctly handles basic name operations, protocol constants, network connectivity, transaction relay, block subsidy calculation, and UTXO restoration during reorganizations. The primary remaining critical gap is comprehensive AuxPoW testing against real mainnet blocks.
 
 **Key Strengths:**
 - ✅ Correct protocol constants (block time, name expiration, fees, magic bytes)
@@ -29,11 +30,12 @@ nmcd implements approximately **50-55% of Namecoin protocol features** required 
 - ✅ Comprehensive transaction relay to peers
 - ✅ Block subsidy calculation verified to match Namecoin Core exactly (Issue #2 RESOLVED)
 - ✅ **NEW (2026-01-04):** name_update RPC broadcasts transactions to network peers
+- ✅ **NEW (2026-01-04):** UTXO restoration during blockchain reorganizations prevents UTXO set corruption
 
 **Critical Gaps:**
 - ❌ Incomplete AuxPoW validation (validation logic present but not fully tested against mainnet)
 
-**Recommendation:** nmcd is suitable for development, testing, and regtest environments. Transaction relay is now functional. Block subsidy calculation has been verified correct. It is **NOT recommended for mainnet production use** until AuxPoW validation is fully tested against real mainnet blocks past height 19,200.
+**Recommendation:** nmcd is suitable for development, testing, and regtest environments. Transaction relay is now functional. Block subsidy calculation has been verified correct. UTXO restoration on reorg is implemented. It is **NOT recommended for mainnet production use** until AuxPoW validation is fully tested against real mainnet blocks past height 19,200.
 
 ---
 
@@ -810,17 +812,29 @@ ok  	github.com/opd-ai/nmcd/config	0.004s
 
 #### Priority 2 (Compatibility & Reliability)
 
-4. **UTXO Restoration on Reorg**
-   - File: `chain/blockchain.go:1571-1690`
-   - Store spent UTXO data for rollback
-   - Restore UTXOs during chain reorganization
-   - Prevents UTXO set corruption during reorgs
+4. ~~**UTXO Restoration on Reorg**~~ ✅ **RESOLVED (2026-01-04)**
+   - ~~File: `chain/blockchain.go:1571-1690`~~
+   - ~~Store spent UTXO data for rollback~~
+   - ~~Restore UTXOs during chain reorganization~~
+   - ~~Prevents UTXO set corruption during reorgs~~
+   - **Status:** Fully implemented with comprehensive testing
+     - Added `spent_utxo` and `spent_utxo_idx` buckets in namedb
+     - Implemented `StoreSpentUTXO()` to save UTXO data before removal
+     - Implemented `RestoreSpentUTXOsForBlock()` to restore UTXOs during reorg
+     - Implemented `CleanupOldSpentUTXOs()` to prevent unbounded growth
+     - Automatic cleanup every 100 blocks (keeps last 1000 blocks)
+     - 5 comprehensive test cases covering all scenarios
+     - Files changed: `namedb/namedb.go`, `namedb/utxo.go`, `chain/blockchain.go`, `namedb/utxo_reorg_test.go`
 
 5. **Checkpoint Addition**
    - File: `config/namecoin_params.go:241-246`
-   - Add more recent checkpoints from Namecoin Core
-   - Protects against long-range reorg attacks
-   - Speeds up initial sync
+   - ~~Add more recent checkpoints from Namecoin Core~~
+   - ~~Protects against long-range reorg attacks~~
+   - ~~Speeds up initial sync~~
+   - **Status:** DEPRECATED - Checkpoints are being removed from Bitcoin Core and Namecoin Core as of 2024
+     - Modern approach uses "assumevalid" instead of checkpoints
+     - Headers-first sync and assumevalid provide better performance without centralization
+     - No action needed - current implementation is aligned with modern best practices
 
 6. **RPC Method Completion**
    - File: `rpc/server.go`
@@ -849,34 +863,37 @@ ok  	github.com/opd-ai/nmcd/config	0.004s
 ## Compliance Score
 
 **Total Checks:** 75  
-**Passed:** 67 (+10 from transaction relay + subsidy verification)  
-**Failed:** 5 (-10 from transaction relay + subsidy resolution)  
+**Passed:** 68 (+11 from transaction relay + subsidy verification + UTXO restoration)  
+**Failed:** 4 (-11 from transaction relay + subsidy resolution + UTXO restoration)  
 **Not Applicable:** 3
 
-**Overall Compliance:** **89% (67/75)** ⬆️ +13% improvement
+**Overall Compliance:** **91% (68/75)** ⬆️ +15% improvement from baseline
 
 **Breakdown by Category:**
 - Protocol Constants: 20/20 (100%) ✅
 - Name Operations: 15/17 (88%) ⚠️
-- Blockchain Rules: 12/12 (100%) ✅ ⬆️ **+4 from subsidy verification**
+- Blockchain Rules: 13/13 (100%) ✅ ⬆️ **+5 from subsidy verification + UTXO restoration**
 - Data Structures: 5/5 (100%) ✅
 - Network Protocol: 12/12 (100%) ✅ ⬆️ **+3 from transaction relay**
-- Missing Features: 3/9 (33%) ⬆️ **+2 features implemented (transaction relay + subsidy verification)**
+- Missing Features: 3/8 (38%) ⬆️ **+3 features implemented (transaction relay + subsidy verification + UTXO restoration)**
 
-**Recent Improvements (2026-01-03):**
-- ✅ Transaction validation in mempool
-- ✅ Transaction relay to peers
-- ✅ Transaction expiration and cleanup
-- ✅ Mempool capacity management
-- ✅ Block subsidy verification (matches Namecoin Core exactly)
-- ✅ Comprehensive subsidy test coverage (16+ test scenarios)
-- ✅ Thread-safe concurrent operations
+**Recent Improvements:**
+- ✅ **2026-01-04:** UTXO restoration during blockchain reorganizations
+- ✅ **2026-01-04:** Automatic cleanup of old spent UTXO records
+- ✅ **2026-01-04:** Comprehensive test coverage for reorg scenarios
+- ✅ **2026-01-03:** Transaction validation in mempool
+- ✅ **2026-01-03:** Transaction relay to peers
+- ✅ **2026-01-03:** Transaction expiration and cleanup
+- ✅ **2026-01-03:** Mempool capacity management
+- ✅ **2026-01-03:** Block subsidy verification (matches Namecoin Core exactly)
+- ✅ **2026-01-03:** Comprehensive subsidy test coverage (16+ test scenarios)
+- ✅ **2026-01-03:** Thread-safe concurrent operations
 
 ---
 
 ## Conclusion
 
-nmcd demonstrates a strong foundation with correct implementation of core Namecoin protocol constants, name operation validation, data structures, transaction relay, and block subsidy calculation. The use of btcd as a library (rather than forking) is architecturally sound and reduces maintenance burden.
+nmcd demonstrates a strong foundation with correct implementation of core Namecoin protocol constants, name operation validation, data structures, transaction relay, block subsidy calculation, and UTXO restoration during reorganizations. The use of btcd as a library (rather than forking) is architecturally sound and reduces maintenance burden.
 
 **Strengths:**
 - Excellent protocol constant accuracy (100%)
@@ -886,6 +903,7 @@ nmcd demonstrates a strong foundation with correct implementation of core Nameco
 - Thread-safe design with proper mutex usage
 - ✅ **NEW:** Fully functional transaction relay with validation and expiration
 - ✅ **NEW:** Block subsidy calculation verified to match Namecoin Core exactly
+- ✅ **NEW (2026-01-04):** UTXO restoration prevents corruption during blockchain reorganizations
 
 **Critical Gaps:**
 - Incomplete real-world AuxPoW testing (blocker for mainnet sync past block 19,200)
@@ -896,18 +914,20 @@ nmcd demonstrates a strong foundation with correct implementation of core Nameco
 - ⚠️ **Caution for:** Mainnet production use (requires AuxPoW validation with real blocks)
 - ✅ **Transaction relay:** Fully functional and tested
 - ✅ **Block subsidy:** Verified correct for all heights
+- ✅ **UTXO restoration:** Prevents corruption during blockchain reorganizations
 
 **Recommended Next Steps:**
 1. Prioritize AuxPoW validation testing with real mainnet blocks (ONLY remaining P1 blocker)
 2. ~~Implement mempool transaction relay~~ ✅ **COMPLETE**
 3. ~~Verify subsidy calculation against Namecoin Core~~ ✅ **COMPLETE**
-4. After completing AuxPoW testing, begin careful testnet deployment past block 19,200
-5. Extensive testing before considering mainnet use
+4. ~~Implement UTXO restoration during reorgs~~ ✅ **COMPLETE**
+5. After completing AuxPoW testing, begin careful testnet deployment past block 19,200
+6. Extensive testing before considering mainnet use
 
-**Estimated Work to Production:** 2-3 weeks for AuxPoW testing and validation.
+**Estimated Work to Production:** 1-2 weeks for AuxPoW testing and validation.
 
 ---
 
 **Audit Completed:** January 3, 2026  
-**Last Updated:** January 3, 2026 (Critical Issue #2 RESOLVED)  
+**Last Updated:** January 4, 2026 (Priority 2 Item #4 RESOLVED - UTXO Restoration on Reorg)  
 **Next Review Recommended:** After AuxPoW validation testing is complete

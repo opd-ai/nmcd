@@ -16,9 +16,11 @@ var (
 	historyBucket      = []byte("history")
 	historyIndexBucket = []byte("history_index")
 	expirationBucket   = []byte("expiration")
-	nameNewBucket      = []byte("name_new")  // Tracks NAME_NEW commitments
-	utxoBucket         = []byte("utxo")      // Tracks unspent transaction outputs
-	utxoAddrBucket     = []byte("utxo_addr") // Index: address -> UTXOs
+	nameNewBucket      = []byte("name_new")     // Tracks NAME_NEW commitments
+	utxoBucket         = []byte("utxo")         // Tracks unspent transaction outputs
+	utxoAddrBucket     = []byte("utxo_addr")    // Index: address -> UTXOs
+	spentUtxoBucket    = []byte("spent_utxo")   // Tracks spent UTXOs for reorg restoration (indexed by block height)
+	spentUtxoIdxBucket = []byte("spent_utxo_idx") // Index: height -> list of spent UTXO keys
 )
 
 // Sentinel errors for namedb operations
@@ -99,7 +101,7 @@ func NewNameDatabase(dbPath string) (*NameDatabase, error) {
 
 	// Initialize buckets
 	err = db.Update(func(tx *bbolt.Tx) error {
-		for _, bucket := range [][]byte{namesBucket, historyBucket, historyIndexBucket, expirationBucket, nameNewBucket, utxoBucket, utxoAddrBucket} {
+		for _, bucket := range [][]byte{namesBucket, historyBucket, historyIndexBucket, expirationBucket, nameNewBucket, utxoBucket, utxoAddrBucket, spentUtxoBucket, spentUtxoIdxBucket} {
 			if _, err := tx.CreateBucketIfNotExists(bucket); err != nil {
 				return err
 			}
