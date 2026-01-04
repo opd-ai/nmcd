@@ -83,7 +83,7 @@ func TestIntegration_EmbeddedClient_FullWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHashFromStr() failed: %v", err)
 	}
-	
+
 	record := &namedb.NameRecord{
 		Name:      testName,
 		Value:     testValue,

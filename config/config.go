@@ -85,14 +85,15 @@ var ValidNamespaces = []string{
 
 // Config holds all configuration for nmcd
 type Config struct {
-	DataDir     string
-	Network     string
-	RPCAddr     string
-	RPCUser     string
-	RPCPassword string
-	ListenAddrs []string
-	MaxPeers    int
-	AddPeers    []string
+	DataDir        string
+	Network        string
+	RPCAddr        string
+	RPCUser        string
+	RPCPassword    string
+	PrometheusAddr string // Prometheus metrics HTTP endpoint address (empty = disabled)
+	ListenAddrs    []string
+	MaxPeers       int
+	AddPeers       []string
 }
 
 // DefaultConfig returns default configuration
@@ -101,14 +102,15 @@ func DefaultConfig() *Config {
 	dataDir := filepath.Join(homeDir, ".nmcd")
 
 	return &Config{
-		DataDir:     dataDir,
-		Network:     "mainnet",
-		RPCAddr:     "127.0.0.1:8336",
-		RPCUser:     "",
-		RPCPassword: "",
-		ListenAddrs: []string{"0.0.0.0:8334"},
-		MaxPeers:    125,
-		AddPeers:    []string{},
+		DataDir:        dataDir,
+		Network:        "mainnet",
+		RPCAddr:        "127.0.0.1:8336",
+		RPCUser:        "",
+		RPCPassword:    "",
+		PrometheusAddr: "", // Disabled by default
+		ListenAddrs:    []string{"0.0.0.0:8334"},
+		MaxPeers:       125,
+		AddPeers:       []string{},
 	}
 }
 

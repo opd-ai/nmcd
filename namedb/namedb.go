@@ -16,10 +16,10 @@ var (
 	historyBucket      = []byte("history")
 	historyIndexBucket = []byte("history_index")
 	expirationBucket   = []byte("expiration")
-	nameNewBucket      = []byte("name_new")     // Tracks NAME_NEW commitments
-	utxoBucket         = []byte("utxo")         // Tracks unspent transaction outputs
-	utxoAddrBucket     = []byte("utxo_addr")    // Index: address -> UTXOs
-	spentUtxoBucket    = []byte("spent_utxo")   // Tracks spent UTXOs for reorg restoration (indexed by block height)
+	nameNewBucket      = []byte("name_new")       // Tracks NAME_NEW commitments
+	utxoBucket         = []byte("utxo")           // Tracks unspent transaction outputs
+	utxoAddrBucket     = []byte("utxo_addr")      // Index: address -> UTXOs
+	spentUtxoBucket    = []byte("spent_utxo")     // Tracks spent UTXOs for reorg restoration (indexed by block height)
 	spentUtxoIdxBucket = []byte("spent_utxo_idx") // Index: height -> list of spent UTXO keys
 )
 
