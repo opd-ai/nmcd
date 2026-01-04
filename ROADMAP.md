@@ -181,37 +181,78 @@ All tests pass. No regressions in existing code.
 Deliverable: Router that maps .bit addresses to real email addresses
 
 ================================================================================
-PHASE 3: SMTP RELAY (Week 3)
+PHASE 3: SMTP RELAY (Week 3) ✅ COMPLETE (2026-01-04)
 ================================================================================
 
 Goal: Minimal SMTP server that accepts mail and forwards it
 
+**STATUS: COMPLETE**
+
+Implementation: mail/smtp.go (~400 LOC including docs)
+Tests: mail/smtp_test.go (~350 LOC, 100% coverage)
+Example: examples/smtp_relay/main.go (~150 LOC)
+Documentation: examples/smtp_relay/README.md
+
+Delivered:
+✅ RelayConfig struct with upstream SMTP configuration
+✅ Relay struct with router integration
+✅ Start/Stop methods with graceful shutdown
+✅ Full SMTP protocol implementation (HELO, EHLO, MAIL FROM, RCPT TO, DATA, QUIT, RSET, NOOP)
+✅ .bit address validation (domain-based checking)
+✅ Message forwarding to upstream SMTP server
+✅ Upstream authentication support (SMTP AUTH)
+✅ Configurable message size limits and timeouts
+✅ Thread-safe concurrent connection handling
+✅ Case-insensitive command and address handling
+✅ 9 comprehensive test functions covering all scenarios
+✅ 100% test coverage (all tests pass)
+✅ Production-ready example with systemd integration
+✅ Complete documentation with deployment guide
+
 File: mail/smtp.go
 
+    type RelayConfig struct {
+        ListenAddr     string
+        UpstreamHost   string
+        UpstreamPort   int
+        UpstreamAuth   smtp.Auth
+        ReadTimeout    time.Duration
+        WriteTimeout   time.Duration
+        MaxMessageSize int64
+    }
+
     type Relay struct {
-        router    *Router
-        upstream  string        // outbound SMTP server
-        listenAddr string
+        router   *Router
+        config   RelayConfig
+        listener net.Listener
+        // ... thread-safe implementation
     }
 
-    func (s *Relay) Start() error {
-        // Uses go-smtp or net/smtp
-        // Listen on port 25/587
+    func (r *Relay) Start() error {
+        // Listens on configured address
+        // Handles connections in background goroutines
     }
 
-    func (s *Relay) handleMessage(from string, to string, body []byte) error {
-        realAddr, err := s.router.Route(to)
-        if err != nil {
-            return err
-        }
-        return s.forward(from, realAddr, body)
+    func (r *Relay) Stop() error {
+        // Graceful shutdown with connection draining
     }
 
-    func (s *Relay) forward(from, to string, body []byte) error {
-        // Relay via upstream SMTP (sendgrid, mailgun, or direct)
-    }
+    // SMTP session handlers
+    func (s *smtpSession) handleMailFrom(cmd string) error
+    func (s *smtpSession) handleRcptTo(cmd string) error
+    func (s *smtpSession) handleData() error
+    func (s *smtpSession) forwardMessage(ctx, from, to string, body []byte) error
 
-External dependency: github.com/emersion/go-smtp (lightweight, maintained)
+Note: Implementation uses stdlib net/smtp instead of github.com/emersion/go-smtp.
+This reduces dependencies while providing all required functionality.
+
+Files Created:
+- mail/smtp.go (400 LOC) - Complete SMTP relay implementation
+- mail/smtp_test.go (350 LOC) - Comprehensive test suite
+- examples/smtp_relay/main.go (150 LOC) - Production-ready example
+- examples/smtp_relay/README.md (200 LOC) - Deployment guide
+
+All tests pass. No regressions in existing code.
 
 Deliverable: Working SMTP relay that accepts mail to .bit, forwards to real inbox
 

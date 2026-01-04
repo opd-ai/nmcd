@@ -285,7 +285,8 @@ func (s *smtpSession) handleMailFrom(cmd string) error {
 		return s.writeLine("501 Syntax error in MAIL FROM")
 	}
 
-	s.from = addr
+	// Store the address in lowercase for consistency
+	s.from = strings.ToLower(addr)
 	return s.writeLine("250 OK")
 }
 
@@ -297,12 +298,19 @@ func (s *smtpSession) handleRcptTo(cmd string) error {
 		return s.writeLine("501 Syntax error in RCPT TO")
 	}
 
-	// Validate it's a .bit address
-	if !strings.HasSuffix(addr, ".bit") {
+	// Validate it's a .bit address by checking the domain part
+	// Email format is localpart@domain, so we split and check domain
+	atIndex := strings.LastIndex(addr, "@")
+	if atIndex == -1 {
+		return s.writeLine("501 Invalid email address format")
+	}
+	domain := strings.ToLower(addr[atIndex+1:])
+	if !strings.HasSuffix(domain, ".bit") {
 		return s.writeLine("550 Only .bit addresses accepted")
 	}
 
-	s.to = append(s.to, addr)
+	// Store the address in lowercase for consistency
+	s.to = append(s.to, strings.ToLower(addr))
 	return s.writeLine("250 OK")
 }
 
