@@ -14,6 +14,15 @@
 /register_name
 /update_name
 /list_names
+/bridge_adapter
+examples/*/bridge_adapter
+examples/*/simple_resolve
+examples/*/register_name
+examples/*/update_name
+examples/*/list_names
+examples/*/embedded_client
+examples/*/prometheus_exporter
+examples/*/namedb
 
 # Test binary, built with `go test -c`
 *.test
