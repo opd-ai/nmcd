@@ -2272,6 +2272,91 @@ func TestTransactionFeeValidation(t *testing.T) {
 			t.Errorf("expected error about insufficient fee, got: %v", err)
 		}
 	})
+
+	t.Run("historical block fee validation with missing UTXO", func(t *testing.T) {
+		// Test that fee validation is lenient for historical blocks (before UTXOTrackingStartHeight)
+		// when UTXO data is missing
+
+		// Create a transaction that spends a UTXO that doesn't exist in our database
+		// This simulates syncing a historical block where we don't have complete UTXO data
+		nonExistentTxHash := chainhash.HashH([]byte("non-existent-tx"))
+
+		// Create NAME_NEW transaction with input from non-existent UTXO
+		commitHash := make([]byte, 20)
+		script := buildScript(
+			[]byte{opNameNew},
+			pushData(commitHash),
+		)
+
+		tx := wire.NewMsgTx(1)
+		tx.AddTxIn(wire.NewTxIn(
+			wire.NewOutPoint(&nonExistentTxHash, 0),
+			nil,
+			nil,
+		))
+		tx.AddTxOut(&wire.TxOut{
+			Value:    1000,
+			PkScript: script,
+		})
+
+		// Test at height below UTXOTrackingStartHeight (should pass with warning)
+		historicalHeight := int32(config.UTXOTrackingStartHeight - 1)
+		if historicalHeight < 0 {
+			// If UTXOTrackingStartHeight is 0, we can't test historical blocks
+			// Skip this part of the test
+			t.Log("Skipping historical block test - UTXOTrackingStartHeight is 0")
+		} else {
+			err := bc.validateTransactionFee(tx, namedb.NameNew, historicalHeight)
+			if err != nil {
+				t.Errorf("expected nil error for historical block with missing UTXO at height %d, got: %v",
+					historicalHeight, err)
+			}
+		}
+
+		// Test at height at or above UTXOTrackingStartHeight (should fail)
+		recentHeight := int32(config.UTXOTrackingStartHeight + 100)
+		err := bc.validateTransactionFee(tx, namedb.NameNew, recentHeight)
+		if err == nil {
+			t.Errorf("expected error for recent block with missing UTXO at height %d, got nil", recentHeight)
+		} else if !strings.Contains(err.Error(), "not found") {
+			t.Errorf("expected error about UTXO not found at height %d, got: %v", recentHeight, err)
+		}
+	})
+
+	t.Run("historical block fee validation with valid UTXO", func(t *testing.T) {
+		// Test that fee validation still works for historical blocks when UTXO data IS available
+		// This ensures we don't skip validation when we have the data
+
+		// Create input UTXO with sufficient value
+		txHashIn, outIdx := createUTXO(5000, 50)
+
+		// Create NAME_NEW transaction with insufficient fee
+		commitHash := make([]byte, 20)
+		script := buildScript(
+			[]byte{opNameNew},
+			pushData(commitHash),
+		)
+
+		tx := wire.NewMsgTx(1)
+		tx.AddTxIn(wire.NewTxIn(
+			wire.NewOutPoint(&txHashIn, outIdx),
+			nil,
+			nil,
+		))
+		tx.AddTxOut(&wire.TxOut{
+			Value:    4500, // Fee = 5000 - 4500 = 500 (below MinRelayTxFee of 1000)
+			PkScript: script,
+		})
+
+		// Even for historical blocks, if we have UTXO data, we should validate fees
+		historicalHeight := int32(100)
+		err := bc.validateTransactionFee(tx, namedb.NameNew, historicalHeight)
+		if err == nil {
+			t.Error("expected error for insufficient fee even in historical block when UTXO exists, got nil")
+		} else if !strings.Contains(err.Error(), "below minimum") {
+			t.Errorf("expected error about insufficient fee, got: %v", err)
+		}
+	})
 }
 
 // TestValidateValueEncoding tests value encoding validation for different namespaces

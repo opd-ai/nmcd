@@ -775,34 +775,55 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 //
 // The network fee for NAME_FIRSTUPDATE and NAME_UPDATE is "destroyed" by making
 // it part of the transaction fee, which reduces the total coin supply.
+//
+// Historical Block Handling:
+// For blocks before config.UTXOTrackingStartHeight, fee validation is lenient.
+// If UTXO data is missing for such blocks, validation is skipped with a warning
+// rather than failing. This allows syncing of historical blocks that predate
+// UTXO tracking in this implementation. Strict validation applies for blocks
+// at or above UTXOTrackingStartHeight.
 func (bc *BlockChain) validateTransactionFee(tx *wire.MsgTx, opType namedb.NameOperation, height int32) error {
-	// height is reserved for future use (e.g., height-based fee adjustments).
-	_ = height
 	// Calculate total input value by looking up previous outputs
 	var totalInputValue int64
+	var missingUTXOs bool
+
 	for _, txIn := range tx.TxIn {
 		// Look up the UTXO being spent
 		utxo, err := bc.nameDB.GetUTXO(&txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index)
 		if err != nil {
 			// UTXO not found in our database. This could happen for:
-			// 1. Transactions from before we started tracking UTXOs
+			// 1. Historical blocks before UTXO tracking started
 			// 2. Blocks being validated before they're added to our UTXO set
-			// 3. Coinbase transactions (which have no previous output)
-			//
-			// Previously, we skipped fee validation if we couldn't find all inputs.
-			// This allowed transactions with missing UTXO data to bypass fee checks.
-			// Instead, return an error so callers can safely reject such transactions.
-			log.Printf("Warning: Cannot validate transaction fee - UTXO not found: %s:%d",
-				txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index)
-			return fmt.Errorf("cannot validate transaction fee: UTXO %s:%d not found: %w",
-				txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index, err)
+			// 3. Database inconsistencies
+
+			// For historical blocks (before UTXO tracking), allow missing UTXOs
+			if height < config.UTXOTrackingStartHeight {
+				log.Printf("Info: Skipping fee validation for historical block %d - UTXO not found: %s:%d",
+					height, txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index)
+				missingUTXOs = true
+				break // Cannot validate fee without all input values
+			}
+
+			// For recent blocks, missing UTXOs indicate a problem
+			log.Printf("Warning: Cannot validate transaction fee at height %d - UTXO not found: %s:%d",
+				height, txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index)
+			return fmt.Errorf("cannot validate transaction fee: UTXO %s:%d not found at height %d: %w",
+				txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index, height, err)
 		}
+
 		// Check for overflow when adding input values
 		// This prevents integer overflow attacks where sum of inputs wraps around
 		if totalInputValue > 0 && utxo.Value > 0 && totalInputValue > (1<<63-1)-utxo.Value {
 			return fmt.Errorf("transaction input value overflow: %d + %d", totalInputValue, utxo.Value)
 		}
 		totalInputValue += utxo.Value
+	}
+
+	// If we're dealing with a historical block and missing UTXOs, skip validation
+	// This allows syncing of old blocks without complete UTXO data
+	if missingUTXOs {
+		log.Printf("Info: Skipping fee validation for historical block %d due to missing UTXO data", height)
+		return nil
 	}
 
 	// Calculate total output value
