@@ -1,6 +1,7 @@
 package mail
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -108,7 +109,7 @@ func TestParseBitAddress_Errors(t *testing.T) {
 			}
 			// Check error message contains expected string
 			errMsg := err.Error()
-			if !contains(errMsg, tt.wantErr) {
+			if !strings.Contains(errMsg, tt.wantErr) {
 				t.Errorf("parseBitAddress(%q) error = %q, want error containing %q", tt.addr, errMsg, tt.wantErr)
 			}
 		})
@@ -125,10 +126,4 @@ func TestParseBitAddress_EmptyString(t *testing.T) {
 	if got != "" {
 		t.Errorf("parseBitAddress(\"\") error case should return empty string, got %q", got)
 	}
-}
-
-// contains checks if s contains substr (helper for error message validation)
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		(len(s) > 0 && (s[0:len(substr)] == substr || contains(s[1:], substr))))
 }

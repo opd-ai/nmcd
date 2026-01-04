@@ -3,6 +3,7 @@ package mail
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -156,7 +157,7 @@ func TestRoute_Errors(t *testing.T) {
 				t.Errorf("Route(%q) error case should return empty string, got %q", tt.bitAddr, got)
 			}
 			errMsg := err.Error()
-			if !contains(errMsg, tt.wantErrMsg) {
+			if !strings.Contains(errMsg, tt.wantErrMsg) {
 				t.Errorf("Route(%q) error = %q, want error containing %q", tt.bitAddr, errMsg, tt.wantErrMsg)
 			}
 		})

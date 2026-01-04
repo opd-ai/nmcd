@@ -76,19 +76,19 @@
 // The Resolver interface enables testing without a real Namecoin node:
 //
 //	type mockResolver struct {
-//	    responses map[string]mail.MailConfig
+//	    responses map[string]bridge.MailConfig
 //	}
 //
-//	func (m *mockResolver) LookupMail(ctx context.Context, name string) (mail.MailConfig, error) {
+//	func (m *mockResolver) LookupMail(ctx context.Context, name string) (bridge.MailConfig, error) {
 //	    if config, ok := m.responses[name]; ok {
 //	        return config, nil
 //	    }
-//	    return mail.MailConfig{}, fmt.Errorf("name not found")
+//	    return bridge.MailConfig{}, fmt.Errorf("name not found")
 //	}
 //
 //	// Test with mock
 //	mock := &mockResolver{
-//	    responses: map[string]mail.MailConfig{
+//	    responses: map[string]bridge.MailConfig{
 //	        "alice": {ForwardTo: "alice@gmail.com"},
 //	    },
 //	}
