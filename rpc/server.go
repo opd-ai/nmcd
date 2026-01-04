@@ -5,13 +5,17 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
+	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/opd-ai/nmcd/chain"
@@ -204,6 +208,23 @@ func (s *Server) processRequest(req *Request) *Response {
 			ID: req.ID,
 		}
 	}
+}
+
+// getDifficultyRatio returns the proof-of-work difficulty as a multiple of the
+// minimum difficulty using the passed bits field from the header of a block.
+// This matches Bitcoin Core's difficulty calculation.
+func getDifficultyRatio(bits uint32, params *chaincfg.Params) float64 {
+	// The minimum difficulty is the max target (difficulty 1)
+	max := blockchain.CompactToBig(params.PowLimitBits)
+	target := blockchain.CompactToBig(bits)
+
+	difficulty := new(big.Rat).SetFrac(max, target)
+	outString := difficulty.FloatString(8)
+	diff, err := strconv.ParseFloat(outString, 64)
+	if err != nil {
+		return 0
+	}
+	return diff
 }
 
 // getInfo returns general information
@@ -747,9 +768,18 @@ func (s *Server) getBlock(req *Request) *Response {
 	// Parse optional verbose parameter (default is false for hex output)
 	verbose := false
 	if len(params) >= 2 {
-		if v, ok := params[1].(bool); ok {
-			verbose = v
+		v, ok := params[1].(bool)
+		if !ok {
+			return &Response{
+				Jsonrpc: "2.0",
+				Error: &Error{
+					Code:    -32602,
+					Message: "Invalid params: verbose must be a boolean",
+				},
+				ID: req.ID,
+			}
 		}
+		verbose = v
 	}
 
 	// Get the block from blockchain
@@ -789,6 +819,9 @@ func (s *Server) getBlock(req *Request) *Response {
 	// Return verbose JSON object
 	msgBlock := block.MsgBlock()
 	header := msgBlock.Header
+	
+	// Capture best snapshot once to avoid race conditions
+	bestSnapshot := s.blockchain.BestSnapshot()
 
 	// Get block height
 	height, err := s.blockchain.BlockHeightByHash(hash)
@@ -796,29 +829,43 @@ func (s *Server) getBlock(req *Request) *Response {
 		// If we can't get height, return -1 (for orphan blocks)
 		height = -1
 	}
+	
+	// Calculate confirmations
+	var confirmations int32
+	if height == -1 {
+		// Orphan block - no confirmations
+		confirmations = 0
+	} else {
+		confirmations = bestSnapshot.Height - height + 1
+	}
 
 	// Build transaction list
 	txs := make([]string, len(msgBlock.Transactions))
 	for i, tx := range msgBlock.Transactions {
 		txs[i] = tx.TxHash().String()
 	}
+	
+	// Calculate actual difficulty from bits
+	// Bitcoin difficulty = max_target / current_target
+	// where max_target is the difficulty 1 target
+	difficulty := getDifficultyRatio(header.Bits, s.blockchain.ChainParams())
 
 	result := map[string]interface{}{
 		"hash":              hash.String(),
-		"confirmations":     s.blockchain.BestSnapshot().Height - height + 1,
+		"confirmations":     confirmations,
 		"height":            height,
 		"version":           header.Version,
 		"merkleroot":        header.MerkleRoot.String(),
 		"time":              header.Timestamp.Unix(),
 		"nonce":             header.Nonce,
 		"bits":              fmt.Sprintf("%08x", header.Bits),
-		"difficulty":        header.Bits,
+		"difficulty":        difficulty,
 		"previousblockhash": header.PrevBlock.String(),
 		"tx":                txs,
 	}
 
 	// Add next block hash if not the best block
-	if height < s.blockchain.BestSnapshot().Height {
+	if height >= 0 && height < bestSnapshot.Height {
 		nextHash, err := s.blockchain.BlockHashByHeight(height + 1)
 		if err == nil {
 			result["nextblockhash"] = nextHash.String()
@@ -852,6 +899,17 @@ func (s *Server) getBlockHash(req *Request) *Response {
 	var height int32
 	switch v := params[0].(type) {
 	case float64:
+		// Check for overflow before conversion
+		if v > 2147483647 || v < -2147483648 {
+			return &Response{
+				Jsonrpc: "2.0",
+				Error: &Error{
+					Code:    -32602,
+					Message: fmt.Sprintf("Invalid params: height out of int32 range: %v", v),
+				},
+				ID: req.ID,
+			}
+		}
 		height = int32(v)
 	case int:
 		height = int32(v)
@@ -949,14 +1007,25 @@ func (s *Server) getRawTransaction(req *Request) *Response {
 	// Parse optional verbose parameter
 	verbose := false
 	if len(params) >= 2 {
-		if v, ok := params[1].(bool); ok {
-			verbose = v
+		v, ok := params[1].(bool)
+		if !ok {
+			return &Response{
+				Jsonrpc: "2.0",
+				Error: &Error{
+					Code:    -32602,
+					Message: "Invalid params: verbose must be a boolean",
+				},
+				ID: req.ID,
+			}
 		}
+		verbose = v
 	}
 
 	// Search for transaction in recent blocks
 	// We search backwards from the current best block
-	bestHeight := s.blockchain.BestSnapshot().Height
+	// Capture best snapshot once to avoid race conditions
+	bestSnapshot := s.blockchain.BestSnapshot()
+	bestHeight := bestSnapshot.Height
 
 	// Limit search to last 1000 blocks to prevent excessive lookups
 	// For a full transaction index, use btcd's txindex
@@ -1001,7 +1070,7 @@ func (s *Server) getRawTransaction(req *Request) *Response {
 			Jsonrpc: "2.0",
 			Error: &Error{
 				Code:    -5,
-				Message: fmt.Sprintf("Transaction not found (searched last 1000 blocks): %s", txidStr),
+				Message: fmt.Sprintf("Transaction not found: %s", txidStr),
 			},
 			ID: req.ID,
 		}
@@ -1035,7 +1104,7 @@ func (s *Server) getRawTransaction(req *Request) *Response {
 		"locktime":      foundTx.LockTime,
 		"blockhash":     foundBlockHash.String(),
 		"blockheight":   foundHeight,
-		"confirmations": s.blockchain.BestSnapshot().Height - foundHeight + 1,
+		"confirmations": bestHeight - foundHeight + 1,
 	}
 
 	// Add inputs

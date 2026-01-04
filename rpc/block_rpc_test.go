@@ -224,3 +224,138 @@ func TestProcessRequestNewMethods(t *testing.T) {
 		})
 	}
 }
+
+// TestGetBlockVerboseParamValidation tests that verbose parameter must be boolean
+func TestGetBlockVerboseParamValidation(t *testing.T) {
+s := &Server{}
+
+tests := []struct {
+name      string
+params    interface{}
+errorCode int
+}{
+{
+name:      "verbose as string",
+params:    []interface{}{"0000000000000000000000000000000000000000000000000000000000000001", "true"},
+errorCode: -32602,
+},
+{
+name:      "verbose as number",
+params:    []interface{}{"0000000000000000000000000000000000000000000000000000000000000001", 1},
+errorCode: -32602,
+},
+}
+
+for _, tc := range tests {
+t.Run(tc.name, func(t *testing.T) {
+params, _ := json.Marshal(tc.params)
+req := &Request{
+Jsonrpc: "2.0",
+Method:  "getblock",
+Params:  params,
+ID:      1,
+}
+
+resp := s.getBlock(req)
+
+if resp.Error == nil {
+t.Error("expected error but got none")
+}
+if resp.Error.Code != tc.errorCode {
+t.Errorf("expected error code %d, got %d", tc.errorCode, resp.Error.Code)
+}
+if resp.Error.Message != "Invalid params: verbose must be a boolean" {
+t.Errorf("unexpected error message: %s", resp.Error.Message)
+}
+})
+}
+}
+
+// TestGetRawTransactionVerboseParamValidation tests that verbose parameter must be boolean
+func TestGetRawTransactionVerboseParamValidation(t *testing.T) {
+s := &Server{}
+
+tests := []struct {
+name      string
+params    interface{}
+errorCode int
+}{
+{
+name:      "verbose as string",
+params:    []interface{}{"0000000000000000000000000000000000000000000000000000000000000001", "true"},
+errorCode: -32602,
+},
+{
+name:      "verbose as number",
+params:    []interface{}{"0000000000000000000000000000000000000000000000000000000000000001", 1},
+errorCode: -32602,
+},
+}
+
+for _, tc := range tests {
+t.Run(tc.name, func(t *testing.T) {
+params, _ := json.Marshal(tc.params)
+req := &Request{
+Jsonrpc: "2.0",
+Method:  "getrawtransaction",
+Params:  params,
+ID:      1,
+}
+
+resp := s.getRawTransaction(req)
+
+if resp.Error == nil {
+t.Error("expected error but got none")
+}
+if resp.Error.Code != tc.errorCode {
+t.Errorf("expected error code %d, got %d", tc.errorCode, resp.Error.Code)
+}
+if resp.Error.Message != "Invalid params: verbose must be a boolean" {
+t.Errorf("unexpected error message: %s", resp.Error.Message)
+}
+})
+}
+}
+
+// TestGetBlockHashOverflow tests that height overflow is detected
+func TestGetBlockHashOverflow(t *testing.T) {
+s := &Server{}
+
+tests := []struct {
+name      string
+height    float64
+errorCode int
+}{
+{
+name:      "overflow positive",
+height:    3000000000.0,
+errorCode: -32602,
+},
+{
+name:      "overflow negative",
+height:    -3000000000.0,
+errorCode: -32602,
+},
+}
+
+for _, tc := range tests {
+t.Run(tc.name, func(t *testing.T) {
+params, _ := json.Marshal([]interface{}{tc.height})
+req := &Request{
+Jsonrpc: "2.0",
+Method:  "getblockhash",
+Params:  params,
+ID:      1,
+}
+
+resp := s.getBlockHash(req)
+
+if resp.Error == nil {
+t.Error("expected error but got none")
+}
+if resp.Error.Code != tc.errorCode {
+t.Errorf("expected error code %d, got %d", tc.errorCode, resp.Error.Code)
+}
+})
+}
+}
