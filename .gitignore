@@ -8,6 +8,7 @@
 *.so
 *.dylib
 /nmcd
+/permamail
 
 # Example binaries (built from examples/)
 /simple_resolve

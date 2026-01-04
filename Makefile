@@ -2,9 +2,10 @@
 
 build:
 	go build -v -o nmcd ./cmd/nmcd
+	go build -v -o permamail ./cmd/permamail
 
 clean:
-	rm -f nmcd
+	rm -f nmcd permamail
 
 test:
 	go test -v ./...

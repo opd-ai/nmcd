@@ -573,9 +573,14 @@ nmcd/
 ├── cmd/nmcd/        # Daemon binary entry point
 │   └── main.go            # CLI flags and daemon setup
 │
+├── cmd/permamail/   # 📧 Permamail CLI tool
+│   └── main.go            # Email forwarding management
+│
 ├── internal/        # Internal packages (not importable)
 │   └── server/            # Daemon server implementation
 │
+├── bridge/          # Email forwarding bridge adapter
+├── mail/            # SMTP routing and relay
 ├── namedb/          # Name database (bbolt)
 ├── chain/           # Blockchain wrapper (btcd integration)
 ├── network/         # P2P networking (btcd/peer)
@@ -596,6 +601,9 @@ nmcd/
 │   ├── register_name/     # Name registration
 │   ├── update_name/       # Name updates
 │   ├── list_names/        # Name filtering
+│   ├── bridge_adapter/    # Email bridge usage
+│   ├── mail_router/       # Email routing example
+│   ├── smtp_relay/        # SMTP relay deployment
 │   └── namedb/            # Direct database access
 │
 └── README.md        # This file
@@ -611,6 +619,83 @@ import "github.com/opd-ai/nmcd/client"
 import "github.com/opd-ai/nmcd/namedb"
 import "github.com/opd-ai/nmcd/config"
 ```
+
+---
+
+## Permamail: Decentralized Email Forwarding
+
+nmcd includes **permamail**, a command-line tool for managing decentralized email forwarding via Namecoin. It allows you to register .bit email addresses that forward to your real email address.
+
+### Installation
+
+```bash
+# Build both nmcd and permamail
+make build
+
+# Or build permamail only
+go build -o permamail ./cmd/permamail
+```
+
+### Usage
+
+```bash
+# Register a new .bit email address
+permamail register alice --forward user@gmail.com
+
+# Update forwarding configuration with backup
+permamail update alice --forward newemail@proton.me --backup backup@proton.me
+
+# Look up current configuration
+permamail lookup alice
+
+# Start SMTP relay server
+permamail serve --upstream smtp.sendgrid.net --upstreamport 587 \
+                --smtpuser apikey --smtppass <api-key>
+```
+
+### Architecture
+
+Permamail consists of three main components:
+
+1. **Bridge Adapter** (`bridge/`): Translates Namecoin name records to email forwarding configuration
+2. **Mail Router** (`mail/router.go`): Routes .bit addresses to real email addresses with caching
+3. **SMTP Relay** (`mail/smtp.go`): Accepts mail to .bit addresses and forwards to real inboxes
+
+The permamail CLI integrates these components into a single tool for managing email forwarding.
+
+### Email Configuration Format
+
+Email forwarding is stored in Namecoin name values as JSON:
+
+```json
+{
+  "email": "user@gmail.com",
+  "backup": ["backup@proton.me"],
+  "pubkey": "base64_encoded_public_key"
+}
+```
+
+### Running an SMTP Relay
+
+To run a production SMTP relay that forwards .bit emails:
+
+```bash
+# Start relay on port 2525, forwarding via Gmail
+permamail serve --listen :2525 \
+                --upstream smtp.gmail.com \
+                --upstreamport 587 \
+                --smtpuser your.email@gmail.com \
+                --smtppass your-app-password
+
+# Users can now send email to alice@mail.bit
+# The relay will resolve alice -> user@gmail.com and forward
+```
+
+**Note**: Currently, name registration and updates require a running nmcd node with wallet enabled. The `register` and `update` commands prepare the configuration and display instructions for completing the operation via nmcd RPC. Full integrated wallet support is planned for future releases.
+
+### Examples
+
+See `examples/smtp_relay/` for a complete production-ready SMTP relay deployment with systemd integration.
 
 ---
 
