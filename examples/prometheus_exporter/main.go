@@ -75,7 +75,8 @@ func main() {
 
 	fmt.Println("\n--- Sample Prometheus Metrics Output ---")
 	fmt.Println(string(body))
-	fmt.Println("--- End of Metrics ---\n")
+	fmt.Println("--- End of Metrics ---")
+	fmt.Println()
 
 	// Keep server running for a few seconds
 	fmt.Println("Server will remain running for 5 seconds...")
