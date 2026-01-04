@@ -23,6 +23,8 @@ examples/*/list_names
 examples/*/embedded_client
 examples/*/prometheus_exporter
 examples/*/namedb
+examples/*/mail_router
+examples/*/smtp_relay
 
 # Test binary, built with `go test -c`
 *.test
