@@ -67,7 +67,61 @@ Options:
 
 ---
 
-## Embedded Client Example
+## Mail System Examples
+
+### Bridge Adapter (`bridge_adapter/`)
+
+Demonstrates the bridge between Namecoin and the mail routing system:
+
+```bash
+go run ./examples/bridge_adapter
+```
+
+Features:
+- MailConfig extraction from Namecoin name records
+- JSON parsing of email forwarding configuration
+- Base64 public key decoding
+- Error handling for invalid configurations
+
+### Mail Router (`mail_router/`)
+
+Demonstrates .bit email address routing:
+
+```bash
+go run ./examples/mail_router
+```
+
+Features:
+- Resolution of .bit addresses to real email addresses
+- Caching with configurable TTL
+- Thread-safe concurrent operations
+- Mock resolver for testing
+
+### SMTP Relay (`smtp_relay/`)
+
+Complete SMTP relay server that forwards .bit addresses to real email:
+
+```bash
+go run ./examples/smtp_relay \
+  -listen=":2525" \
+  -upstream-host="smtp.gmail.com" \
+  -upstream-port=587 \
+  -upstream-user="your-email@gmail.com" \
+  -upstream-pass="your-app-password"
+```
+
+Features:
+- Full SMTP protocol implementation
+- .bit address validation and routing
+- Upstream SMTP forwarding
+- Graceful shutdown
+- Production-ready with systemd integration
+
+See [smtp_relay/README.md](smtp_relay/README.md) for detailed configuration and deployment instructions.
+
+---
+
+## Prometheus Metrics Example
 
 The `embedded_client/` directory demonstrates using the embedded Namecoin client:
 
