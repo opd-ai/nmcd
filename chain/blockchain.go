@@ -783,6 +783,11 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 // UTXO tracking in this implementation. Strict validation applies for blocks
 // at or above UTXOTrackingStartHeight.
 func (bc *BlockChain) validateTransactionFee(tx *wire.MsgTx, opType namedb.NameOperation, height int32) error {
+	// Handle edge case: transactions with no inputs
+	if len(tx.TxIn) == 0 {
+		return fmt.Errorf("transaction has no inputs (cannot validate fee)")
+	}
+
 	// Calculate total input value by looking up previous outputs
 	var totalInputValue int64
 	var missingUTXOs bool
@@ -798,8 +803,6 @@ func (bc *BlockChain) validateTransactionFee(tx *wire.MsgTx, opType namedb.NameO
 
 			// For historical blocks (before UTXO tracking), allow missing UTXOs
 			if height < config.UTXOTrackingStartHeight {
-				log.Printf("Info: Skipping fee validation for historical block %d - UTXO not found: %s:%d",
-					height, txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index)
 				missingUTXOs = true
 				break // Cannot validate fee without all input values
 			}
