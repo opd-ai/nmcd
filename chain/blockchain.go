@@ -880,9 +880,13 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 				// Try to get the UTXO before removing it
 				utxo, err := bc.nameDB.GetUTXO(&txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index)
 				if err == nil && utxo != nil {
-					// Store the spent UTXO for potential restoration
-					// We don't check for errors here to avoid blocking on cleanup failures
-					_ = bc.nameDB.StoreSpentUTXO(utxo, height)
+					// Store the spent UTXO for potential restoration during reorgs.
+					// This is best-effort storage: failures are logged but do not block
+					// block processing to avoid stalling the chain on bookkeeping issues.
+					if err := bc.nameDB.StoreSpentUTXO(utxo, height); err != nil {
+						log.Printf("Warning: Failed to store spent UTXO %s:%d at height %d: %v",
+							txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index, height, err)
+					}
 				}
 
 				// Remove the UTXO from active set

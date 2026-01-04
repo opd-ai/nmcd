@@ -42,7 +42,7 @@ bc.nameDB.RemoveUTXO(&txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index)
 
 #### Restoration (Block Disconnection)
 
-When a block is disconnected during a reorg (`chain/blockchain.go:1684-1689`):
+When a block is disconnected during a reorg (`chain/blockchain.go:1697-1701`):
 
 ```go
 // Restore all UTXOs that were spent in this block

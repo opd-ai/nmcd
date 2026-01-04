@@ -309,7 +309,9 @@ func (ndb *NameDatabase) RestoreSpentUTXOsForBlock(height int32) error {
 			// Restore to active UTXO set
 			utxoData, err := encodeUTXO(utxo)
 			if err != nil {
-				continue // Skip on error
+				// Skip entries that cannot be re-encoded and mark them for cleanup
+				keysToDelete = append(keysToDelete, append([]byte(nil), k...))
+				continue
 			}
 
 			// Add back to main UTXO bucket
@@ -318,10 +320,10 @@ func (ndb *NameDatabase) RestoreSpentUTXOsForBlock(height int32) error {
 			}
 
 			// Add back to address index
-			addrKey := make([]byte, len(utxo.Address)+32+4)
+			addrKey := make([]byte, len(utxo.Address)+txHashSize+4)
 			copy(addrKey, []byte(utxo.Address))
 			copy(addrKey[len(utxo.Address):], utxo.TxHash[:])
-			binary.BigEndian.PutUint32(addrKey[len(utxo.Address)+32:], utxo.OutIndex)
+			binary.BigEndian.PutUint32(addrKey[len(utxo.Address)+txHashSize:], utxo.OutIndex)
 			if err := addrBkt.Put(addrKey, []byte{1}); err != nil {
 				return fmt.Errorf("failed to restore UTXO address index: %w", err)
 			}
