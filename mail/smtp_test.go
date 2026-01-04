@@ -489,3 +489,202 @@ func TestSMTPConcurrentConnections(t *testing.T) {
 		}
 	}
 }
+
+// TestSMTPDataCommand tests the DATA command and message body handling.
+func TestSMTPDataCommand(t *testing.T) {
+	resolver := &mockSMTPResolver{
+		lookups: map[string]bridge.MailConfig{
+			"alice": {ForwardTo: "alice@gmail.com"},
+		},
+	}
+	router := NewRouter(resolver, 0)
+	config := DefaultRelayConfig()
+	config.ListenAddr = "localhost:0"
+	// Note: This test won't actually forward since we don't have a real upstream server
+	// but it tests the protocol handling
+
+	relay := NewRelay(router, config)
+	if err := relay.Start(); err != nil {
+		t.Fatalf("Failed to start relay: %v", err)
+	}
+	defer relay.Stop()
+
+	addr := relay.listener.Addr().String()
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Failed to connect to relay: %v", err)
+	}
+	defer conn.Close()
+
+	reader := bufio.NewReader(conn)
+
+	// Read greeting
+	reader.ReadString('\n')
+
+	// Send EHLO
+	fmt.Fprintf(conn, "EHLO client.example.com\r\n")
+	for {
+		line, _ := reader.ReadString('\n')
+		if !strings.Contains(line, "250-") {
+			break
+		}
+	}
+
+	// Send MAIL FROM
+	fmt.Fprintf(conn, "MAIL FROM:<sender@example.com>\r\n")
+	reader.ReadString('\n')
+
+	// Send RCPT TO
+	fmt.Fprintf(conn, "RCPT TO:<alice@mail.bit>\r\n")
+	reader.ReadString('\n')
+
+	// Send DATA command
+	fmt.Fprintf(conn, "DATA\r\n")
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("Failed to read DATA response: %v", err)
+	}
+	if !strings.HasPrefix(line, "354 ") {
+		t.Errorf("Expected 354 response to DATA, got: %s", line)
+	}
+
+	// Send message body
+	message := "Subject: Test Message\r\n\r\nThis is a test message body.\r\n"
+	fmt.Fprintf(conn, "%s.\r\n", message)
+
+	// Read final response (will fail to forward but should handle protocol correctly)
+	line, err = reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("Failed to read final response: %v", err)
+	}
+	// Should get either success or failure, but not a protocol error
+	if !strings.HasPrefix(line, "250 ") && !strings.HasPrefix(line, "554 ") {
+		t.Errorf("Expected 250 or 554 response after DATA, got: %s", line)
+	}
+
+	// Send QUIT
+	fmt.Fprintf(conn, "QUIT\r\n")
+	reader.ReadString('\n')
+}
+
+// TestSMTPDataWithoutEnvelope tests DATA command without proper envelope.
+func TestSMTPDataWithoutEnvelope(t *testing.T) {
+	resolver := &mockSMTPResolver{
+		lookups: map[string]bridge.MailConfig{
+			"alice": {ForwardTo: "alice@gmail.com"},
+		},
+	}
+	router := NewRouter(resolver, 0)
+	config := DefaultRelayConfig()
+	config.ListenAddr = "localhost:0"
+
+	relay := NewRelay(router, config)
+	if err := relay.Start(); err != nil {
+		t.Fatalf("Failed to start relay: %v", err)
+	}
+	defer relay.Stop()
+
+	addr := relay.listener.Addr().String()
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Failed to connect to relay: %v", err)
+	}
+	defer conn.Close()
+
+	reader := bufio.NewReader(conn)
+
+	// Read greeting
+	reader.ReadString('\n')
+
+	// Send EHLO
+	fmt.Fprintf(conn, "EHLO client.example.com\r\n")
+	for {
+		line, _ := reader.ReadString('\n')
+		if !strings.Contains(line, "250-") {
+			break
+		}
+	}
+
+	// Send DATA without MAIL FROM or RCPT TO
+	fmt.Fprintf(conn, "DATA\r\n")
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("Failed to read DATA response: %v", err)
+	}
+	if !strings.HasPrefix(line, "503 ") {
+		t.Errorf("Expected 503 error for DATA without envelope, got: %s", line)
+	}
+
+	// Send QUIT
+	fmt.Fprintf(conn, "QUIT\r\n")
+	reader.ReadString('\n')
+}
+
+// TestSMTPMessageSizeLimit tests that messages exceeding size limit are rejected.
+func TestSMTPMessageSizeLimit(t *testing.T) {
+	resolver := &mockSMTPResolver{
+		lookups: map[string]bridge.MailConfig{
+			"alice": {ForwardTo: "alice@gmail.com"},
+		},
+	}
+	router := NewRouter(resolver, 0)
+	config := DefaultRelayConfig()
+	config.ListenAddr = "localhost:0"
+	config.MaxMessageSize = 100 // Small limit for testing
+
+	relay := NewRelay(router, config)
+	if err := relay.Start(); err != nil {
+		t.Fatalf("Failed to start relay: %v", err)
+	}
+	defer relay.Stop()
+
+	addr := relay.listener.Addr().String()
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Failed to connect to relay: %v", err)
+	}
+	defer conn.Close()
+
+	reader := bufio.NewReader(conn)
+
+	// Read greeting
+	reader.ReadString('\n')
+
+	// Send EHLO
+	fmt.Fprintf(conn, "EHLO client.example.com\r\n")
+	for {
+		line, _ := reader.ReadString('\n')
+		if !strings.Contains(line, "250-") {
+			break
+		}
+	}
+
+	// Send MAIL FROM
+	fmt.Fprintf(conn, "MAIL FROM:<sender@example.com>\r\n")
+	reader.ReadString('\n')
+
+	// Send RCPT TO
+	fmt.Fprintf(conn, "RCPT TO:<alice@mail.bit>\r\n")
+	reader.ReadString('\n')
+
+	// Send DATA command
+	fmt.Fprintf(conn, "DATA\r\n")
+	reader.ReadString('\n')
+
+	// Send message body that exceeds size limit
+	largeMessage := strings.Repeat("A", 200) + "\r\n"
+	fmt.Fprintf(conn, "%s.\r\n", largeMessage)
+
+	// Should get size exceeded error
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("Failed to read response: %v", err)
+	}
+	if !strings.HasPrefix(line, "552 ") {
+		t.Errorf("Expected 552 error for oversized message, got: %s", line)
+	}
+
+	// Send QUIT
+	fmt.Fprintf(conn, "QUIT\r\n")
+	reader.ReadString('\n')
+}

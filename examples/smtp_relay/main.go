@@ -21,8 +21,7 @@ func main() {
 	listenAddr := flag.String("listen", ":2525", "SMTP relay listen address")
 	upstreamHost := flag.String("upstream-host", "", "Upstream SMTP server hostname (required)")
 	upstreamPort := flag.Int("upstream-port", 587, "Upstream SMTP server port")
-	upstreamUser := flag.String("upstream-user", "", "Upstream SMTP username (optional)")
-	upstreamPass := flag.String("upstream-pass", "", "Upstream SMTP password (optional)")
+	upstreamUser := flag.String("upstream-user", "", "Upstream SMTP username (env: SMTP_USER)")
 	cacheTTL := flag.Duration("cache-ttl", time.Hour, "Mail routing cache TTL")
 	dataDir := flag.String("datadir", "~/.nmcd", "Namecoin data directory")
 	network := flag.String("network", "mainnet", "Network to use (mainnet, testnet, regtest)")
@@ -35,6 +34,19 @@ func main() {
 		flag.Usage()
 		os.Exit(1)
 	}
+
+	// Get credentials from environment variables (more secure than command-line args)
+	// Command-line flags take precedence if provided (for backward compatibility)
+	upstreamUserEnv := os.Getenv("SMTP_USER")
+	upstreamPassEnv := os.Getenv("SMTP_PASSWORD")
+
+	// Use command-line value if provided, otherwise use environment variable
+	finalUser := *upstreamUser
+	if finalUser == "" {
+		finalUser = upstreamUserEnv
+	}
+
+	finalPass := upstreamPassEnv // Always prefer environment variable for password
 
 	// Create Namecoin client
 	log.Println("Connecting to Namecoin...")
@@ -49,11 +61,11 @@ func main() {
 	defer nc.Close()
 
 	// Create bridge adapter
-	bridge := bridge.NewNamecoinBridge(nc)
+	bridgeAdapter := bridge.NewNamecoinBridge(nc)
 	log.Println("Namecoin bridge initialized")
 
 	// Create mail router
-	router := mail.NewRouter(bridge, *cacheTTL)
+	router := mail.NewRouter(bridgeAdapter, *cacheTTL)
 	log.Printf("Mail router initialized (cache TTL: %s)", *cacheTTL)
 
 	// Configure relay
@@ -63,8 +75,8 @@ func main() {
 	config.UpstreamPort = *upstreamPort
 
 	// Configure upstream authentication if provided
-	if *upstreamUser != "" && *upstreamPass != "" {
-		config.UpstreamAuth = smtp.PlainAuth("", *upstreamUser, *upstreamPass, *upstreamHost)
+	if finalUser != "" && finalPass != "" {
+		config.UpstreamAuth = smtp.PlainAuth("", finalUser, finalPass, *upstreamHost)
 		log.Println("Upstream SMTP authentication configured")
 	}
 

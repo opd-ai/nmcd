@@ -1,7 +1,9 @@
 package mail
 
 import (
+	"bufio"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -194,6 +196,7 @@ func (r *Relay) handleConnection(conn net.Conn) {
 		conn:   conn,
 		relay:  r,
 		logger: r.logger,
+		reader: bufio.NewReader(conn),
 	}
 
 	if err := session.handle(); err != nil {
@@ -208,6 +211,7 @@ type smtpSession struct {
 	logger *log.Logger
 	from   string
 	to     []string
+	reader *bufio.Reader
 }
 
 // handle processes the SMTP protocol for this session.
@@ -244,16 +248,24 @@ func (s *smtpSession) handle() error {
 				return err
 			}
 		} else if cmd == "QUIT" {
-			s.writeLine("221 Goodbye")
+			if err := s.writeLine("221 Goodbye"); err != nil {
+				return err
+			}
 			return nil
 		} else if cmd == "RSET" {
 			s.from = ""
 			s.to = nil
-			s.writeLine("250 OK")
+			if err := s.writeLine("250 OK"); err != nil {
+				return err
+			}
 		} else if cmd == "NOOP" {
-			s.writeLine("250 OK")
+			if err := s.writeLine("250 OK"); err != nil {
+				return err
+			}
 		} else {
-			s.writeLine("502 Command not implemented")
+			if err := s.writeLine("502 Command not implemented"); err != nil {
+				return err
+			}
 		}
 	}
 }
@@ -338,11 +350,16 @@ func (s *smtpSession) handleData() error {
 
 	// Forward to each recipient
 	ctx := context.Background()
+	var successCount, failCount int
+	var lastErr error
+	
 	for _, to := range s.to {
 		if err := s.forwardMessage(ctx, s.from, to, body); err != nil {
 			s.logger.Printf("Failed to forward to %s: %v", to, err)
-			s.writeLine(fmt.Sprintf("550 Failed to forward to %s", to))
-			continue
+			failCount++
+			lastErr = err
+		} else {
+			successCount++
 		}
 	}
 
@@ -350,7 +367,16 @@ func (s *smtpSession) handleData() error {
 	s.from = ""
 	s.to = nil
 
-	return s.writeLine("250 OK: Message accepted for delivery")
+	// Return appropriate status based on results
+	if failCount == 0 {
+		return s.writeLine("250 OK: Message accepted for delivery")
+	} else if successCount == 0 {
+		// All recipients failed
+		return s.writeLine(fmt.Sprintf("554 Transaction failed: %v", lastErr))
+	} else {
+		// Partial success
+		return s.writeLine(fmt.Sprintf("250 OK: Delivered to %d of %d recipients", successCount, successCount+failCount))
+	}
 }
 
 // forwardMessage resolves the .bit address and forwards the message to the upstream SMTP server.
@@ -370,6 +396,16 @@ func (s *smtpSession) forwardMessage(ctx context.Context, from, to string, body 
 		return fmt.Errorf("failed to connect to upstream SMTP: %w", err)
 	}
 	defer client.Close()
+
+	// Upgrade to TLS if on port 587 (submission port)
+	if s.relay.config.UpstreamPort == 587 {
+		tlsConfig := &tls.Config{
+			ServerName: s.relay.config.UpstreamHost,
+		}
+		if err := client.StartTLS(tlsConfig); err != nil {
+			return fmt.Errorf("STARTTLS failed: %w", err)
+		}
+	}
 
 	// Authenticate if credentials provided
 	if s.relay.config.UpstreamAuth != nil {
@@ -408,33 +444,21 @@ func (s *smtpSession) forwardMessage(ctx context.Context, from, to string, body 
 
 // readLine reads a single line from the connection.
 func (s *smtpSession) readLine() (string, error) {
-	var line []byte
-	buf := make([]byte, 1)
-
-	for {
-		n, err := s.conn.Read(buf)
-		if err != nil {
-			return "", err
-		}
-		if n == 0 {
-			continue
-		}
-
-		line = append(line, buf[0])
-
-		// Check for end of line (CRLF or just LF)
-		if len(line) >= 2 && line[len(line)-2] == '\r' && line[len(line)-1] == '\n' {
-			return string(line[:len(line)-2]), nil
-		}
-		if len(line) >= 1 && line[len(line)-1] == '\n' {
-			return string(line[:len(line)-1]), nil
-		}
-
-		// Prevent excessive line length
-		if len(line) > 1024 {
-			return "", errors.New("line too long")
-		}
+	line, err := s.reader.ReadString('\n')
+	if err != nil {
+		return "", err
 	}
+
+	// Trim CRLF or just LF
+	line = strings.TrimSuffix(line, "\r\n")
+	line = strings.TrimSuffix(line, "\n")
+
+	// Prevent excessive line length
+	if len(line) > 1024 {
+		return "", errors.New("line too long")
+	}
+
+	return line, nil
 }
 
 // writeLine writes a line to the connection with CRLF terminator.
@@ -446,36 +470,25 @@ func (s *smtpSession) writeLine(line string) error {
 // readDataBody reads the message body until end-of-data marker.
 func (s *smtpSession) readDataBody() ([]byte, error) {
 	var body []byte
-	var line []byte
-	buf := make([]byte, 1)
 
 	for {
-		n, err := s.conn.Read(buf)
+		line, err := s.reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
 			return nil, err
 		}
-		if n == 0 {
-			continue
+
+		// Check for end-of-data marker (single "." on a line)
+		trimmed := strings.TrimSuffix(line, "\r\n")
+		trimmed = strings.TrimSuffix(trimmed, "\n")
+		if trimmed == "." {
+			return body, nil
 		}
 
-		line = append(line, buf[0])
-
-		// Check for end of line
-		if len(line) >= 2 && line[len(line)-2] == '\r' && line[len(line)-1] == '\n' {
-			lineStr := string(line[:len(line)-2])
-
-			// Check for end-of-data marker
-			if lineStr == "." {
-				return body, nil
-			}
-
-			// Add line to body
-			body = append(body, line...)
-			line = nil
-		}
+		// Add line to body (keep CRLF for proper email format)
+		body = append(body, []byte(line)...)
 	}
 
 	return body, nil

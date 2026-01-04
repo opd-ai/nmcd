@@ -24,24 +24,31 @@ go build
 Forward .bit emails using Gmail as the upstream SMTP server:
 
 ```bash
+# Set credentials via environment variables (recommended for security)
+export SMTP_USER="your-email@gmail.com"
+export SMTP_PASSWORD="your-app-password"
+
 ./smtp_relay \
   -listen=":2525" \
   -upstream-host="smtp.gmail.com" \
-  -upstream-port=587 \
-  -upstream-user="your-email@gmail.com" \
-  -upstream-pass="your-app-password"
+  -upstream-port=587
 ```
+
+**Security Note:** Always use environment variables for passwords instead of command-line arguments. Passwords in command-line arguments are visible in process listings and logs.
 
 ### Configuration Options
 
 - `-listen`: Address to listen on for incoming SMTP connections (default: `:2525`)
 - `-upstream-host`: Upstream SMTP server hostname (required)
 - `-upstream-port`: Upstream SMTP server port (default: `587`)
-- `-upstream-user`: Upstream SMTP username (optional, for authentication)
-- `-upstream-pass`: Upstream SMTP password (optional, for authentication)
+- `-upstream-user`: Upstream SMTP username (env: `SMTP_USER`) - environment variable preferred
 - `-cache-ttl`: Mail routing cache TTL duration (default: `1h`)
 - `-datadir`: Namecoin data directory (default: `~/.nmcd`)
 - `-network`: Network to use - mainnet, testnet, or regtest (default: `mainnet`)
+
+**Environment Variables:**
+- `SMTP_USER`: SMTP username (preferred over `-upstream-user` flag)
+- `SMTP_PASSWORD`: SMTP password (always use this instead of command-line flag)
 
 ### Testing with a Local SMTP Server
 
@@ -101,20 +108,23 @@ nmcd name_firstupdate mail/alice <rand> '{"email":"alice@gmail.com"}'
 ### Security Considerations
 
 1. **Listen only on localhost**: Use `-listen="localhost:2525"` and put a reverse proxy (nginx) in front
-2. **Use authentication**: Always configure upstream SMTP authentication
-3. **Use TLS**: The relay connects to upstream SMTP with STARTTLS automatically on port 587
+2. **Use environment variables for credentials**: Never expose passwords in command-line arguments or logs
+3. **Use TLS**: The relay automatically uses STARTTLS when connecting to upstream SMTP on port 587
 4. **Firewall**: Block direct access to port 2525 from the internet
+5. **File permissions**: Protect credential files and systemd environment files with `chmod 600`
 
 ### Recommended Setup
 
 ```bash
+# Set credentials securely
+export SMTP_USER="relay@example.com"
+export SMTP_PASSWORD="app-specific-password"
+
 # Run relay on localhost only
 ./smtp_relay \
   -listen="localhost:2525" \
   -upstream-host="smtp.gmail.com" \
   -upstream-port=587 \
-  -upstream-user="relay@example.com" \
-  -upstream-pass="app-specific-password" \
   -cache-ttl=30m
 ```
 
@@ -133,16 +143,29 @@ After=network.target
 Type=simple
 User=nmcd
 WorkingDirectory=/opt/nmcd
+EnvironmentFile=/etc/nmcd/smtp-credentials.env
 ExecStart=/opt/nmcd/smtp_relay \
   -listen=localhost:2525 \
   -upstream-host=smtp.gmail.com \
-  -upstream-port=587 \
-  -upstream-user=relay@example.com \
-  -upstream-pass=PASSWORD_HERE
+  -upstream-port=587
 Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
+```
+
+Create `/etc/nmcd/smtp-credentials.env` with restricted permissions:
+
+```bash
+# Create directory and file
+sudo mkdir -p /etc/nmcd
+sudo touch /etc/nmcd/smtp-credentials.env
+sudo chmod 600 /etc/nmcd/smtp-credentials.env
+sudo chown nmcd:nmcd /etc/nmcd/smtp-credentials.env
+
+# Edit the file and add:
+SMTP_USER=relay@example.com
+SMTP_PASSWORD=your-secure-password-here
 ```
 
 Enable and start:
