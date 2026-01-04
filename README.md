@@ -402,6 +402,15 @@ nmcd can optionally expose metrics in Prometheus format for monitoring and obser
 
 Once enabled, metrics are available at `http://<address>/metrics` in Prometheus text format.
 
+**Security Considerations:**
+
+The Prometheus metrics endpoint does **not** implement authentication and exposes operational data about the node (e.g., block processing statistics and name operation counts). For production deployments, you should:
+
+- Prefer binding `-prometheusaddr` to `127.0.0.1` (localhost only), or
+- Place the endpoint behind a reverse proxy that provides authentication and TLS.
+
+If you bind the metrics endpoint to a non-localhost network interface, use network-level controls (firewall rules, VPN, or restricted subnets) to allow access only from trusted monitoring systems.
+
 **Available Metrics:**
 
 Block Processing:

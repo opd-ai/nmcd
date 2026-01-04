@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -82,9 +83,11 @@ func main() {
 	fmt.Println("Server will remain running for 5 seconds...")
 	time.Sleep(5 * time.Second)
 
-	// Shutdown server
-	if err := server.Close(); err != nil {
-		log.Printf("Error closing server: %v", err)
+	// Shutdown server gracefully
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := server.Shutdown(ctx); err != nil {
+		log.Printf("Error shutting down server: %v", err)
 	}
 
 	fmt.Println("Server stopped")

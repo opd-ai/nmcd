@@ -1,10 +1,12 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/opd-ai/nmcd/chain"
 	"github.com/opd-ai/nmcd/config"
@@ -193,8 +195,10 @@ func (s *Server) Stop() error {
 
 	// Stop Prometheus HTTP server if running
 	if s.prometheusHTTP != nil {
-		if err := s.prometheusHTTP.Close(); err != nil {
-			log.Printf("Error stopping Prometheus HTTP server: %v", err)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.prometheusHTTP.Shutdown(ctx); err != nil {
+			log.Printf("Error during graceful shutdown of Prometheus HTTP server: %v", err)
 		}
 	}
 

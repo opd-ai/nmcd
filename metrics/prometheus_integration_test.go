@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"strings"
@@ -43,7 +44,11 @@ func TestPrometheusHTTPEndpoint(t *testing.T) {
 			t.Logf("HTTP server error: %v", err)
 		}
 	}()
-	defer server.Close()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		server.Shutdown(ctx)
+	}()
 
 	// Wait for server to start
 	time.Sleep(100 * time.Millisecond)
