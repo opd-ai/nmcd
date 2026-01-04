@@ -39,7 +39,7 @@ func TestSpentUTXOStorage(t *testing.T) {
 	// Verify we can retrieve it by restoring UTXOs for that height
 	// First remove it from active set (simulating it was spent)
 	// Note: It wasn't in active set, so this is just for consistency
-	
+
 	// Restore spent UTXOs for the block
 	err = ndb.RestoreSpentUTXOsForBlock(spentAtHeight)
 	if err != nil {

@@ -386,6 +386,80 @@ curl -X POST http://127.0.0.1:8336 \
   
   Returns an array of address strings currently stored in the wallet.
 
+### Prometheus Metrics Endpoint
+
+nmcd can optionally expose metrics in Prometheus format for monitoring and observability. The metrics are served on a separate HTTP endpoint from the RPC server.
+
+**Enable Prometheus metrics:**
+
+```bash
+# Enable on default port 9100
+./nmcd -prometheusaddr=127.0.0.1:9100
+
+# Or use custom port
+./nmcd -prometheusaddr=127.0.0.1:9999
+```
+
+Once enabled, metrics are available at `http://<address>/metrics` in Prometheus text format.
+
+**Available Metrics:**
+
+Block Processing:
+- `nmcd_blocks_processed_total` - Total blocks processed
+- `nmcd_blocks_accepted_total` - Blocks accepted on main chain
+- `nmcd_blocks_orphaned_total` - Orphaned blocks received
+- `nmcd_blocks_rejected_total` - Blocks rejected due to validation errors
+- `nmcd_last_block_height` - Height of last processed block
+- `nmcd_avg_block_process_time_seconds` - Average block processing time
+
+Name Operations:
+- `nmcd_name_operations_total` - Total name operations processed
+- `nmcd_name_new_total` - NAME_NEW operations
+- `nmcd_name_firstupdate_total` - NAME_FIRSTUPDATE operations
+- `nmcd_name_update_total` - NAME_UPDATE operations
+- `nmcd_names_expired_total` - Names expired during processing
+
+Network:
+- `nmcd_peers_connected` - Currently connected peers
+- `nmcd_inbound_peers` - Current inbound peers
+- `nmcd_outbound_peers` - Current outbound peers
+- `nmcd_peer_disconnects_total` - Total peer disconnections
+
+Transactions:
+- `nmcd_txs_processed_total` - Total transactions processed
+- `nmcd_txs_in_mempool` - Current transactions in mempool
+
+Validation Errors:
+- `nmcd_validation_errors_total` - Total validation errors
+- `nmcd_auxpow_errors_total` - AuxPoW validation errors
+- `nmcd_subsidy_errors_total` - Block subsidy validation errors
+- `nmcd_name_theft_attempts_total` - Name theft attempts detected
+- `nmcd_double_spend_attempts_total` - Double-spend attempts detected
+
+**Example Prometheus Query:**
+
+```bash
+curl http://127.0.0.1:9100/metrics
+```
+
+**Prometheus Configuration:**
+
+```yaml
+scrape_configs:
+  - job_name: 'nmcd'
+    static_configs:
+      - targets: ['localhost:9100']
+```
+
+**Grafana Dashboard:**
+
+The metrics can be visualized in Grafana. Key panels to consider:
+- Block processing rate (rate of `nmcd_blocks_processed_total`)
+- Peer count trends (`nmcd_peers_connected`)
+- Name operation activity (rate of `nmcd_name_*_total` metrics)
+- Validation error rates (rate of `nmcd_*_errors_total` metrics)
+- Mempool size over time (`nmcd_txs_in_mempool`)
+
 ---
 
 ## Examples

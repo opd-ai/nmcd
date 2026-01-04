@@ -819,7 +819,7 @@ func (s *Server) getBlock(req *Request) *Response {
 	// Return verbose JSON object
 	msgBlock := block.MsgBlock()
 	header := msgBlock.Header
-	
+
 	// Capture best snapshot once to avoid race conditions
 	bestSnapshot := s.blockchain.BestSnapshot()
 
@@ -829,7 +829,7 @@ func (s *Server) getBlock(req *Request) *Response {
 		// If we can't get height, return -1 (for orphan blocks)
 		height = -1
 	}
-	
+
 	// Calculate confirmations
 	var confirmations int32
 	if height == -1 {
@@ -844,7 +844,7 @@ func (s *Server) getBlock(req *Request) *Response {
 	for i, tx := range msgBlock.Transactions {
 		txs[i] = tx.TxHash().String()
 	}
-	
+
 	// Calculate actual difficulty from bits
 	// Bitcoin difficulty = max_target / current_target
 	// where max_target is the difficulty 1 target

@@ -1622,7 +1622,6 @@ func (bc *BlockChain) rollbackNameOperations(block *btcutil.Block) {
 		// Note: The actual restoration is done in batch after this loop
 		// via RestoreSpentUTXOsForBlock for efficiency
 
-
 		// Process outputs in reverse order within the transaction
 		for j := len(msgTx.TxOut) - 1; j >= 0; j-- {
 			txOut := msgTx.TxOut[j]

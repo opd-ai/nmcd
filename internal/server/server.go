@@ -3,22 +3,28 @@ package server
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
 
 	"github.com/opd-ai/nmcd/chain"
 	"github.com/opd-ai/nmcd/config"
+	"github.com/opd-ai/nmcd/metrics"
 	"github.com/opd-ai/nmcd/network"
 	"github.com/opd-ai/nmcd/rpc"
 	"github.com/opd-ai/nmcd/wallet"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // Server represents the nmcd daemon server with all its components.
 type Server struct {
-	config    *config.Config
-	chain     *chain.BlockChain
-	peerMgr   *network.PeerManager
-	wallet    *wallet.Wallet
-	rpcServer *rpc.Server
+	config          *config.Config
+	chain           *chain.BlockChain
+	peerMgr         *network.PeerManager
+	wallet          *wallet.Wallet
+	rpcServer       *rpc.Server
+	prometheusHTTP  *http.Server // Prometheus metrics HTTP server
+	metricsRegistry *prometheus.Registry
 }
 
 // NewServer creates and initializes a new nmcd server instance.
@@ -102,12 +108,34 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		return nil, fmt.Errorf("failed to create RPC server: %w", err)
 	}
 
+	// Setup Prometheus metrics if enabled
+	var prometheusHTTP *http.Server
+	var metricsRegistry *prometheus.Registry
+	if cfg.PrometheusAddr != "" {
+		metricsRegistry = prometheus.NewRegistry()
+		collector := metrics.NewPrometheusCollector(metrics.Get())
+		if err := metricsRegistry.Register(collector); err != nil {
+			log.Printf("Warning: Failed to register Prometheus collector: %v", err)
+		} else {
+			// Create HTTP server for Prometheus metrics
+			mux := http.NewServeMux()
+			mux.Handle("/metrics", promhttp.HandlerFor(metricsRegistry, promhttp.HandlerOpts{}))
+			prometheusHTTP = &http.Server{
+				Addr:    cfg.PrometheusAddr,
+				Handler: mux,
+			}
+			log.Printf("Prometheus metrics will be served on http://%s/metrics", cfg.PrometheusAddr)
+		}
+	}
+
 	return &Server{
-		config:    cfg,
-		chain:     bc,
-		peerMgr:   peerMgr,
-		wallet:    w,
-		rpcServer: rpcServer,
+		config:          cfg,
+		chain:           bc,
+		peerMgr:         peerMgr,
+		wallet:          w,
+		rpcServer:       rpcServer,
+		prometheusHTTP:  prometheusHTTP,
+		metricsRegistry: metricsRegistry,
 	}, nil
 }
 
@@ -144,6 +172,16 @@ func (s *Server) Start() (<-chan error, error) {
 	rpcErrCh := s.rpcServer.Start()
 	log.Printf("RPC server listening on %s", s.config.RPCAddr)
 
+	// Start Prometheus HTTP server if configured
+	if s.prometheusHTTP != nil {
+		go func() {
+			log.Printf("Starting Prometheus metrics server on %s", s.config.PrometheusAddr)
+			if err := s.prometheusHTTP.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Printf("Prometheus HTTP server error: %v", err)
+			}
+		}()
+	}
+
 	return rpcErrCh, nil
 }
 
@@ -152,6 +190,14 @@ func (s *Server) Stop() error {
 	log.Printf("Shutting down server...")
 
 	// Stop components in reverse order of creation
+
+	// Stop Prometheus HTTP server if running
+	if s.prometheusHTTP != nil {
+		if err := s.prometheusHTTP.Close(); err != nil {
+			log.Printf("Error stopping Prometheus HTTP server: %v", err)
+		}
+	}
+
 	if s.rpcServer != nil {
 		s.rpcServer.Stop()
 	}

@@ -55,6 +55,7 @@ func parseFlags() *config.Config {
 	flag.StringVar(&cfg.RPCAddr, "rpcaddr", cfg.RPCAddr, "RPC server address")
 	flag.StringVar(&cfg.RPCUser, "rpcuser", cfg.RPCUser, "RPC authentication username")
 	flag.StringVar(&cfg.RPCPassword, "rpcpassword", cfg.RPCPassword, "RPC authentication password")
+	flag.StringVar(&cfg.PrometheusAddr, "prometheusaddr", cfg.PrometheusAddr, "Prometheus metrics HTTP endpoint address (empty = disabled)")
 
 	var listenAddrs string
 	flag.StringVar(&listenAddrs, "listen", "0.0.0.0:8334", "Network listen addresses (comma-separated)")
