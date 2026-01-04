@@ -13,12 +13,13 @@
 **Blockers for Production Use:** 1
 
 **Latest Updates:**
+- ✅ **2026-01-04: Priority 2 Item #6 RESOLVED** - Standard RPC methods implemented (getblock, getblockhash, getrawtransaction)
 - ✅ **2026-01-04: Priority 2 Item #4 RESOLVED** - UTXO restoration on reorganization fully implemented with comprehensive testing
-- ✅ **2026-01-04: RPC name_update Broadcasting** - name_update RPC now broadcasts transactions to peers (completes Priority 2 item #6)
+- ✅ **2026-01-04: RPC name_update Broadcasting** - name_update RPC now broadcasts transactions to peers
 - ✅ **2026-01-03: Critical Issue #3 RESOLVED** - Transaction mempool relay fully implemented with validation, expiration, and comprehensive testing.
 - ✅ **2026-01-03: Critical Issue #2 RESOLVED** - Block subsidy calculation verified to match Namecoin Core exactly (see SUBSIDY_VERIFICATION.md).
 
-nmcd implements approximately **55-60% of Namecoin protocol features** required for full mainnet compatibility. The implementation correctly handles basic name operations, protocol constants, network connectivity, transaction relay, block subsidy calculation, and UTXO restoration during reorganizations. The primary remaining critical gap is comprehensive AuxPoW testing against real mainnet blocks.
+nmcd implements approximately **60-65% of Namecoin protocol features** required for full mainnet compatibility. The implementation correctly handles basic name operations, protocol constants, network connectivity, transaction relay, block subsidy calculation, UTXO restoration during reorganizations, and standard RPC methods. The primary remaining critical gap is comprehensive AuxPoW testing against real mainnet blocks.
 
 **Key Strengths:**
 - ✅ Correct protocol constants (block time, name expiration, fees, magic bytes)
@@ -29,13 +30,14 @@ nmcd implements approximately **55-60% of Namecoin protocol features** required 
 - ✅ Automatic transaction expiration and capacity management
 - ✅ Comprehensive transaction relay to peers
 - ✅ Block subsidy calculation verified to match Namecoin Core exactly (Issue #2 RESOLVED)
+- ✅ **NEW (2026-01-04):** Standard RPC methods (getblock, getblockhash, getrawtransaction) with hex and verbose modes
 - ✅ **NEW (2026-01-04):** name_update RPC broadcasts transactions to network peers
 - ✅ **NEW (2026-01-04):** UTXO restoration during blockchain reorganizations prevents UTXO set corruption
 
 **Critical Gaps:**
 - ❌ Incomplete AuxPoW validation (validation logic present but not fully tested against mainnet)
 
-**Recommendation:** nmcd is suitable for development, testing, and regtest environments. Transaction relay is now functional. Block subsidy calculation has been verified correct. UTXO restoration on reorg is implemented. It is **NOT recommended for mainnet production use** until AuxPoW validation is fully tested against real mainnet blocks past height 19,200.
+**Recommendation:** nmcd is suitable for development, testing, and regtest environments. Transaction relay is now functional. Block subsidy calculation has been verified correct. UTXO restoration on reorg is implemented. Standard RPC methods provide basic blockchain query capabilities. It is **NOT recommended for mainnet production use** until AuxPoW validation is fully tested against real mainnet blocks past height 19,200.
 
 ---
 
@@ -836,10 +838,16 @@ ok  	github.com/opd-ai/nmcd/config	0.004s
      - Headers-first sync and assumevalid provide better performance without centralization
      - No action needed - current implementation is aligned with modern best practices
 
-6. **RPC Method Completion**
+6. ~~**RPC Method Completion**~~ ✅ **RESOLVED (2026-01-04)**
    - File: `rpc/server.go`
    - ~~Complete `name_update` implementation (currently only creates tx, doesn't broadcast)~~ ✅ **RESOLVED (2026-01-04)** - `name_update` now broadcasts transactions to peers via `BroadcastTx()`
-   - Add missing standard RPC methods (getblock, getrawtransaction, etc.)
+   - ~~Add missing standard RPC methods (getblock, getrawtransaction, etc.)~~ ✅ **RESOLVED (2026-01-04)** - Implemented three critical RPC methods:
+     - `getblock` - Returns block data by hash with optional verbose mode (hex or JSON)
+     - `getblockhash` - Returns block hash for a given height
+     - `getrawtransaction` - Returns raw transaction data with optional verbose mode (hex or JSON)
+   - All methods follow JSON-RPC 2.0 specification with proper error handling
+   - Comprehensive test coverage added in `rpc/block_rpc_test.go` (7 test functions, 100% pass rate)
+   - Compatible with Bitcoin Core / Namecoin Core RPC interface conventions
 
 #### Priority 3 (Enhancements)
 
@@ -904,6 +912,7 @@ nmcd demonstrates a strong foundation with correct implementation of core Nameco
 - ✅ **NEW:** Fully functional transaction relay with validation and expiration
 - ✅ **NEW:** Block subsidy calculation verified to match Namecoin Core exactly
 - ✅ **NEW (2026-01-04):** UTXO restoration prevents corruption during blockchain reorganizations
+- ✅ **NEW (2026-01-04):** Standard RPC methods (getblock, getblockhash, getrawtransaction) for blockchain queries
 
 **Critical Gaps:**
 - Incomplete real-world AuxPoW testing (blocker for mainnet sync past block 19,200)
@@ -915,14 +924,16 @@ nmcd demonstrates a strong foundation with correct implementation of core Nameco
 - ✅ **Transaction relay:** Fully functional and tested
 - ✅ **Block subsidy:** Verified correct for all heights
 - ✅ **UTXO restoration:** Prevents corruption during blockchain reorganizations
+- ✅ **RPC Methods:** Standard blockchain query methods implemented with verbose modes
 
 **Recommended Next Steps:**
 1. Prioritize AuxPoW validation testing with real mainnet blocks (ONLY remaining P1 blocker)
 2. ~~Implement mempool transaction relay~~ ✅ **COMPLETE**
 3. ~~Verify subsidy calculation against Namecoin Core~~ ✅ **COMPLETE**
 4. ~~Implement UTXO restoration during reorgs~~ ✅ **COMPLETE**
-5. After completing AuxPoW testing, begin careful testnet deployment past block 19,200
-6. Extensive testing before considering mainnet use
+5. ~~Add standard RPC methods (getblock, getrawtransaction)~~ ✅ **COMPLETE**
+6. After completing AuxPoW testing, begin careful testnet deployment past block 19,200
+7. Extensive testing before considering mainnet use
 
 **Estimated Work to Production:** 1-2 weeks for AuxPoW testing and validation.
 
