@@ -874,8 +874,18 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 
 		// Skip coinbase transaction for input processing
 		if txIdx > 0 {
-			// Remove spent UTXOs (process inputs)
+			// Process spent UTXOs (inputs)
+			// Store spent UTXOs before removing them for potential restoration during reorg
 			for _, txIn := range msgTx.TxIn {
+				// Try to get the UTXO before removing it
+				utxo, err := bc.nameDB.GetUTXO(&txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index)
+				if err == nil && utxo != nil {
+					// Store the spent UTXO for potential restoration
+					// We don't check for errors here to avoid blocking on cleanup failures
+					_ = bc.nameDB.StoreSpentUTXO(utxo, height)
+				}
+
+				// Remove the UTXO from active set
 				if err := bc.nameDB.RemoveUTXO(&txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index); err != nil {
 					// UTXO might not exist (e.g., old block before UTXO tracking was implemented)
 					// This is normal and not an error condition
@@ -1002,6 +1012,18 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 				// Record name operation metric
 				metrics.Get().RecordNameOperation("NAME_UPDATE")
 			}
+		}
+	}
+
+	// Cleanup old spent UTXOs periodically
+	// Keep spent UTXOs for the last 1000 blocks to handle potential reorgs
+	// This prevents unbounded growth of the spent UTXO bucket
+	const spentUtxoRetentionDepth = 1000
+	if height > spentUtxoRetentionDepth && height%100 == 0 { // Cleanup every 100 blocks
+		cleanupHeight := height - spentUtxoRetentionDepth
+		if err := bc.nameDB.CleanupOldSpentUTXOs(cleanupHeight); err != nil {
+			// Log but don't fail the block - cleanup is best-effort
+			log.Printf("Warning: Failed to cleanup old spent UTXOs at height %d: %v", height, err)
 		}
 	}
 
@@ -1591,27 +1613,11 @@ func (bc *BlockChain) rollbackNameOperations(block *btcutil.Block) {
 			_ = bc.nameDB.RemoveUTXO(txHash, uint32(outIdx))
 		}
 
-		// Restore UTXOs: add back inputs spent by this block
+		// Restore UTXOs: restore inputs that were spent by this block
 		// Skip coinbase (has no real inputs)
-		if i > 0 {
-			for _, txIn := range msgTx.TxIn {
-				// We need to restore the spent UTXO, but we don't have the full
-				// UTXO data here. In a full implementation, we would need to:
-				// 1. Look up the referenced transaction
-				// 2. Extract the output data
-				// 3. Re-add it as a UTXO
-				//
-				// Current limitation: UTXOs spent in reorged blocks are not restored.
-				// This is acceptable for a working implementation because:
-				// - Name UTXOs are tracked through name records and restored properly
-				// - Regular wallet UTXOs can be rebuilt by blockchain rescan
-				// - Reorgs are rare on established chains
-				// - The UTXO set will self-correct as blocks are re-applied
-				//
-				// Future enhancement: Store spent UTXO data to enable full restoration
-				_ = txIn // Silence unused variable warning
-			}
-		}
+		// Note: The actual restoration is done in batch after this loop
+		// via RestoreSpentUTXOsForBlock for efficiency
+
 
 		// Process outputs in reverse order within the transaction
 		for j := len(msgTx.TxOut) - 1; j >= 0; j-- {
@@ -1686,6 +1692,12 @@ func (bc *BlockChain) rollbackNameOperations(block *btcutil.Block) {
 				// registered first), but we handle it gracefully
 			}
 		}
+	}
+
+	// Restore all UTXOs that were spent in this block
+	// This is done after processing name operations to ensure consistency
+	if err := bc.nameDB.RestoreSpentUTXOsForBlock(block.Height()); err != nil {
+		log.Printf("Warning: Failed to restore spent UTXOs for block %d: %v", block.Height(), err)
 	}
 }
 
