@@ -1,6 +1,7 @@
 # Namecoin Protocol Compliance Audit: nmcd
 
 **Audit Date:** January 3, 2026  
+**Last Updated:** January 4, 2026  
 **Auditor:** GitHub Copilot Workspace  
 **nmcd Version:** v0.1.0 (development)  
 **Reference:** Namecoin Core (https://github.com/namecoin/namecoin-core)
@@ -11,9 +12,10 @@
 **Critical Issues Count:** 1 (2 RESOLVED)  
 **Blockers for Production Use:** 1
 
-**Latest Updates (2026-01-03):**  
-- ✅ **Critical Issue #3 RESOLVED** - Transaction mempool relay fully implemented with validation, expiration, and comprehensive testing.
-- ✅ **Critical Issue #2 RESOLVED** - Block subsidy calculation verified to match Namecoin Core exactly (see SUBSIDY_VERIFICATION.md).
+**Latest Updates:**
+- ✅ **2026-01-04: RPC name_update Broadcasting** - name_update RPC now broadcasts transactions to peers (completes Priority 2 item #6)
+- ✅ **2026-01-03: Critical Issue #3 RESOLVED** - Transaction mempool relay fully implemented with validation, expiration, and comprehensive testing.
+- ✅ **2026-01-03: Critical Issue #2 RESOLVED** - Block subsidy calculation verified to match Namecoin Core exactly (see SUBSIDY_VERIFICATION.md).
 
 nmcd implements approximately **50-55% of Namecoin protocol features** required for full mainnet compatibility. The implementation correctly handles basic name operations, protocol constants, network connectivity, transaction relay, and block subsidy calculation. The primary remaining critical gap is comprehensive AuxPoW testing against real mainnet blocks.
 
@@ -22,10 +24,11 @@ nmcd implements approximately **50-55% of Namecoin protocol features** required 
 - ✅ Proper name operation validation (NAME_NEW, NAME_FIRSTUPDATE, NAME_UPDATE)
 - ✅ Thread-safe name database with expiration tracking
 - ✅ Correct network magic bytes and protocol version
-- ✅ **NEW:** Fully functional mempool with transaction validation and relay (Issue #3 RESOLVED)
-- ✅ **NEW:** Automatic transaction expiration and capacity management
-- ✅ **NEW:** Comprehensive transaction relay to peers
-- ✅ **NEW:** Block subsidy calculation verified to match Namecoin Core exactly (Issue #2 RESOLVED)
+- ✅ Fully functional mempool with transaction validation and relay (Issue #3 RESOLVED)
+- ✅ Automatic transaction expiration and capacity management
+- ✅ Comprehensive transaction relay to peers
+- ✅ Block subsidy calculation verified to match Namecoin Core exactly (Issue #2 RESOLVED)
+- ✅ **NEW (2026-01-04):** name_update RPC broadcasts transactions to network peers
 
 **Critical Gaps:**
 - ❌ Incomplete AuxPoW validation (validation logic present but not fully tested against mainnet)
@@ -821,7 +824,7 @@ ok  	github.com/opd-ai/nmcd/config	0.004s
 
 6. **RPC Method Completion**
    - File: `rpc/server.go`
-   - Complete `name_update` implementation (currently only creates tx, doesn't broadcast)
+   - ~~Complete `name_update` implementation (currently only creates tx, doesn't broadcast)~~ ✅ **RESOLVED (2026-01-04)** - `name_update` now broadcasts transactions to peers via `BroadcastTx()`
    - Add missing standard RPC methods (getblock, getrawtransaction, etc.)
 
 #### Priority 3 (Enhancements)

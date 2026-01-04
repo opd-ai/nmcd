@@ -517,25 +517,18 @@ func (s *Server) nameUpdate(req *Request) *Response {
 	}
 
 	// Broadcast the transaction to the network
-	// Add to mempool
-	mempool := s.peerMgr.GetMempool()
-	err = mempool.AddTx(tx)
+	// This adds it to our mempool and relays it to all connected peers
+	err = s.peerMgr.BroadcastTx(tx)
 	if err != nil {
 		return &Response{
 			Jsonrpc: "2.0",
 			Error: &Error{
 				Code:    -1,
-				Message: fmt.Sprintf("Failed to add transaction to mempool: %v", err),
+				Message: fmt.Sprintf("Failed to broadcast transaction: %v", err),
 			},
 			ID: req.ID,
 		}
 	}
-
-	// Note: Transaction relay to peers is not yet implemented
-	// The transaction is now in the mempool and will be:
-	// 1. Available for inclusion in blocks we mine
-	// 2. Returned in mempool queries
-	// Future enhancement: Add peer.QueueMessage to broadcast to network
 
 	// Return success with transaction details
 	txHash := tx.TxHash()
@@ -543,7 +536,7 @@ func (s *Server) nameUpdate(req *Request) *Response {
 		"txid":   txHash.String(),
 		"name":   name,
 		"value":  newValue,
-		"status": "mempool",
+		"status": "broadcasted", // Transaction is now in mempool and relayed to peers
 	}
 
 	// Include destination address in response if specified
