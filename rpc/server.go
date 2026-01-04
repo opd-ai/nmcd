@@ -703,9 +703,9 @@ func (s *Server) listAddresses(req *Request) *Response {
 
 // getBlock returns a block by hash with optional verbose mode.
 // Parameters: [blockhash] or [blockhash, verbose]
-// - blockhash (string, required): The block hash as hex string
-// - verbose (bool, optional): If false (default), returns hex-encoded block data.
-//                             If true, returns JSON object with block details.
+//   - blockhash (string, required): The block hash as hex string
+//   - verbose (bool, optional): If false (default), returns hex-encoded block data.
+//     If true, returns JSON object with block details.
 func (s *Server) getBlock(req *Request) *Response {
 	var params []interface{}
 	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
@@ -804,17 +804,17 @@ func (s *Server) getBlock(req *Request) *Response {
 	}
 
 	result := map[string]interface{}{
-		"hash":          hash.String(),
-		"confirmations": s.blockchain.BestSnapshot().Height - height + 1,
-		"height":        height,
-		"version":       header.Version,
-		"merkleroot":    header.MerkleRoot.String(),
-		"time":          header.Timestamp.Unix(),
-		"nonce":         header.Nonce,
-		"bits":          fmt.Sprintf("%08x", header.Bits),
-		"difficulty":    header.Bits,
+		"hash":              hash.String(),
+		"confirmations":     s.blockchain.BestSnapshot().Height - height + 1,
+		"height":            height,
+		"version":           header.Version,
+		"merkleroot":        header.MerkleRoot.String(),
+		"time":              header.Timestamp.Unix(),
+		"nonce":             header.Nonce,
+		"bits":              fmt.Sprintf("%08x", header.Bits),
+		"difficulty":        header.Bits,
 		"previousblockhash": header.PrevBlock.String(),
-		"tx":            txs,
+		"tx":                txs,
 	}
 
 	// Add next block hash if not the best block
@@ -902,9 +902,9 @@ func (s *Server) getBlockHash(req *Request) *Response {
 
 // getRawTransaction returns the raw transaction data.
 // Parameters: [txid] or [txid, verbose]
-// - txid (string, required): The transaction ID
-// - verbose (bool, optional): If false (default), returns hex-encoded transaction.
-//                             If true, returns JSON object with transaction details.
+//   - txid (string, required): The transaction ID
+//   - verbose (bool, optional): If false (default), returns hex-encoded transaction.
+//     If true, returns JSON object with transaction details.
 //
 // Note: This implementation searches through recent blocks to find transactions.
 // It does not currently support mempool transactions or a full transaction index.
@@ -957,7 +957,7 @@ func (s *Server) getRawTransaction(req *Request) *Response {
 	// Search for transaction in recent blocks
 	// We search backwards from the current best block
 	bestHeight := s.blockchain.BestSnapshot().Height
-	
+
 	// Limit search to last 1000 blocks to prevent excessive lookups
 	// For a full transaction index, use btcd's txindex
 	startHeight := bestHeight - 1000
@@ -1030,11 +1030,11 @@ func (s *Server) getRawTransaction(req *Request) *Response {
 
 	// Build verbose JSON response
 	result := map[string]interface{}{
-		"txid":     foundTx.TxHash().String(),
-		"version":  foundTx.Version,
-		"locktime": foundTx.LockTime,
-		"blockhash": foundBlockHash.String(),
-		"blockheight": foundHeight,
+		"txid":          foundTx.TxHash().String(),
+		"version":       foundTx.Version,
+		"locktime":      foundTx.LockTime,
+		"blockhash":     foundBlockHash.String(),
+		"blockheight":   foundHeight,
 		"confirmations": s.blockchain.BestSnapshot().Height - foundHeight + 1,
 	}
 

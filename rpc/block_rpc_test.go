@@ -7,7 +7,7 @@ import (
 
 func TestGetBlockHashInvalidParams(t *testing.T) {
 	s := &Server{}
-	
+
 	tests := []struct {
 		name      string
 		params    interface{}
@@ -24,7 +24,7 @@ func TestGetBlockHashInvalidParams(t *testing.T) {
 			errorCode: -32602,
 		},
 	}
-	
+
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			params, _ := json.Marshal(tc.params)
@@ -34,9 +34,9 @@ func TestGetBlockHashInvalidParams(t *testing.T) {
 				Params:  params,
 				ID:      1,
 			}
-			
+
 			resp := s.getBlockHash(req)
-			
+
 			if resp.Error == nil {
 				t.Error("expected error but got none")
 			}
@@ -49,7 +49,7 @@ func TestGetBlockHashInvalidParams(t *testing.T) {
 
 func TestGetBlockHashNegative(t *testing.T) {
 	s := &Server{}
-	
+
 	params, _ := json.Marshal([]interface{}{-1})
 	req := &Request{
 		Jsonrpc: "2.0",
@@ -57,9 +57,9 @@ func TestGetBlockHashNegative(t *testing.T) {
 		Params:  params,
 		ID:      1,
 	}
-	
+
 	resp := s.getBlockHash(req)
-	
+
 	if resp.Error == nil {
 		t.Error("expected error for negative height")
 	}
@@ -70,7 +70,7 @@ func TestGetBlockHashNegative(t *testing.T) {
 
 func TestGetBlockInvalidParams(t *testing.T) {
 	s := &Server{}
-	
+
 	tests := []struct {
 		name      string
 		params    interface{}
@@ -87,7 +87,7 @@ func TestGetBlockInvalidParams(t *testing.T) {
 			errorCode: -32602,
 		},
 	}
-	
+
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			params, _ := json.Marshal(tc.params)
@@ -97,9 +97,9 @@ func TestGetBlockInvalidParams(t *testing.T) {
 				Params:  params,
 				ID:      1,
 			}
-			
+
 			resp := s.getBlock(req)
-			
+
 			if resp.Error == nil {
 				t.Error("expected error but got none")
 			}
@@ -112,7 +112,7 @@ func TestGetBlockInvalidParams(t *testing.T) {
 
 func TestGetBlockInvalidHash(t *testing.T) {
 	s := &Server{}
-	
+
 	params, _ := json.Marshal([]interface{}{"invalid_hash", false})
 	req := &Request{
 		Jsonrpc: "2.0",
@@ -120,9 +120,9 @@ func TestGetBlockInvalidHash(t *testing.T) {
 		Params:  params,
 		ID:      1,
 	}
-	
+
 	resp := s.getBlock(req)
-	
+
 	if resp.Error == nil {
 		t.Error("expected error for invalid hash")
 	}
@@ -133,7 +133,7 @@ func TestGetBlockInvalidHash(t *testing.T) {
 
 func TestGetRawTransactionInvalidParams(t *testing.T) {
 	s := &Server{}
-	
+
 	tests := []struct {
 		name      string
 		params    interface{}
@@ -150,7 +150,7 @@ func TestGetRawTransactionInvalidParams(t *testing.T) {
 			errorCode: -32602,
 		},
 	}
-	
+
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			params, _ := json.Marshal(tc.params)
@@ -160,9 +160,9 @@ func TestGetRawTransactionInvalidParams(t *testing.T) {
 				Params:  params,
 				ID:      1,
 			}
-			
+
 			resp := s.getRawTransaction(req)
-			
+
 			if resp.Error == nil {
 				t.Error("expected error but got none")
 			}
@@ -175,7 +175,7 @@ func TestGetRawTransactionInvalidParams(t *testing.T) {
 
 func TestGetRawTransactionInvalidTxid(t *testing.T) {
 	s := &Server{}
-	
+
 	params, _ := json.Marshal([]interface{}{"invalid_txid", false})
 	req := &Request{
 		Jsonrpc: "2.0",
@@ -183,9 +183,9 @@ func TestGetRawTransactionInvalidTxid(t *testing.T) {
 		Params:  params,
 		ID:      1,
 	}
-	
+
 	resp := s.getRawTransaction(req)
-	
+
 	if resp.Error == nil {
 		t.Error("expected error for invalid txid")
 	}
@@ -197,9 +197,9 @@ func TestGetRawTransactionInvalidTxid(t *testing.T) {
 // TestProcessRequestNewMethods verifies that the new RPC methods are registered
 func TestProcessRequestNewMethods(t *testing.T) {
 	s := &Server{}
-	
+
 	methods := []string{"getblock", "getblockhash", "getrawtransaction"}
-	
+
 	for _, method := range methods {
 		t.Run(method, func(t *testing.T) {
 			req := &Request{
@@ -208,14 +208,14 @@ func TestProcessRequestNewMethods(t *testing.T) {
 				Params:  json.RawMessage(`[]`),
 				ID:      1,
 			}
-			
+
 			resp := s.processRequest(req)
-			
+
 			// Should not get "Method not found" error
 			if resp.Error != nil && resp.Error.Code == -32601 {
 				t.Errorf("method %s not found in processRequest", method)
 			}
-			
+
 			// We expect a different error (invalid params) since we passed empty params
 			// This proves the method is registered
 			if resp.Error != nil && resp.Error.Code != -32601 {
@@ -224,4 +224,3 @@ func TestProcessRequestNewMethods(t *testing.T) {
 		})
 	}
 }
-
