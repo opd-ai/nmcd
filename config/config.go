@@ -72,6 +72,14 @@ const (
 	NamecoinProtocolVersion = 70015
 )
 
+// UTXOTrackingStartHeight is the block height from which UTXO tracking is guaranteed.
+// Blocks before this height may not have complete UTXO data, and fee validation
+// will be more lenient for those historical blocks.
+// Set to 0 for new nodes that track UTXOs from genesis.
+// Can be configured to a higher value if syncing from a checkpoint or if UTXO
+// tracking was added after initial blockchain sync.
+var UTXOTrackingStartHeight int32 = 0
+
 // ValidNamespaces defines the allowed namespace prefixes for Namecoin names
 // Per Namecoin protocol specification:
 // - d/ : Domain names (DNS, .bit TLD)
