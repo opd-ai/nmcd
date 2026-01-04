@@ -46,7 +46,8 @@
 //	bridge := bridge.NewNamecoinBridge(nc)
 //
 //	// Lookup mail config
-//	config, err := bridge.LookupMail("alice")
+//	ctx := context.Background()
+//	config, err := bridge.LookupMail(ctx, "alice")
 //	if err == client.ErrNameNotFound {
 //	    fmt.Println("Name not registered")
 //	} else if err == bridge.ErrInvalidMailConfig {

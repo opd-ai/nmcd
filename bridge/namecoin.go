@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -29,7 +30,9 @@ type Resolver interface {
 	// LookupMail retrieves email configuration for a given name.
 	// Returns ErrNameNotFound if the name doesn't exist or has expired.
 	// Returns ErrInvalidMailConfig if the name exists but doesn't contain valid mail configuration.
-	LookupMail(name string) (MailConfig, error)
+	//
+	// The ctx parameter enables cancellation and timeout support for long-running lookups.
+	LookupMail(ctx context.Context, name string) (MailConfig, error)
 }
 
 // NamecoinBridge implements the Resolver interface by querying a Namecoin client.
@@ -66,7 +69,8 @@ type NamecoinBridge struct {
 //	bridge := NewNamecoinBridge(nc)
 //
 //	// Lookup mail config for a name
-//	config, err := bridge.LookupMail("alice")
+//	ctx := context.Background()
+//	config, err := bridge.LookupMail(ctx, "alice")
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
@@ -91,6 +95,7 @@ func NewNamecoinBridge(nc client.NameClient) *NamecoinBridge {
 //	}
 //
 // Parameters:
+//   - ctx: Context for cancellation and timeout support
 //   - name: The Namecoin name to lookup (without namespace prefix like "d/")
 //
 // Returns:
@@ -99,7 +104,8 @@ func NewNamecoinBridge(nc client.NameClient) *NamecoinBridge {
 //
 // Example:
 //
-//	config, err := bridge.LookupMail("alice")
+//	ctx := context.Background()
+//	config, err := bridge.LookupMail(ctx, "alice")
 //	if err == client.ErrNameNotFound {
 //	    fmt.Println("Name not registered")
 //	} else if err == ErrInvalidMailConfig {
@@ -108,9 +114,9 @@ func NewNamecoinBridge(nc client.NameClient) *NamecoinBridge {
 //	    log.Fatal(err)
 //	}
 //	fmt.Printf("Mail forwards to: %s\n", config.ForwardTo)
-func (b *NamecoinBridge) LookupMail(name string) (MailConfig, error) {
+func (b *NamecoinBridge) LookupMail(ctx context.Context, name string) (MailConfig, error) {
 	// Query Namecoin for the name record
-	record, err := b.nc.ResolveName(nil, name)
+	record, err := b.nc.ResolveName(ctx, name)
 	if err != nil {
 		// ResolveName returns client.ErrNameNotFound for missing/expired names
 		// Pass this through directly so callers can distinguish not-found from other errors

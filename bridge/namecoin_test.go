@@ -144,7 +144,7 @@ func TestLookupMail_Success(t *testing.T) {
 			}
 
 			bridge := NewNamecoinBridge(mock)
-			got, err := bridge.LookupMail("alice")
+			got, err := bridge.LookupMail(context.Background(), "alice")
 
 			if err != nil {
 				t.Fatalf("LookupMail() error = %v, want nil", err)
@@ -182,7 +182,7 @@ func TestLookupMail_NameNotFound(t *testing.T) {
 	mock := &mockNameClient{names: make(map[string]*client.NameRecord)}
 	bridge := NewNamecoinBridge(mock)
 
-	_, err := bridge.LookupMail("nonexistent")
+	_, err := bridge.LookupMail(context.Background(), "nonexistent")
 
 	if !errors.Is(err, client.ErrNameNotFound) {
 		t.Errorf("LookupMail() error = %v, want ErrNameNotFound", err)
@@ -235,7 +235,7 @@ func TestLookupMail_InvalidJSON(t *testing.T) {
 			}
 
 			bridge := NewNamecoinBridge(mock)
-			_, err := bridge.LookupMail("test")
+			_, err := bridge.LookupMail(context.Background(), "test")
 
 			if err == nil {
 				t.Fatal("LookupMail() error = nil, want error")
@@ -385,7 +385,7 @@ func TestLookupMail_ThreadSafety(t *testing.T) {
 				name = "bob"
 			}
 
-			_, err := bridge.LookupMail(name)
+			_, err := bridge.LookupMail(context.Background(), name)
 			if err != nil {
 				t.Errorf("Concurrent lookup %d failed: %v", id, err)
 			}

@@ -30,9 +30,12 @@ func main() {
 	fmt.Println("Example 1: Looking up mail configuration")
 	fmt.Println("=========================================")
 
+	// Create context for the lookup
+	ctx := context.Background()
+
 	// This would work if the name "alice" exists in the blockchain
 	// For demonstration, we show the expected usage pattern
-	config, err := resolver.LookupMail("alice")
+	config, err := resolver.LookupMail(ctx, "alice")
 	if err == client.ErrNameNotFound {
 		fmt.Println("Name 'alice' not found in blockchain")
 		fmt.Println("To use this example:")
@@ -73,7 +76,7 @@ func main() {
 
 	testNames := []string{"nonexistent", "alice"}
 	for _, name := range testNames {
-		_, err := resolver.LookupMail(name)
+		_, err := resolver.LookupMail(ctx, name)
 		if err == client.ErrNameNotFound {
 			fmt.Printf("✗ Name '%s': not found\n", name)
 		} else if err == bridge.ErrInvalidMailConfig {
@@ -104,8 +107,7 @@ func demonstrateResolverInterface(resolver bridge.Resolver) {
 
 	// In a real mail router, this would be used to resolve .bit addresses
 	// For example: alice@mail.bit -> alice@gmail.com
-	ctx := context.Background()
-	_ = ctx // Would be used for cancellation in production
+	// Context would be passed from the SMTP handler for cancellation support
 
 	fmt.Println("Resolver interface enables:")
 	fmt.Println("  • Testability (mock resolvers for unit tests)")
