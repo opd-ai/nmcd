@@ -203,6 +203,12 @@ func (s *Server) processRequest(req *Request) *Response {
 		return s.getNewAddress(req)
 	case "listaddresses":
 		return s.listAddresses(req)
+	case "walletpassphrase":
+		return s.walletPassphrase(req)
+	case "walletlock":
+		return s.walletLock(req)
+	case "encryptwallet":
+		return s.encryptWallet(req)
 	case "getblock":
 		return s.getBlock(req)
 	case "getblockhash":
@@ -1128,6 +1134,226 @@ func (s *Server) listAddresses(req *Request) *Response {
 	return &Response{
 		Jsonrpc: "2.0",
 		Result:  addresses,
+		ID:      req.ID,
+	}
+}
+
+// walletPassphrase unlocks the wallet with a password for a specified time.
+// Parameters: [password, timeout]
+//   - password (string, required): The wallet password
+//   - timeout (int, optional): Time in seconds to keep wallet unlocked (default: 60)
+//
+// Returns: null on success
+// Errors:
+//   - -1: Wallet not initialized
+//   - -13: Wallet is not encrypted
+//   - -14: Incorrect password
+func (s *Server) walletPassphrase(req *Request) *Response {
+	if s.wallet == nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: "Wallet not initialized. Start the node with wallet enabled.",
+			},
+			ID: req.ID,
+		}
+	}
+
+	var params []interface{}
+	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32602,
+				Message: "Invalid params: expected [password] or [password, timeout]",
+			},
+			ID: req.ID,
+		}
+	}
+
+	password, ok := params[0].(string)
+	if !ok {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32602,
+				Message: "Invalid password parameter: expected string",
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Get timeout (default: 60 seconds)
+	timeout := 60
+	if len(params) > 1 {
+		timeoutFloat, ok := params[1].(float64)
+		if !ok {
+			return &Response{
+				Jsonrpc: "2.0",
+				Error: &Error{
+					Code:    -32602,
+					Message: "Invalid timeout parameter: expected integer",
+				},
+				ID: req.ID,
+			}
+		}
+		timeout = int(timeoutFloat)
+		if timeout <= 0 {
+			return &Response{
+				Jsonrpc: "2.0",
+				Error: &Error{
+					Code:    -32602,
+					Message: "Invalid timeout: must be positive",
+				},
+				ID: req.ID,
+			}
+		}
+	}
+
+	// Check if wallet is encrypted
+	if !s.wallet.IsEncrypted() {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -13,
+				Message: "Wallet is not encrypted",
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Unlock wallet
+	if err := s.wallet.Unlock(password); err != nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -14,
+				Message: fmt.Sprintf("Failed to unlock wallet: %v", err),
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Schedule auto-lock after timeout
+	go func() {
+		time.Sleep(time.Duration(timeout) * time.Second)
+		s.wallet.Lock()
+	}()
+
+	return &Response{
+		Jsonrpc: "2.0",
+		Result:  nil,
+		ID:      req.ID,
+	}
+}
+
+// walletLock locks the wallet, removing keys from memory.
+// Parameters: none
+// Returns: null on success
+// Errors:
+//   - -1: Wallet not initialized
+//   - -13: Wallet is not encrypted
+func (s *Server) walletLock(req *Request) *Response {
+	if s.wallet == nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: "Wallet not initialized. Start the node with wallet enabled.",
+			},
+			ID: req.ID,
+		}
+	}
+
+	if !s.wallet.IsEncrypted() {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -13,
+				Message: "Wallet is not encrypted",
+			},
+			ID: req.ID,
+		}
+	}
+
+	if err := s.wallet.Lock(); err != nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: fmt.Sprintf("Failed to lock wallet: %v", err),
+			},
+			ID: req.ID,
+		}
+	}
+
+	return &Response{
+		Jsonrpc: "2.0",
+		Result:  nil,
+		ID:      req.ID,
+	}
+}
+
+// encryptWallet encrypts the wallet with a password.
+// Parameters: [password]
+//   - password (string, required): The password to encrypt the wallet with
+//
+// Returns: null on success
+// Errors:
+//   - -1: Wallet not initialized or already encrypted
+//   - -8: Invalid password (too weak)
+func (s *Server) encryptWallet(req *Request) *Response {
+	if s.wallet == nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: "Wallet not initialized. Start the node with wallet enabled.",
+			},
+			ID: req.ID,
+		}
+	}
+
+	var params []interface{}
+	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32602,
+				Message: "Invalid params: expected [password]",
+			},
+			ID: req.ID,
+		}
+	}
+
+	password, ok := params[0].(string)
+	if !ok {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32602,
+				Message: "Invalid password parameter: expected string",
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Encrypt wallet
+	if err := s.wallet.EncryptWallet(password); err != nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -8,
+				Message: fmt.Sprintf("Failed to encrypt wallet: %v", err),
+			},
+			ID: req.ID,
+		}
+	}
+
+	return &Response{
+		Jsonrpc: "2.0",
+		Result:  "Wallet encrypted successfully. Please backup your wallet and remember your password.",
 		ID:      req.ID,
 	}
 }
