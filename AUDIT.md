@@ -1,15 +1,16 @@
 # Implementation Gap Analysis
 Generated: 2026-01-05T02:41:22.091Z
 Codebase Version: dd32faa9f4b50eb0343ae4b53a0013693cd0834f (2026-01-05 02:40:30 +0000)
-**Last Updated:** 2026-01-05 (Gap #1 RESOLVED)
+**Last Updated:** 2026-01-05 (Gap #1 and Gap #11 RESOLVED)
 
 ## Executive Summary
 Total Gaps Analyzed: 11 (8 actual gaps, 3 verified non-gaps)
 - Critical: 2 (1 RESOLVED)
 - Moderate: 3
-- Minor: 2
+- Minor: 2 (1 RESOLVED)
 
 **Latest Updates:**
+- ✅ **2026-01-05: Gap #11 RESOLVED** - Fixed hardcoded Connections=0 in embedded mode GetInfo
 - ✅ **2026-01-05: Gap #1 RESOLVED** - Fixed ExpiresIn=0 expiration check inconsistency in embedded mode
 
 This audit focuses on precise discrepancies between the README.md documentation and the actual implementation in a nearly feature-complete codebase. The analysis reveals subtle behavioral differences, incomplete feature implementations, and documentation drift that could impact production deployments.
@@ -496,53 +497,50 @@ result := map[string]interface{}{
 
 ---
 
-### Gap #11: Embedded Client GetInfo Returns Hardcoded Connections Count
+### Gap #11: ✅ RESOLVED - Embedded Client GetInfo Returns Hardcoded Connections Count
+**Status:** RESOLVED on 2026-01-05
+
+**Resolution:** Added PeerManager integration to EmbeddedClient and updated GetInfo to return actual connection count:
+- Added `peerMgr *network.PeerManager` field to EmbeddedClient struct
+- Initialized PeerManager in `NewEmbeddedClient` constructor (line 151)
+- Updated `GetInfo` method to call `peerMgr.GetConnectedPeers()` (line 907)
+- Added cleanup in `Close` method to stop PeerManager (line 946)
+
+**Verification:** Added comprehensive test `TestEmbeddedClient_GetInfo_ConnectionCount` that validates:
+- Client initializes with a PeerManager instance
+- GetInfo returns actual peer count from PeerManager (initially 0)
+- GetInfo dynamically reflects PeerManager state, not a hardcoded value
+- Other NodeInfo fields remain correctly populated
+
+**Files Modified:**
+- `client/embedded.go` - Added PeerManager field, initialization, usage, and cleanup
+- `client/embedded_test.go` - Added comprehensive test validating actual connection count
+
+**Test Results:** All tests pass, no regressions in existing tests.
+
 **Documentation Reference:**
 > "Connections: Number of peer connections" (types.go:157)
 
-**Implementation Location:** `client/embedded.go:877`
+**Implementation Location:** `client/embedded.go:29, 151, 907, 946`
 
 **Expected Behavior:** The GetInfo method should return the actual number of connected peers from the network manager.
 
-**Actual Implementation:** Returns hardcoded `Connections: 0` with a TODO comment: "// TODO: Get from network manager when implemented" (line 877).
-
-**Gap Details:** The NodeInfo struct defines Connections as "Number of peer connections" implying it reflects actual network state. However, embedded mode always returns 0 regardless of actual peer connections, because the network manager integration is incomplete.
-
-**Reproduction:**
+**Previous Implementation:** 
 ```go
-embeddedClient, _ := client.NewEmbeddedClient(&client.Config{
-    MaxPeers: 8,
-    // ... other config
-})
-
-// Even if peers are connected (MaxPeers=8 allows connections)
-info, _ := embeddedClient.GetInfo(ctx)
-fmt.Println(info.Connections)  // Always prints: 0
+// client/embedded.go:883 (old line)
+Connections:     0, // TODO: Get from network manager when implemented
 ```
 
-**Production Impact:** Minor - Monitoring and diagnostics tools relying on GetInfo.Connections for embedded mode will receive incorrect data. Applications cannot determine actual network health or peer count in embedded mode.
-
-**Evidence:**
+**Fixed Implementation:**
 ```go
-// client/embedded.go:870-882
-func (c *EmbeddedClient) GetInfo(ctx context.Context) (*NodeInfo, error) {
-    // ... context and state checks ...
-    
-    bestSnapshot := c.chain.BestSnapshot()
-    
-    info := &NodeInfo{
-        Version:         "0.1.0",
-        ProtocolVersion: 70015,
-        BlockHeight:     bestSnapshot.Height,
-        BestBlockHash:   bestSnapshot.Hash.String(),
-        Connections:     0, // TODO: Get from network manager when implemented
-        NetworkName:     c.network,
-        Mode:            "embedded",
-    }
-    
-    return info, nil
+// client/embedded.go:905-908 (new)
+connections := 0
+if c.peerMgr != nil {
+    connections = c.peerMgr.GetConnectedPeers()
 }
 ```
+
+**Production Impact:** Previously Minor - Now RESOLVED. Monitoring and diagnostics tools can now rely on GetInfo.Connections for accurate peer count in embedded mode.
 
 ---
 
@@ -555,7 +553,7 @@ func (c *EmbeddedClient) GetInfo(ctx context.Context) (*NodeInfo, error) {
 - **Gap #4:** ListNames NamePattern documentation clarity (Minor)
 - **Gap #5:** Auto mode network detection incomplete (Moderate)
 - **Gap #9:** UpdateName WaitForConfirmation not implemented (Moderate)
-- **Gap #11:** GetInfo hardcoded Connections=0 (Minor)
+- **Gap #11:** ✅ RESOLVED - GetInfo hardcoded Connections=0 (was Minor, now FIXED)
 
 ### Daemon Mode Gaps
 - **Gap #7:** WaitForConfirmation uses time-based estimation (Critical)
@@ -582,13 +580,14 @@ func (c *EmbeddedClient) GetInfo(ctx context.Context) (*NodeInfo, error) {
 
 ### Medium Priority (Quality of Life)
 6. **Improve Gap #3:** Add explicit error or warning when TransferTo matches current address
-7. **Fix Gap #11:** Integrate network manager connection count into embedded GetInfo
+7. ✅ **COMPLETED - Gap #11:** Integrated PeerManager connection count into embedded GetInfo
 8. **Clarify Gap #4:** Improve NamePattern documentation wording
 
 ## Testing Recommendations
 
 ### Unit Tests Needed
 - ✅ **COMPLETED:** Test for ExpiresIn=0 edge case in embedded mode (TestEmbeddedClient_ExpiresInZero)
+- ✅ **COMPLETED:** Test for GetInfo connection count from PeerManager (TestEmbeddedClient_GetInfo_ConnectionCount)
 - Test for WaitForConfirmation error handling in RegisterName and UpdateName
 - Test for Auto mode network mismatch scenarios
 
@@ -606,14 +605,16 @@ func (c *EmbeddedClient) GetInfo(ctx context.Context) (*NodeInfo, error) {
 The nmcd codebase is well-structured and largely functional, but exhibits several significant gaps between documentation and implementation. Most critically:
 
 1. ✅ **RESOLVED:** Behavioral inconsistency between embedded and daemon modes for ExpiresIn=0 (Gap #1 fixed)
-2. **Remaining Critical:** Time-based confirmation estimation in daemon mode (Gap #7)
-3. **Incomplete async features** (Gap #2, #9) make the documented API surface area larger than what actually works
-4. **Silent feature degradation** (Gap #3, #11) could mislead users about actual functionality
+2. ✅ **RESOLVED:** GetInfo hardcoded connection count in embedded mode (Gap #11 fixed)
+3. **Remaining Critical:** Time-based confirmation estimation in daemon mode (Gap #7)
+4. **Incomplete async features** (Gap #2, #9) make the documented API surface area larger than what actually works
+5. **Silent feature degradation** (Gap #3) could mislead users about actual functionality
 
 The codebase would benefit from:
 - ✅ Consistent behavior between embedded and daemon modes for expiration checks (COMPLETED)
+- ✅ Accurate connection count reporting in embedded mode (COMPLETED)
 - Stricter alignment between documented and implemented features
 - More explicit error messages when features are unavailable
 - Integration tests that exercise the complete documented API surface
 
-Overall quality: **Good foundation with implementation gaps that need addressing before production use. Gap #1 has been successfully resolved.**
+Overall quality: **Good foundation with implementation gaps that need addressing before production use. Gaps #1 and #11 have been successfully resolved.**
