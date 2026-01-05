@@ -71,7 +71,7 @@ nmcd is a **library-first** Namecoin implementation built on btcd libraries, ena
 3. ❌ **Missing deprecation strategy** - No path for evolving APIs safely
 
 **Performance:**
-1. ❌ **No benchmarks** - Performance characteristics unknown (missing `*_bench_test.go` files)
+1. ❌ **Incomplete benchmarks** - Client benchmarks exist (see `client/benchmark_test.go`), but core packages (`namedb`, `chain`, `rpc`) lack coverage so overall performance characteristics remain largely unknown
 2. ❌ **Database query optimization needed** - No indexes on frequently-accessed fields (file: `namedb/namedb.go`)
 3. ❌ **Memory usage not profiled** - Potential leaks or inefficiencies undetected
 4. ❌ **No connection pooling** - RPC client creates new connections (file: `client/daemon.go`)
