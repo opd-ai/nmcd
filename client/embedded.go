@@ -13,6 +13,7 @@ import (
 	"github.com/opd-ai/nmcd/chain"
 	"github.com/opd-ai/nmcd/config"
 	"github.com/opd-ai/nmcd/namedb"
+	"github.com/opd-ai/nmcd/network"
 	"github.com/opd-ai/nmcd/wallet"
 )
 
@@ -25,6 +26,7 @@ type EmbeddedClient struct {
 	chain   *chain.BlockChain
 	nameDB  *namedb.NameDatabase
 	wallet  *wallet.Wallet
+	peerMgr *network.PeerManager
 	network string
 	dataDir string
 
@@ -132,10 +134,34 @@ func NewEmbeddedClient(cfg *Config) (*EmbeddedClient, error) {
 	// Get name database from blockchain for consistent access
 	nameDB := bc.GetNameDB()
 
+	// Set MaxPeers default if not configured
+	if cfg.MaxPeers == 0 {
+		cfg.MaxPeers = 8
+	}
+
+	// Initialize peer manager for network connectivity
+	// ListenAddrs is empty for embedded clients (no incoming connections by default)
+	netCfg := &network.Config{
+		ChainParams: chainParams,
+		Blockchain:  bc,
+		ListenAddrs: []string{}, // Embedded clients don't listen for incoming connections
+		MaxPeers:    cfg.MaxPeers,
+	}
+
+	peerMgr, err := network.NewPeerManager(netCfg)
+	if err != nil {
+		bc.Close()
+		if w != nil {
+			// Wallet doesn't have a Close method, no cleanup needed
+		}
+		return nil, fmt.Errorf("failed to create peer manager: %w", err)
+	}
+
 	client := &EmbeddedClient{
 		chain:   bc,
 		nameDB:  nameDB,
 		wallet:  w,
+		peerMgr: peerMgr,
 		network: cfg.Network,
 		dataDir: cfg.DataDir,
 		stopCh:  make(chan struct{}),
@@ -875,12 +901,18 @@ func (c *EmbeddedClient) GetInfo(ctx context.Context) (*NodeInfo, error) {
 	// Get current blockchain state
 	bestSnapshot := c.chain.BestSnapshot()
 
+	// Get actual connection count from peer manager
+	connections := 0
+	if c.peerMgr != nil {
+		connections = c.peerMgr.GetConnectedPeers()
+	}
+
 	info := &NodeInfo{
 		Version:         "0.1.0",
 		ProtocolVersion: 70015,
 		BlockHeight:     bestSnapshot.Height,
 		BestBlockHash:   bestSnapshot.Hash.String(),
-		Connections:     0, // TODO: Get from network manager when implemented
+		Connections:     connections,
 		NetworkName:     c.network,
 		Mode:            "embedded",
 	}
@@ -909,6 +941,11 @@ func (c *EmbeddedClient) Close() error {
 
 	// Wait for background goroutines to finish (with timeout would be better in production)
 	c.wg.Wait()
+
+	// Stop peer manager
+	if c.peerMgr != nil {
+		c.peerMgr.Stop()
+	}
 
 	// Close blockchain (which also closes the name database)
 	var errs []error
