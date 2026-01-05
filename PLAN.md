@@ -152,7 +152,7 @@ nmcd is a **library-first** Namecoin implementation built on btcd libraries, ena
 
 - [ ] **Structured Logging Implementation** (2 days)
   - Files: `cmd/nmcd/main.go`, `rpc/server.go`, `network/peermgr.go`, `chain/blockchain.go`, `namedb/namedb.go`
-  - Replace `log` package with structured logger (e.g., `slog` from Go 1.21+)
+  - Replace `log` package with structured logger (e.g., Go standard library `slog`; project uses Go 1.24.11)
   - Add configurable log levels (DEBUG, INFO, WARN, ERROR)
   - Include context fields: component, operation, block_height, peer_id, tx_hash
   - Support JSON output format for log aggregation systems
