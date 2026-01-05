@@ -590,7 +590,8 @@ type txInfo struct {
 // Returns transaction information including confirmation count, or an error if the
 // transaction is not found or the RPC call fails.
 func (c *DaemonClient) getRawTransaction(ctx context.Context, txHash string) (*txInfo, error) {
-	// Call getrawtransaction with verbose=true to get JSON response with confirmations
+	// Call getrawtransaction with verbose=true (second parameter) to get JSON response with confirmations
+	// When verbose=false, it returns hex-encoded transaction data instead
 	params := []interface{}{txHash, true}
 	result, err := c.rpcCall(ctx, "getrawtransaction", params)
 	if err != nil {

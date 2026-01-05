@@ -988,17 +988,21 @@ func TestDaemonClient_WaitForConfirmation(t *testing.T) {
 			txHash:        "def456",
 			confirmations: 3,
 			handler: func() func(method string, params json.RawMessage) (interface{}, *rpcError) {
+				// Track call count and return increasing confirmations
+				// Call 1: 0 confirmations (not yet confirmed)
+				// Call 2: 1 confirmation (partially confirmed)
+				// Call 3: 3 confirmations (fully confirmed - success!)
 				callCount := 0
+				expectedConfirmations := []int{0, 1, 3}
+				
 				return func(method string, params json.RawMessage) (interface{}, *rpcError) {
 					if method == "getrawtransaction" {
-						callCount++
-						// First call: 0 confirmations
-						// Second call: 1 confirmation
-						// Third call: 3 confirmations (success)
 						confs := 0
-						if callCount >= 2 {
-							confs = callCount - 1
+						if callCount < len(expectedConfirmations) {
+							confs = expectedConfirmations[callCount]
 						}
+						callCount++
+						
 						return map[string]interface{}{
 							"txid":          "def456",
 							"confirmations": confs,
