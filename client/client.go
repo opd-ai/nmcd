@@ -65,12 +65,32 @@ func NewClient(cfg *Config) (NameClient, error) {
 			defer cancel()
 
 			if err := daemonClient.Ping(ctx); err == nil {
-				// Daemon is available and responsive
-				return daemonClient, nil
-			}
+				// Daemon is available and responsive - detect its network
+				detectedNetwork, err := daemonClient.DetectNetwork(ctx)
+				if err != nil {
+					// If we can't detect network, close daemon and fall back to embedded
+					daemonClient.Close()
+				} else {
+					// Validate that detected network matches configured network
+					// If cfg.Network is empty or "mainnet", it defaults to mainnet
+					expectedNetwork := cfg.Network
+					if expectedNetwork == "" {
+						expectedNetwork = "mainnet"
+					}
 
-			// Daemon not responsive, close and fall back to embedded
-			daemonClient.Close()
+					if detectedNetwork != expectedNetwork {
+						// Network mismatch - close daemon and return error
+						daemonClient.Close()
+						return nil, fmt.Errorf("network mismatch: daemon is running on %s but client configured for %s (ensure cfg.Network matches daemon's network or use explicit mode)", detectedNetwork, expectedNetwork)
+					}
+
+					// Network matches - use daemon
+					return daemonClient, nil
+				}
+			} else {
+				// Daemon not responsive, close and fall back to embedded
+				daemonClient.Close()
+			}
 		}
 
 		// Fall back to embedded mode
