@@ -151,9 +151,6 @@ func NewEmbeddedClient(cfg *Config) (*EmbeddedClient, error) {
 	peerMgr, err := network.NewPeerManager(netCfg)
 	if err != nil {
 		bc.Close()
-		if w != nil {
-			// Wallet doesn't have a Close method, no cleanup needed
-		}
 		return nil, fmt.Errorf("failed to create peer manager: %w", err)
 	}
 
