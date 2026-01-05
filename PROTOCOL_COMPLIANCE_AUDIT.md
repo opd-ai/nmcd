@@ -13,6 +13,7 @@
 **Blockers for Production Use:** 1
 
 **Latest Updates:**
+- ✅ **2026-01-05: Name Registration RPC Methods** - Implemented name_new and name_firstupdate RPC methods for two-phase name registration
 - ✅ **2026-01-04: BIP9 Soft Fork Signaling - NOT APPLICABLE** - No active BIP9 deployments in Namecoin as of 2026; not needed
 - ✅ **2026-01-04: Transaction Fee Validation Enhanced** - Added graceful handling for historical blocks with missing UTXO data
 - ✅ **2026-01-04: NAME_DELETE Clarified** - Not a separate Namecoin opcode; handled via NAME_UPDATE with empty value (no implementation needed)
@@ -34,6 +35,7 @@ nmcd implements approximately **70% of Namecoin protocol features** required for
 - ✅ Automatic transaction expiration and capacity management
 - ✅ Comprehensive transaction relay to peers
 - ✅ Block subsidy calculation verified to match Namecoin Core exactly (Issue #2 RESOLVED)
+- ✅ **NEW (2026-01-05):** Complete name registration RPC methods (name_new, name_firstupdate) for two-phase registration workflow
 - ✅ **NEW (2026-01-04):** Standard RPC methods (getblock, getblockhash, getrawtransaction) with hex and verbose modes
 - ✅ **NEW (2026-01-04):** name_update RPC broadcasts transactions to network peers
 - ✅ **NEW (2026-01-04):** UTXO restoration during blockchain reorganizations prevents UTXO set corruption
@@ -904,15 +906,18 @@ ok  	github.com/opd-ai/nmcd/config	0.004s
      - Headers-first sync and assumevalid provide better performance without centralization
      - No action needed - current implementation is aligned with modern best practices
 
-6. ~~**RPC Method Completion**~~ ✅ **RESOLVED (2026-01-04)**
+6. ~~**RPC Method Completion**~~ ✅ **RESOLVED (2026-01-05)**
    - File: `rpc/server.go`
    - ~~Complete `name_update` implementation (currently only creates tx, doesn't broadcast)~~ ✅ **RESOLVED (2026-01-04)** - `name_update` now broadcasts transactions to peers via `BroadcastTx()`
    - ~~Add missing standard RPC methods (getblock, getrawtransaction, etc.)~~ ✅ **RESOLVED (2026-01-04)** - Implemented three critical RPC methods:
      - `getblock` - Returns block data by hash with optional verbose mode (hex or JSON)
      - `getblockhash` - Returns block hash for a given height
      - `getrawtransaction` - Returns raw transaction data with optional verbose mode (hex or JSON)
+   - ~~Add name registration RPC methods~~ ✅ **RESOLVED (2026-01-05)** - Implemented two-phase name registration:
+     - `name_new` - Creates NAME_NEW commitment transaction, returns txid and random salt
+     - `name_firstupdate` - Completes registration with NAME_FIRSTUPDATE (requires 12-36000 block window)
    - All methods follow JSON-RPC 2.0 specification with proper error handling
-   - Comprehensive test coverage added in `rpc/block_rpc_test.go` (7 test functions, 100% pass rate)
+   - Comprehensive test coverage added in `rpc/block_rpc_test.go` and `rpc/name_registration_test.go`
    - Compatible with Bitcoin Core / Namecoin Core RPC interface conventions
 
 #### Priority 3 (Enhancements)

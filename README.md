@@ -334,6 +334,52 @@ curl -X POST http://127.0.0.1:8336 \
 
 ### Name Methods
 
+- `name_new` - Create a NAME_NEW transaction to pre-register a name commitment
+  ```bash
+  curl -X POST http://127.0.0.1:8336 \
+    -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"name_new","params":["d/example"],"id":1}'
+  ```
+  
+  This is the first step in the two-phase name registration process. It creates a commitment hash to prevent front-running. The response includes a `rand` value (hex-encoded random bytes) that **must be saved** for the NAME_FIRSTUPDATE step.
+  
+  Returns:
+  ```json
+  {
+    "txid": "transaction_hash",
+    "name": "d/example",
+    "rand": "hex_encoded_random_bytes",
+    "status": "broadcasted"
+  }
+  ```
+  
+  **Important:** Save the `rand` value! You'll need it for `name_firstupdate`.
+
+- `name_firstupdate` - Complete name registration with NAME_FIRSTUPDATE
+  ```bash
+  curl -X POST http://127.0.0.1:8336 \
+    -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"name_firstupdate","params":["d/example","hex_rand_from_name_new","{\"ip\":\"1.2.3.4\"}"],"id":1}'
+  ```
+  
+  Parameters: `["name", "rand", "value"]`
+  
+  This is the second step in the two-phase registration process. Requirements:
+  - Must be called at least 12 blocks after `name_new`
+  - Must be called within 36,000 blocks of `name_new`
+  - The `rand` parameter must match the value returned by `name_new`
+  - The `value` must be valid UTF-8 (max 1023 bytes), JSON for `d/` and `id/` namespaces
+  
+  Returns:
+  ```json
+  {
+    "txid": "transaction_hash",
+    "name": "d/example",
+    "value": "{\"ip\":\"1.2.3.4\"}",
+    "status": "broadcasted"
+  }
+  ```
+
 - `name_show` - Show name information
   ```bash
   curl -X POST http://127.0.0.1:8336 \

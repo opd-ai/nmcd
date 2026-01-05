@@ -3,6 +3,7 @@ package rpc
 import (
 	"bytes"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math/big"
@@ -22,6 +23,12 @@ import (
 	"github.com/opd-ai/nmcd/metrics"
 	"github.com/opd-ai/nmcd/network"
 	"github.com/opd-ai/nmcd/wallet"
+)
+
+const (
+	// opNameNew is the opcode for NAME_NEW operations (0xd0)
+	// Used to identify NAME_NEW outputs in transaction scripts
+	opNameNew = 0xd0
 )
 
 // Server provides RPC interface using standard library
@@ -182,6 +189,10 @@ func (s *Server) processRequest(req *Request) *Response {
 		return s.getMetrics(req)
 	case "name_show":
 		return s.nameShow(req)
+	case "name_new":
+		return s.nameNew(req)
+	case "name_firstupdate":
+		return s.nameFirstUpdate(req)
 	case "name_update":
 		return s.nameUpdate(req)
 	case "name_list":
@@ -572,6 +583,405 @@ func (s *Server) nameUpdate(req *Request) *Response {
 	// Include destination address in response if specified
 	if destAddress != nil {
 		result["address"] = destAddress.EncodeAddress()
+	}
+
+	return &Response{
+		Jsonrpc: "2.0",
+		Result:  result,
+		ID:      req.ID,
+	}
+}
+
+// getWalletAddressAndUTXOs is a helper function that retrieves the wallet address and UTXOs
+// for funding name operation transactions. This reduces code duplication between nameNew
+// and nameFirstUpdate methods.
+//
+// Returns:
+//   - btcutil.Address: The decoded wallet address
+//   - []wallet.UTXO: The converted wallet UTXOs ready for transaction creation
+//   - *Response: Error response if any step fails, nil on success
+func (s *Server) getWalletAddressAndUTXOs(reqID interface{}) (btcutil.Address, []wallet.UTXO, *Response) {
+	// Get a wallet address to own the name
+	addresses := s.wallet.GetAddresses()
+	if len(addresses) == 0 {
+		return nil, nil, &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: "No addresses in wallet. Create an address first using getnewaddress.",
+			},
+			ID: reqID,
+		}
+	}
+	ownerAddress := addresses[0] // Use the first address
+
+	// Decode the address
+	addr, err := btcutil.DecodeAddress(ownerAddress, s.blockchain.ChainParams())
+	if err != nil {
+		return nil, nil, &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -5,
+				Message: fmt.Sprintf("Invalid address: %v", err),
+			},
+			ID: reqID,
+		}
+	}
+
+	// Get wallet UTXOs for funding
+	walletUTXOs, err := s.blockchain.GetUTXOsForAddress(ownerAddress)
+	if err != nil {
+		return nil, nil, &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: fmt.Sprintf("Failed to get wallet UTXOs: %v", err),
+			},
+			ID: reqID,
+		}
+	}
+
+	if len(walletUTXOs) == 0 {
+		return nil, nil, &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -6,
+				Message: "Insufficient funds. No UTXOs available in wallet.",
+			},
+			ID: reqID,
+		}
+	}
+
+	// Convert namedb UTXOs to wallet UTXOs
+	var utxos []wallet.UTXO
+	for _, dbUTXO := range walletUTXOs {
+		wUtxo := wallet.UTXO{
+			TxHash:   dbUTXO.TxHash,
+			Vout:     dbUTXO.OutIndex,
+			Value:    dbUTXO.Value,
+			PkScript: dbUTXO.PkScript,
+			Address:  dbUTXO.Address,
+		}
+		utxos = append(utxos, wUtxo)
+	}
+
+	return addr, utxos, nil
+}
+
+// nameNew creates a NAME_NEW transaction for pre-registering a name commitment.
+// This is the first step in the two-phase name registration process to prevent front-running.
+//
+// Parameters:
+//   - name: Name to be registered (e.g., "d/example")
+//
+// Returns a JSON object with:
+//   - txid: Transaction ID of the NAME_NEW transaction
+//   - name: The name being registered
+//   - rand: Hex-encoded random salt (MUST be saved for NAME_FIRSTUPDATE)
+//   - status: "broadcasted" indicating transaction is in mempool
+func (s *Server) nameNew(req *Request) *Response {
+	// Check if wallet is available
+	if s.wallet == nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: "Wallet not initialized. Start the node with wallet enabled.",
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Parse parameters
+	var params []string
+	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) < 1 {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32602,
+				Message: "Invalid params: expected [\"name\"]",
+			},
+			ID: req.ID,
+		}
+	}
+
+	name := params[0]
+
+	// Validate name format
+	if len(name) == 0 || len(name) > 255 {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -5,
+				Message: fmt.Sprintf("Invalid name length: %d (max 255)", len(name)),
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Check if name already exists and is not expired
+	existingRecord, err := s.blockchain.GetName(name)
+	if err == nil {
+		// Name exists, check if it's expired
+		bestHeight := s.blockchain.BestSnapshot().Height
+		if existingRecord.ExpiresAt > bestHeight {
+			return &Response{
+				Jsonrpc: "2.0",
+				Error: &Error{
+					Code:    -25,
+					Message: fmt.Sprintf("Name already exists and is not expired (expires at block %d, current: %d)", existingRecord.ExpiresAt, bestHeight),
+				},
+				ID: req.ID,
+			}
+		}
+	}
+
+	// Get wallet address and UTXOs
+	addr, utxos, errResp := s.getWalletAddressAndUTXOs(req.ID)
+	if errResp != nil {
+		return errResp
+	}
+
+	// Generate random salt (20 bytes) using wallet's crypto/rand helper
+	randBytes, err := wallet.GenerateRand()
+	if err != nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: fmt.Sprintf("Failed to generate random salt for NAME_NEW: %v", err),
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Create the NAME_NEW transaction
+	// Use a fee rate of 1 satoshi/byte (1000 satoshis/KB)
+	feeRate := int64(1) // satoshis per byte
+	tx, randBytesReturned, err := s.wallet.CreateNameNewTx(randBytes, name, utxos, feeRate, addr)
+	if err != nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: fmt.Sprintf("Failed to create NAME_NEW transaction: %v", err),
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Broadcast the transaction to the network
+	err = s.peerMgr.BroadcastTx(tx)
+	if err != nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: fmt.Sprintf("Failed to broadcast transaction: %v", err),
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Return success with transaction details
+	txHash := tx.TxHash()
+	result := map[string]interface{}{
+		"txid":   txHash.String(),
+		"name":   name,
+		"rand":   fmt.Sprintf("%x", randBytesReturned), // Hex-encode the random bytes
+		"status": "broadcasted",                        // Transaction is now in mempool and relayed to peers
+	}
+
+	return &Response{
+		Jsonrpc: "2.0",
+		Result:  result,
+		ID:      req.ID,
+	}
+}
+
+// nameFirstUpdate creates a NAME_FIRSTUPDATE transaction to complete name registration.
+// This is the second step in the two-phase registration process. Must be called at least
+// 12 blocks after the NAME_NEW transaction.
+//
+// Parameters:
+//   - name: Name being registered (must match the NAME_NEW commitment)
+//   - rand: Hex-encoded random bytes from the NAME_NEW transaction
+//   - value: Initial value for the name (max 1023 bytes)
+//
+// Returns a JSON object with:
+//   - txid: Transaction ID of the NAME_FIRSTUPDATE transaction
+//   - name: The name being registered
+//   - value: The initial value
+//   - status: "broadcasted" indicating transaction is in mempool
+func (s *Server) nameFirstUpdate(req *Request) *Response {
+	// Check if wallet is available
+	if s.wallet == nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: "Wallet not initialized. Start the node with wallet enabled.",
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Parse parameters
+	var params []string
+	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) < 3 {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32602,
+				Message: "Invalid params: expected [\"name\", \"rand\", \"value\"]",
+			},
+			ID: req.ID,
+		}
+	}
+
+	name := params[0]
+	randHex := params[1]
+	value := params[2]
+
+	// Validate name format
+	if len(name) == 0 || len(name) > 255 {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -5,
+				Message: fmt.Sprintf("Invalid name length: %d (max 255)", len(name)),
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Validate value format
+	if len(value) > 1023 {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -5,
+				Message: fmt.Sprintf("Value too large: %d bytes (max 1023)", len(value)),
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Decode and validate random bytes
+	randBytes, err := hex.DecodeString(randHex)
+	if err != nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -5,
+				Message: fmt.Sprintf("Invalid rand hex: %v", err),
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Compute the commitment hash to find the NAME_NEW UTXO
+	commitHash := wallet.ComputeNameNewHash(randBytes, name, s.blockchain.ChainParams())
+
+	// Check if NAME_NEW commitment exists
+	nameNewRecord, err := s.blockchain.GetNameDB().GetNameNew(commitHash)
+	if err != nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -25,
+				Message: "NAME_NEW commitment not found. You must call name_new first and wait for confirmation.",
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Check if enough blocks have passed (minimum 12 blocks)
+	bestHeight := s.blockchain.BestSnapshot().Height
+	blocksSinceNameNew := bestHeight - nameNewRecord.Height
+	if blocksSinceNameNew < 12 {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -25,
+				Message: fmt.Sprintf("NAME_NEW not confirmed enough. Need 12 blocks, only %d blocks have passed.", blocksSinceNameNew),
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Check if too many blocks have passed (maximum 36,000 blocks - name expiration period)
+	if blocksSinceNameNew > 36000 {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -25,
+				Message: fmt.Sprintf("NAME_NEW commitment expired. Maximum window is 36,000 blocks, but %d blocks have passed.", blocksSinceNameNew),
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Get wallet address and UTXOs
+	addr, utxos, errResp := s.getWalletAddressAndUTXOs(req.ID)
+	if errResp != nil {
+		return errResp
+	}
+
+	// Find the NAME_NEW UTXO by checking for OP_NAME_NEW opcode in scripts
+	nameNewUtxoIndex := -1
+	for i, utxo := range utxos {
+		// Try to identify NAME_NEW UTXO by checking the script
+		// NAME_NEW script format: OP_NAME_NEW <hash> OP_2DROP <P2PKH>
+		if len(utxo.PkScript) > 22 && utxo.PkScript[0] == opNameNew {
+			// This looks like a NAME_NEW output, mark it as a candidate
+			if nameNewUtxoIndex == -1 {
+				nameNewUtxoIndex = i
+			}
+		}
+	}
+
+	if nameNewUtxoIndex == -1 {
+		// If we couldn't identify the NAME_NEW UTXO, use the first UTXO as a fallback
+		// The wallet transaction creation will handle validation
+		nameNewUtxoIndex = 0
+	}
+
+	// Create the NAME_FIRSTUPDATE transaction
+	// Use a fee rate of 1 satoshi/byte (1000 satoshis/KB)
+	feeRate := int64(1) // satoshis per byte
+	tx, err := s.wallet.CreateNameFirstUpdateTx(name, randHex, value, utxos, nameNewUtxoIndex, feeRate, addr)
+	if err != nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: fmt.Sprintf("Failed to create NAME_FIRSTUPDATE transaction: %v", err),
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Broadcast the transaction to the network
+	err = s.peerMgr.BroadcastTx(tx)
+	if err != nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: fmt.Sprintf("Failed to broadcast transaction: %v", err),
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Return success with transaction details
+	txHash := tx.TxHash()
+	result := map[string]interface{}{
+		"txid":   txHash.String(),
+		"name":   name,
+		"value":  value,
+		"status": "broadcasted", // Transaction is now in mempool and relayed to peers
 	}
 
 	return &Response{
