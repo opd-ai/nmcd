@@ -1712,7 +1712,7 @@ func TestEmbeddedClient_GetInfo_ConnectionCount(t *testing.T) {
 	// The peer manager should return 0 when no peers are connected
 	expectedConnections := client.peerMgr.GetConnectedPeers()
 	if info.Connections != expectedConnections {
-		t.Errorf("GetInfo().Connections = %d, want %d (from peer manager)", 
+		t.Errorf("GetInfo().Connections = %d, want %d (from peer manager)",
 			info.Connections, expectedConnections)
 	}
 
@@ -1744,4 +1744,3 @@ func TestEmbeddedClient_GetInfo_ConnectionCount(t *testing.T) {
 		t.Errorf("Mode = %v, want embedded", info2.Mode)
 	}
 }
-
