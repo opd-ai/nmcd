@@ -1402,6 +1402,16 @@ func TestEmbeddedClient_UpdateName(t *testing.T) {
 			wantErr:     true,
 			errContains: "require network integration",
 		},
+		{
+			name:        "transfer to same address succeeds with warning",
+			updateName:  "d/sameaddr",
+			value:       "updated value",
+			opts:        &UpdateOpts{TransferTo: ""}, // Will be set to same address in test
+			setupWallet: true,
+			setupUTXOs:  true,
+			setupName:   true,
+			wantErr:     false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1516,6 +1526,14 @@ func TestEmbeddedClient_UpdateName(t *testing.T) {
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
 				defer cancel()
+			}
+
+			// For same-address transfer test, set TransferTo to the owner address
+			if strings.Contains(tt.name, "transfer to same address") {
+				if tt.opts == nil {
+					tt.opts = &UpdateOpts{}
+				}
+				tt.opts.TransferTo = ownerAddr
 			}
 
 			// Call UpdateName

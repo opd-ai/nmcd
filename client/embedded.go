@@ -588,6 +588,7 @@ func (c *EmbeddedClient) UpdateName(ctx context.Context, name, value string, opt
 			return nil, fmt.Errorf("name transfers (TransferTo) require network integration (coming in future phase)")
 		}
 		// Transferring to same address is redundant but allowed
+		log.Printf("Warning: TransferTo address matches current owner (%s) - transfer is redundant and will be ignored", opts.TransferTo)
 		destAddr = nil
 	}
 
