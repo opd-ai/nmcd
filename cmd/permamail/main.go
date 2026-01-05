@@ -154,14 +154,14 @@ func parseBackupAddresses(backupAddrs string) []string {
 
 	parts := strings.Split(backupAddrs, ",")
 	backups := make([]string, 0, len(parts))
-	
+
 	for _, addr := range parts {
 		trimmed := strings.TrimSpace(addr)
 		if trimmed != "" {
 			backups = append(backups, trimmed)
 		}
 	}
-	
+
 	return backups
 }
 

@@ -205,7 +205,9 @@ func (c *EmbeddedClient) ResolveName(ctx context.Context, name string) (*NameRec
 	bestHeight := c.chain.BestSnapshot().Height
 
 	// Check if name has expired
-	if record.ExpiresAt <= bestHeight {
+	// A name expires AFTER the block at ExpiresAt height, not during it
+	// So ExpiresAt == bestHeight means ExpiresIn = 0, which is still valid
+	if record.ExpiresAt < bestHeight {
 		return nil, ErrNameExpired
 	}
 
@@ -470,8 +472,10 @@ func (c *EmbeddedClient) UpdateName(ctx context.Context, name, value string, opt
 	}
 
 	// Check if name is expired
+	// A name expires AFTER the block at ExpiresAt height, not during it
+	// So ExpiresAt == bestHeight means ExpiresIn = 0, which is still valid
 	bestHeight := c.chain.BestSnapshot().Height
-	if nameRecord.ExpiresAt <= bestHeight {
+	if nameRecord.ExpiresAt < bestHeight {
 		return nil, fmt.Errorf("%w: %s (expired at height %d, current height %d)",
 			ErrNameExpired, name, nameRecord.ExpiresAt, bestHeight)
 	}
@@ -662,7 +666,9 @@ func (c *EmbeddedClient) ListNames(ctx context.Context, filter *ListFilter) ([]*
 	var filtered []*NameRecord
 	for _, record := range dbRecords {
 		// Check expiration
-		if !filter.IncludeExpired && record.ExpiresAt <= bestHeight {
+		// A name expires AFTER the block at ExpiresAt height, not during it
+		// So ExpiresAt == bestHeight means ExpiresIn = 0, which is still valid
+		if !filter.IncludeExpired && record.ExpiresAt < bestHeight {
 			continue
 		}
 

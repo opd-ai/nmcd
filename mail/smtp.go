@@ -352,7 +352,7 @@ func (s *smtpSession) handleData() error {
 	ctx := context.Background()
 	var successCount, failCount int
 	var lastErr error
-	
+
 	for _, to := range s.to {
 		if err := s.forwardMessage(ctx, s.from, to, body); err != nil {
 			s.logger.Printf("Failed to forward to %s: %v", to, err)

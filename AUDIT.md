@@ -1,18 +1,64 @@
 # Implementation Gap Analysis
 Generated: 2026-01-05T02:41:22.091Z
 Codebase Version: dd32faa9f4b50eb0343ae4b53a0013693cd0834f (2026-01-05 02:40:30 +0000)
+**Last Updated:** 2026-01-05 (Gap #1 RESOLVED)
 
 ## Executive Summary
 Total Gaps Analyzed: 11 (8 actual gaps, 3 verified non-gaps)
-- Critical: 3
+- Critical: 2 (1 RESOLVED)
 - Moderate: 3
 - Minor: 2
+
+**Latest Updates:**
+- ✅ **2026-01-05: Gap #1 RESOLVED** - Fixed ExpiresIn=0 expiration check inconsistency in embedded mode
 
 This audit focuses on precise discrepancies between the README.md documentation and the actual implementation in a nearly feature-complete codebase. The analysis reveals subtle behavioral differences, incomplete feature implementations, and documentation drift that could impact production deployments.
 
 ## Detailed Findings
 
-### Gap #1: ExpiresIn=0 Treated as Expired in Embedded Mode
+### Gap #1: ✅ RESOLVED - ExpiresIn=0 Treated as Expired in Embedded Mode
+**Status:** RESOLVED on 2026-01-05
+
+**Resolution:** Changed expiration comparison from `<=` to `<` in three locations in `client/embedded.go`:
+- Line 208 (ResolveName method)
+- Line 474 (UpdateName method)
+- Line 665 (ListNames method)
+
+**Verification:** Added comprehensive test `TestEmbeddedClient_ExpiresInZero` that validates:
+- Names with ExpiresIn=0 are treated as valid
+- Names with ExpiresIn=1 are treated as valid
+- Names with ExpiresIn=-1 are treated as expired
+- ListNames includes names with ExpiresIn=0
+- UpdateName accepts names with ExpiresIn=0
+
+**Files Modified:**
+- `client/embedded.go` - Fixed 3 expiration checks
+- `client/embedded_test.go` - Added comprehensive test with 5 sub-tests
+
+**Test Results:** All tests pass, no regressions in existing tests.
+
+**Documentation Reference:** 
+> "Names expire after 36000 blocks (~250 days) and must be renewed." (README.md:607)
+
+**Implementation Location:** `client/embedded.go:208, 474, 665` and `client/daemon.go:329`
+
+**Expected Behavior:** A name with ExpiresIn=0 (expires at the current block) should still be valid and accessible, as expiration occurs *after* the block, not during it.
+
+**Previous Implementation:** 
+- **Embedded mode** (lines 208, 474, 665): Used `<=` comparison: `if record.ExpiresAt <= bestHeight`
+- **Daemon mode** (line 329): Uses `<` comparison: `if resp.ExpiresIn < 0`
+
+**Fixed Implementation:**
+- **Embedded mode** now uses `<` comparison: `if record.ExpiresAt < bestHeight`
+- Behavior now matches daemon mode
+
+**Gap Details:** The embedded and daemon clients previously had inconsistent expiration checks. Embedded mode treated a name that expires at the current block height as already expired, while daemon mode correctly treated it as still valid. This created a one-block window of behavioral inconsistency between the two modes. **This has been FIXED.**
+
+**Production Impact:** Previously Critical - Now RESOLVED. Applications relying on embedded mode will now correctly treat names as valid until they expire, matching daemon mode behavior.
+
+---
+
+### Gap #2: RegisterName WaitForConfirmation Never Works in Embedded Mode
 **Documentation Reference:** 
 > "Names expire after 36000 blocks (~250 days) and must be renewed." (README.md:607)
 
@@ -503,7 +549,7 @@ func (c *EmbeddedClient) GetInfo(ctx context.Context) (*NodeInfo, error) {
 ## Summary by Category
 
 ### Library Mode Gaps
-- **Gap #1:** ExpiresIn=0 expiration check inconsistency (Critical)
+- **Gap #1:** ✅ RESOLVED - ExpiresIn=0 expiration check inconsistency (was Critical, now FIXED)
 - **Gap #2:** RegisterName WaitForConfirmation not implemented (Critical)
 - **Gap #3:** UpdateName TransferTo silently ignored for same address (Moderate)
 - **Gap #4:** ListNames NamePattern documentation clarity (Minor)
@@ -526,7 +572,7 @@ func (c *EmbeddedClient) GetInfo(ctx context.Context) (*NodeInfo, error) {
 ## Recommendations
 
 ### Critical Priority (Immediate Action Required)
-1. **Fix Gap #1:** Change embedded mode expiration check from `<=` to `<` to match daemon mode behavior
+1. ✅ **COMPLETED - Gap #1:** Changed embedded mode expiration check from `<=` to `<` to match daemon mode behavior
 2. **Document Gap #2:** Update README to clearly state WaitForConfirmation is not yet supported in embedded RegisterName
 3. **Fix or Document Gap #7:** Either implement proper confirmation checking in daemon mode or document the time-based limitation
 
@@ -542,7 +588,7 @@ func (c *EmbeddedClient) GetInfo(ctx context.Context) (*NodeInfo, error) {
 ## Testing Recommendations
 
 ### Unit Tests Needed
-- Test for ExpiresIn=0 edge case in both embedded and daemon modes
+- ✅ **COMPLETED:** Test for ExpiresIn=0 edge case in embedded mode (TestEmbeddedClient_ExpiresInZero)
 - Test for WaitForConfirmation error handling in RegisterName and UpdateName
 - Test for Auto mode network mismatch scenarios
 
@@ -559,14 +605,15 @@ func (c *EmbeddedClient) GetInfo(ctx context.Context) (*NodeInfo, error) {
 
 The nmcd codebase is well-structured and largely functional, but exhibits several significant gaps between documentation and implementation. Most critically:
 
-1. **Behavioral inconsistencies** between embedded and daemon modes (Gap #1, #7) could cause subtle bugs in production
-2. **Incomplete async features** (Gap #2, #9) make the documented API surface area larger than what actually works
-3. **Silent feature degradation** (Gap #3, #11) could mislead users about actual functionality
+1. ✅ **RESOLVED:** Behavioral inconsistency between embedded and daemon modes for ExpiresIn=0 (Gap #1 fixed)
+2. **Remaining Critical:** Time-based confirmation estimation in daemon mode (Gap #7)
+3. **Incomplete async features** (Gap #2, #9) make the documented API surface area larger than what actually works
+4. **Silent feature degradation** (Gap #3, #11) could mislead users about actual functionality
 
 The codebase would benefit from:
+- ✅ Consistent behavior between embedded and daemon modes for expiration checks (COMPLETED)
 - Stricter alignment between documented and implemented features
 - More explicit error messages when features are unavailable
-- Consistent behavior between embedded and daemon modes
 - Integration tests that exercise the complete documented API surface
 
-Overall quality: **Good foundation with clear implementation gaps that need addressing before production use.**
+Overall quality: **Good foundation with implementation gaps that need addressing before production use. Gap #1 has been successfully resolved.**
