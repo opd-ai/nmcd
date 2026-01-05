@@ -29,28 +29,38 @@ const (
 	// opNameNew is the opcode for NAME_NEW operations (0xd0)
 	// Used to identify NAME_NEW outputs in transaction scripts
 	opNameNew = 0xd0
+
+	// defaultRateLimit is the default number of requests per minute per IP
+	defaultRateLimit = 100
+
+	// defaultMaxRequestSize is the default maximum request body size (1MB)
+	defaultMaxRequestSize = 1 * 1024 * 1024
 )
 
 // Server provides RPC interface using standard library
 type Server struct {
-	blockchain  *chain.BlockChain
-	peerMgr     *network.PeerManager
-	wallet      *wallet.Wallet
-	listener    net.Listener
-	server      *http.Server
-	rpcUser     string
-	rpcPassword string
-	mu          sync.RWMutex
+	blockchain     *chain.BlockChain
+	peerMgr        *network.PeerManager
+	wallet         *wallet.Wallet
+	listener       net.Listener
+	server         *http.Server
+	rpcUser        string
+	rpcPassword    string
+	rateLimiter    *rateLimiter
+	maxRequestSize int64
+	mu             sync.RWMutex
 }
 
 // Config holds RPC server configuration
 type Config struct {
-	Blockchain  *chain.BlockChain
-	PeerMgr     *network.PeerManager
-	Wallet      *wallet.Wallet
-	ListenAddr  string
-	RPCUser     string
-	RPCPassword string
+	Blockchain     *chain.BlockChain
+	PeerMgr        *network.PeerManager
+	Wallet         *wallet.Wallet
+	ListenAddr     string
+	RPCUser        string
+	RPCPassword    string
+	RateLimit      int   // Requests per minute per IP (0 = unlimited, default: 100)
+	MaxRequestSize int64 // Maximum request body size in bytes (0 = 1MB default)
 }
 
 // Request represents a JSON-RPC request
@@ -82,13 +92,27 @@ func NewServer(cfg *Config) (*Server, error) {
 		return nil, fmt.Errorf("failed to listen on %s: %w", cfg.ListenAddr, err)
 	}
 
+	// Set default rate limit if not configured
+	rateLimit := cfg.RateLimit
+	if rateLimit == 0 {
+		rateLimit = defaultRateLimit
+	}
+
+	// Set default max request size if not configured
+	maxRequestSize := cfg.MaxRequestSize
+	if maxRequestSize == 0 {
+		maxRequestSize = defaultMaxRequestSize
+	}
+
 	s := &Server{
-		blockchain:  cfg.Blockchain,
-		peerMgr:     cfg.PeerMgr,
-		wallet:      cfg.Wallet,
-		listener:    listener,
-		rpcUser:     cfg.RPCUser,
-		rpcPassword: cfg.RPCPassword,
+		blockchain:     cfg.Blockchain,
+		peerMgr:        cfg.PeerMgr,
+		wallet:         cfg.Wallet,
+		listener:       listener,
+		rpcUser:        cfg.RPCUser,
+		rpcPassword:    cfg.RPCPassword,
+		rateLimiter:    newRateLimiter(rateLimit),
+		maxRequestSize: maxRequestSize,
 	}
 
 	mux := http.NewServeMux()
@@ -120,6 +144,10 @@ func (s *Server) Start() <-chan error {
 
 // Stop stops the RPC server
 func (s *Server) Stop() error {
+	// Stop rate limiter cleanup goroutine
+	if s.rateLimiter != nil {
+		s.rateLimiter.stop()
+	}
 	return s.server.Close()
 }
 
@@ -137,10 +165,33 @@ func (s *Server) checkAuth(r *http.Request) bool {
 	return userMatch == 1 && passMatch == 1
 }
 
-// handleRequest handles incoming RPC requests
+// handleRequest handles incoming RPC requests with security hardening:
+// - Request size validation
+// - Rate limiting per IP
+// - Security headers
+// - Authentication
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
+	// Set security headers
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'")
+
+	// Only allow POST requests
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Check request size limit (only if ContentLength is set and positive)
+	if r.ContentLength > 0 && r.ContentLength > s.maxRequestSize {
+		http.Error(w, "Request too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+
+	// Extract IP and apply rate limiting
+	ip := extractIP(r.RemoteAddr)
+	if !s.rateLimiter.allow(ip) {
+		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
 
@@ -154,8 +205,12 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Limit reader to maxRequestSize to prevent memory exhaustion
+	limitedReader := http.MaxBytesReader(w, r.Body, s.maxRequestSize)
+	defer limitedReader.Close()
+
 	var req Request
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(limitedReader).Decode(&req); err != nil {
 		s.writeError(w, &req, -32700, "Parse error")
 		return
 	}
