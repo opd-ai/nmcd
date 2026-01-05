@@ -182,8 +182,12 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check request size limit (only if ContentLength is set and positive)
-	if r.ContentLength > 0 && r.ContentLength > s.maxRequestSize {
+	// Require a known, positive Content-Length and enforce the maximum size
+	if r.ContentLength <= 0 {
+		http.Error(w, "Content-Length required", http.StatusLengthRequired)
+		return
+	}
+	if r.ContentLength > s.maxRequestSize {
 		http.Error(w, "Request too large", http.StatusRequestEntityTooLarge)
 		return
 	}
