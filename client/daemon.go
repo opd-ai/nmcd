@@ -612,12 +612,24 @@ func (c *DaemonClient) getRawTransaction(ctx context.Context, txHash string) (*t
 // blockchain confirmations. It polls every second to allow for timely context
 // cancellation and responsive feedback without excessive RPC load.
 //
+// Note: DaemonClient uses a 1-second polling interval (vs EmbeddedClient's 10-second
+// interval) because RPC calls to an external daemon are typically more tolerant of
+// frequent requests than direct blockchain access, and faster polling provides better
+// responsiveness for remote operations.
+//
 // The function returns when the transaction has reached the requested number of
 // confirmations, or when the context is canceled. If the transaction is not found
 // in the blockchain, it continues polling until the context deadline.
 func (c *DaemonClient) WaitForConfirmation(ctx context.Context, txHash string, confirmations int) error {
 	if confirmations < 1 {
 		return fmt.Errorf("confirmations must be at least 1, got %d", confirmations)
+	}
+
+	// Check context before proceeding to avoid race condition
+	select {
+	case <-ctx.Done():
+		return ErrContextCanceled
+	default:
 	}
 
 	// Poll every second for responsive feedback without excessive RPC load

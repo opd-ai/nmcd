@@ -1108,9 +1108,13 @@ func TestDaemonClient_WaitForConfirmation(t *testing.T) {
 			ctx := context.Background()
 			var cancel context.CancelFunc
 
-			// For context cancellation test, use a short timeout
+			// For context cancellation test, use a timeout long enough to enter the polling loop
 			if tt.errType == ErrContextCanceled {
-				ctx, cancel = context.WithTimeout(ctx, 100*time.Millisecond)
+				ctx, cancel = context.WithTimeout(ctx, 2*time.Second)
+				defer cancel()
+			} else if tt.name == "transaction confirmed after polling" {
+				// Add timeout to ensure test completes promptly if polling logic is broken
+				ctx, cancel = context.WithTimeout(ctx, 5*time.Second)
 				defer cancel()
 			}
 
