@@ -1,9 +1,11 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1402,6 +1404,16 @@ func TestEmbeddedClient_UpdateName(t *testing.T) {
 			wantErr:     true,
 			errContains: "require network integration",
 		},
+		{
+			name:        "transfer to same address succeeds",
+			updateName:  "d/sameaddr",
+			value:       "updated value",
+			opts:        &UpdateOpts{TransferTo: ""}, // Will be set to same address in test
+			setupWallet: true,
+			setupUTXOs:  true,
+			setupName:   true,
+			wantErr:     false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1518,6 +1530,14 @@ func TestEmbeddedClient_UpdateName(t *testing.T) {
 				defer cancel()
 			}
 
+			// For same-address transfer test, set TransferTo to the owner address
+			if strings.Contains(tt.name, "transfer to same address") {
+				if tt.opts == nil {
+					tt.opts = &UpdateOpts{}
+				}
+				tt.opts.TransferTo = ownerAddr
+			}
+
 			// Call UpdateName
 			result, err := client.UpdateName(ctx, tt.updateName, tt.value, tt.opts)
 
@@ -1582,6 +1602,103 @@ func TestEmbeddedClient_UpdateName_ContextCancellation(t *testing.T) {
 	}
 	if !errors.Is(err, ErrContextCanceled) {
 		t.Errorf("expected ErrContextCanceled, got %v", err)
+	}
+}
+
+func TestEmbeddedClient_UpdateName_SameAddressTransferWarning(t *testing.T) {
+	// Create temporary directory for test
+	tmpDir := t.TempDir()
+
+	// Initialize client with wallet
+	cfg := &Config{
+		DataDir:       tmpDir,
+		Network:       "regtest",
+		DisableWallet: false,
+	}
+	client, err := NewEmbeddedClient(cfg)
+	if err != nil {
+		t.Fatalf("NewEmbeddedClient() error: %v", err)
+	}
+	defer client.Close()
+
+	// Generate wallet address
+	ownerAddr, err := client.wallet.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate wallet address: %v", err)
+	}
+
+	// Get the wallet key to create proper P2PKH script
+	kp, err := client.wallet.GetKey(ownerAddr)
+	if err != nil {
+		t.Fatalf("failed to get wallet key: %v", err)
+	}
+
+	// Create proper P2PKH script
+	pkScript, err := txscript.PayToAddrScript(kp.Address)
+	if err != nil {
+		t.Fatalf("failed to create P2PKH script: %v", err)
+	}
+
+	// Add name record to database
+	txHash := mustParseHashFromString(t, "0000000000000000000000000000000000000000000000000000000000000001")
+	bestHeight := client.chain.BestSnapshot().Height
+	nameRecord := &namedb.NameRecord{
+		Name:      "d/testname",
+		Value:     `{"ip":"1.2.3.4"}`,
+		TxHash:    *txHash,
+		OutIndex:  0,
+		Height:    bestHeight,
+		ExpiresAt: bestHeight + 36000,
+		Address:   ownerAddr,
+		UpdatedAt: time.Now(),
+	}
+	if err := client.nameDB.PutName("d/testname", nameRecord); err != nil {
+		t.Fatalf("failed to add name: %v", err)
+	}
+
+	// Add the name UTXO to the database
+	nameUTXO := &namedb.UTXO{
+		TxHash:   *txHash,
+		OutIndex: 0,
+		Value:    100000, // 100,000 satoshis
+		PkScript: pkScript,
+		Address:  ownerAddr,
+		Height:   bestHeight,
+	}
+	if err := client.nameDB.AddUTXO(nameUTXO); err != nil {
+		t.Fatalf("failed to add name UTXO: %v", err)
+	}
+
+	// Capture log output
+	var logBuf bytes.Buffer
+	oldOutput := log.Writer()
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(oldOutput)
+
+	// Call UpdateName with TransferTo set to same address as current owner
+	ctx := context.Background()
+	opts := &UpdateOpts{
+		TransferTo:          ownerAddr, // Same as current owner
+		WaitForConfirmation: false,
+	}
+	result, err := client.UpdateName(ctx, "d/testname", `{"ip":"5.6.7.8"}`, opts)
+
+	// Verify operation succeeded
+	if err != nil {
+		t.Fatalf("UpdateName() unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("result is nil")
+	}
+	if result.TxHash == "" {
+		t.Error("result TxHash is empty")
+	}
+
+	// Verify warning was logged
+	logOutput := logBuf.String()
+	expectedWarning := fmt.Sprintf("Warning: TransferTo address matches current owner (%s) - transfer is redundant and will be ignored", ownerAddr)
+	if !strings.Contains(logOutput, expectedWarning) {
+		t.Errorf("expected warning log containing %q, got log output: %q", expectedWarning, logOutput)
 	}
 }
 
