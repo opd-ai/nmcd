@@ -123,9 +123,12 @@ const (
 
 // ListFilter configures name list filtering.
 type ListFilter struct {
-	// NamePattern matches names by prefix.
-	// Note: Currently only simple prefix matching is supported.
-	// Examples: "d/example" matches "d/example", "d/example1", "d/examplefoo", etc.
+	// NamePattern performs string prefix matching on the entire name.
+	// A name matches if it starts with the exact NamePattern string (character-by-character).
+	// Note: Only simple string prefix matching is supported (not glob patterns or regex).
+	// Examples:
+	//   - Pattern "d/example" matches: "d/example" (exact), "d/example1", "d/examplefoo"
+	//   - Pattern "d/example" does NOT match: "d/other", "d/ex", "example"
 	NamePattern string
 
 	// Namespace filters by namespace prefix.
