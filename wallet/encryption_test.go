@@ -250,22 +250,30 @@ func TestDeriveKeyConsistency(t *testing.T) {
 
 func TestHashPassword(t *testing.T) {
 	password := "TestPassword123"
+	salt := []byte("test-salt-for-password-hashing")
 
-	hash1 := hashPassword(password)
-	hash2 := hashPassword(password)
+	hash1 := hashPassword(password, salt)
+	hash2 := hashPassword(password, salt)
 
-	// Same password should produce same hash
+	// Same password and salt should produce same hash
 	if !bytes.Equal(hash1, hash2) {
-		t.Error("hash should be consistent for same password")
+		t.Error("hash should be consistent for same password and salt")
 	}
 
 	// Different password should produce different hash
-	hash3 := hashPassword("DifferentPassword456")
+	hash3 := hashPassword("DifferentPassword456", salt)
 	if bytes.Equal(hash1, hash3) {
 		t.Error("hash should be different for different passwords")
 	}
 
-	// Hash should be 32 bytes (SHA-256)
+	// Different salt should produce different hash
+	salt2 := []byte("different-salt-for-password-hashing")
+	hash4 := hashPassword(password, salt2)
+	if bytes.Equal(hash1, hash4) {
+		t.Error("hash should be different for different salts")
+	}
+
+	// Hash should be 32 bytes (scrypt output)
 	if len(hash1) != 32 {
 		t.Errorf("hash length = %d, want 32", len(hash1))
 	}

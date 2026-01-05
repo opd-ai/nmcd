@@ -364,9 +364,8 @@ func TestGenerateKeyWhileLocked(t *testing.T) {
 		t.Fatalf("failed to lock wallet: %v", err)
 	}
 
-	// Try to generate key while locked (should fail to save)
-	// Note: The current implementation might allow key generation but fail on save
-	// This test documents current behavior; we could enhance this in the future
+	// Try to generate key while locked. This must fail because locked wallets
+	// must not perform any operations that access or persist private keys.
 	_, err = w.GenerateKey()
 	if err == nil {
 		t.Error("generating key while locked should fail (cannot save)")

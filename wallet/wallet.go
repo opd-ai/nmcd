@@ -33,6 +33,7 @@ type Wallet struct {
 	encrypted      bool   // Whether the wallet is encrypted
 	locked         bool   // Whether the wallet is currently locked
 	passwordHash   []byte // Hash of the password for verification (not the password itself)
+	passwordSalt   []byte // Random salt for password hashing (unique per wallet)
 	unlockPassword string // Cached password when unlocked (cleared on lock)
 }
 
@@ -50,6 +51,7 @@ type walletData struct {
 	Version      int       `json:"version"`                 // Wallet format version (1 or 2)
 	Encrypted    bool      `json:"encrypted"`               // Whether keys are encrypted
 	PasswordHash string    `json:"password_hash,omitempty"` // Hash of password (version 2 only)
+	PasswordSalt string    `json:"password_salt,omitempty"` // Salt for password hashing (version 2 only)
 	Keys         []keyData `json:"keys"`                    // Key pairs (encrypted or unencrypted)
 }
 
@@ -112,6 +114,10 @@ func (w *Wallet) load() error {
 		w.passwordHash, err = hex.DecodeString(wd.PasswordHash)
 		if err != nil {
 			return fmt.Errorf("failed to decode password hash: %w", err)
+		}
+		w.passwordSalt, err = hex.DecodeString(wd.PasswordSalt)
+		if err != nil {
+			return fmt.Errorf("failed to decode password salt: %w", err)
 		}
 	} else {
 		// Unencrypted wallet is always unlocked
@@ -186,6 +192,7 @@ func (w *Wallet) save() error {
 
 	if w.encrypted {
 		wd.PasswordHash = hex.EncodeToString(w.passwordHash)
+		wd.PasswordSalt = hex.EncodeToString(w.passwordSalt)
 	}
 
 	for addr, kp := range w.keys {
@@ -309,11 +316,18 @@ func (w *Wallet) EncryptWallet(password string) error {
 		return fmt.Errorf("invalid password: %w", err)
 	}
 
+	// Generate random salt for password hashing
+	salt, err := generatePasswordSalt()
+	if err != nil {
+		return fmt.Errorf("failed to generate password salt: %w", err)
+	}
+
 	// Set encryption state
 	w.encrypted = true
 	w.locked = false // Starts unlocked after encryption
 	w.unlockPassword = password
-	w.passwordHash = hashPassword(password)
+	w.passwordSalt = salt
+	w.passwordHash = hashPassword(password, salt)
 
 	// Save wallet with encryption
 	if err := w.save(); err != nil {
@@ -321,6 +335,8 @@ func (w *Wallet) EncryptWallet(password string) error {
 		w.encrypted = false
 		w.locked = false
 		w.unlockPassword = ""
+		w.passwordHash = nil
+		w.passwordSalt = nil
 		w.passwordHash = nil
 		return fmt.Errorf("failed to save encrypted wallet: %w", err)
 	}
@@ -343,8 +359,30 @@ func (w *Wallet) Lock() error {
 	}
 
 	// Clear sensitive data from memory
+	// Zero private key bytes before removing references
+	for _, kp := range w.keys {
+		if kp.PrivateKey != nil {
+			// Zero the private key bytes
+			privKeyBytes := kp.PrivateKey.Serialize()
+			for i := range privKeyBytes {
+				privKeyBytes[i] = 0
+			}
+		}
+	}
+	
+	// Clear the map and password
 	w.keys = make(map[string]*KeyPair)
-	w.unlockPassword = ""
+	
+	// Zero password bytes (convert string to byte slice and zero it)
+	// Note: This is best-effort as Go strings are immutable
+	if w.unlockPassword != "" {
+		passwordBytes := []byte(w.unlockPassword)
+		for i := range passwordBytes {
+			passwordBytes[i] = 0
+		}
+		w.unlockPassword = ""
+	}
+	
 	w.locked = true
 
 	return nil
@@ -365,7 +403,7 @@ func (w *Wallet) Unlock(password string) error {
 	}
 
 	// Verify password using constant-time comparison to prevent timing attacks
-	passwordHash := hashPassword(password)
+	passwordHash := hashPassword(password, w.passwordSalt)
 	if len(passwordHash) != len(w.passwordHash) || subtle.ConstantTimeCompare(passwordHash, w.passwordHash) != 1 {
 		return fmt.Errorf("incorrect password")
 	}

@@ -189,6 +189,53 @@ func TestWalletPassphraseAutoLock(t *testing.T) {
 	}
 }
 
+func TestWalletPassphraseManualLockBeforeTimeout(t *testing.T) {
+	server, cleanup := setupTestServerWithWallet(t)
+	defer cleanup()
+
+	// Encrypt wallet
+	password := "TestPassword123"
+	resp := makeRPCRequest(t, server, "encryptwallet", []string{password})
+	if resp.Error != nil {
+		t.Fatalf("encryptwallet failed: %v", resp.Error.Message)
+	}
+
+	// Lock wallet
+	if err := server.wallet.Lock(); err != nil {
+		t.Fatalf("failed to lock wallet: %v", err)
+	}
+
+	// Unlock with longer timeout (5 seconds)
+	resp = makeRPCRequest(t, server, "walletpassphrase", []interface{}{password, 5})
+	if resp.Error != nil {
+		t.Fatalf("walletpassphrase failed: %v", resp.Error.Message)
+	}
+
+	// Verify wallet is unlocked
+	if server.wallet.IsLocked() {
+		t.Error("wallet should be unlocked immediately after walletpassphrase")
+	}
+
+	// Manually lock before timeout
+	resp = makeRPCRequest(t, server, "walletlock", nil)
+	if resp.Error != nil {
+		t.Fatalf("walletlock failed: %v", resp.Error.Message)
+	}
+
+	// Verify wallet is locked
+	if !server.wallet.IsLocked() {
+		t.Error("wallet should be locked after manual lock")
+	}
+
+	// Wait past the original timeout to ensure no issues with timer
+	time.Sleep(6 * time.Second)
+
+	// Verify wallet is still locked (timer shouldn't cause issues)
+	if !server.wallet.IsLocked() {
+		t.Error("wallet should remain locked after timeout")
+	}
+}
+
 func TestWalletLock(t *testing.T) {
 	server, cleanup := setupTestServerWithWallet(t)
 	defer cleanup()

@@ -194,26 +194,27 @@ func validatePassword(password string) error {
 }
 
 // hashPassword creates a non-reversible hash of a password for verification.
-// Uses scrypt with a fixed salt to prevent rainbow table attacks while allowing
-// verification without storing the salt separately. The hash is used only for
-// password verification, not for encryption (encryption uses its own random salt).
-func hashPassword(password string) []byte {
-	// Use a fixed salt for password verification
-	// This is safe because:
-	// 1. We're not encrypting with this hash (encryption uses random salt)
-	// 2. We're only verifying the password matches
-	// 3. Scrypt with any salt is better than SHA-256 alone
-	salt := []byte("nmcd-wallet-password-verification")
-	
+// Uses scrypt with a random per-wallet salt to prevent rainbow table attacks.
+// The salt must be stored alongside the hash in the wallet file.
+func hashPassword(password string, salt []byte) []byte {
 	// Use lighter scrypt parameters for verification (faster unlock)
-	// N=16384 is still strong enough to resist brute-force
+	// N=16384 is strong enough to resist brute-force when combined with a unique salt
 	hash, err := scrypt.Key([]byte(password), salt, 16384, 8, 1, 32)
 	if err != nil {
 		// Fallback to SHA-256 if scrypt fails (should never happen)
-		h := sha256.Sum256([]byte(password))
+		h := sha256.Sum256(append(salt, []byte(password)...))
 		return h[:]
 	}
 	return hash
+}
+
+// generatePasswordSalt generates a random salt for password hashing.
+func generatePasswordSalt() ([]byte, error) {
+	salt := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+		return nil, fmt.Errorf("failed to generate password salt: %w", err)
+	}
+	return salt, nil
 }
 
 // encodeEncryptedData encodes encrypted data to base64 for storage.
