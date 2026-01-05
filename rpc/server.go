@@ -25,6 +25,12 @@ import (
 	"github.com/opd-ai/nmcd/wallet"
 )
 
+const (
+	// opNameNew is the opcode for NAME_NEW operations (0xd0)
+	// Used to identify NAME_NEW outputs in transaction scripts
+	opNameNew = 0xd0
+)
+
 // Server provides RPC interface using standard library
 type Server struct {
 	blockchain  *chain.BlockChain
@@ -586,6 +592,82 @@ func (s *Server) nameUpdate(req *Request) *Response {
 	}
 }
 
+// getWalletAddressAndUTXOs is a helper function that retrieves the wallet address and UTXOs
+// for funding name operation transactions. This reduces code duplication between nameNew
+// and nameFirstUpdate methods.
+//
+// Returns:
+//   - btcutil.Address: The decoded wallet address
+//   - []wallet.UTXO: The converted wallet UTXOs ready for transaction creation
+//   - *Response: Error response if any step fails, nil on success
+func (s *Server) getWalletAddressAndUTXOs(reqID interface{}) (btcutil.Address, []wallet.UTXO, *Response) {
+	// Get a wallet address to own the name
+	addresses := s.wallet.GetAddresses()
+	if len(addresses) == 0 {
+		return nil, nil, &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: "No addresses in wallet. Create an address first using getnewaddress.",
+			},
+			ID: reqID,
+		}
+	}
+	ownerAddress := addresses[0] // Use the first address
+
+	// Decode the address
+	addr, err := btcutil.DecodeAddress(ownerAddress, s.blockchain.ChainParams())
+	if err != nil {
+		return nil, nil, &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -5,
+				Message: fmt.Sprintf("Invalid address: %v", err),
+			},
+			ID: reqID,
+		}
+	}
+
+	// Get wallet UTXOs for funding
+	walletUTXOs, err := s.blockchain.GetUTXOsForAddress(ownerAddress)
+	if err != nil {
+		return nil, nil, &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: fmt.Sprintf("Failed to get wallet UTXOs: %v", err),
+			},
+			ID: reqID,
+		}
+	}
+
+	if len(walletUTXOs) == 0 {
+		return nil, nil, &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -6,
+				Message: "Insufficient funds. No UTXOs available in wallet.",
+			},
+			ID: reqID,
+		}
+	}
+
+	// Convert namedb UTXOs to wallet UTXOs
+	var utxos []wallet.UTXO
+	for _, dbUTXO := range walletUTXOs {
+		wUtxo := wallet.UTXO{
+			TxHash:   dbUTXO.TxHash,
+			Vout:     dbUTXO.OutIndex,
+			Value:    dbUTXO.Value,
+			PkScript: dbUTXO.PkScript,
+			Address:  dbUTXO.Address,
+		}
+		utxos = append(utxos, wUtxo)
+	}
+
+	return addr, utxos, nil
+}
+
 // nameNew creates a NAME_NEW transaction for pre-registering a name commitment.
 // This is the first step in the two-phase name registration process to prevent front-running.
 //
@@ -654,68 +736,10 @@ func (s *Server) nameNew(req *Request) *Response {
 		}
 	}
 
-	// Get a wallet address to own the name
-	addresses := s.wallet.GetAddresses()
-	if len(addresses) == 0 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: "No addresses in wallet. Create an address first using getnewaddress.",
-			},
-			ID: req.ID,
-		}
-	}
-	ownerAddress := addresses[0] // Use the first address
-
-	// Decode the address
-	addr, err := btcutil.DecodeAddress(ownerAddress, s.blockchain.ChainParams())
-	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -5,
-				Message: fmt.Sprintf("Invalid address: %v", err),
-			},
-			ID: req.ID,
-		}
-	}
-
-	// Get wallet UTXOs for funding
-	walletUTXOs, err := s.blockchain.GetUTXOsForAddress(ownerAddress)
-	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: fmt.Sprintf("Failed to get wallet UTXOs: %v", err),
-			},
-			ID: req.ID,
-		}
-	}
-
-	if len(walletUTXOs) == 0 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -6,
-				Message: "Insufficient funds. No UTXOs available in wallet.",
-			},
-			ID: req.ID,
-		}
-	}
-
-	// Convert namedb UTXOs to wallet UTXOs
-	var utxos []wallet.UTXO
-	for _, dbUTXO := range walletUTXOs {
-		wUtxo := wallet.UTXO{
-			TxHash:   dbUTXO.TxHash,
-			Vout:     dbUTXO.OutIndex,
-			Value:    dbUTXO.Value,
-			PkScript: dbUTXO.PkScript,
-			Address:  dbUTXO.Address,
-		}
-		utxos = append(utxos, wUtxo)
+	// Get wallet address and UTXOs
+	addr, utxos, errResp := s.getWalletAddressAndUTXOs(req.ID)
+	if errResp != nil {
+		return errResp
 	}
 
 	// Generate random salt (20 bytes) using wallet's crypto/rand helper
@@ -898,80 +922,21 @@ func (s *Server) nameFirstUpdate(req *Request) *Response {
 		}
 	}
 
-	// Get a wallet address to own the name
-	addresses := s.wallet.GetAddresses()
-	if len(addresses) == 0 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: "No addresses in wallet. Create an address first using getnewaddress.",
-			},
-			ID: req.ID,
-		}
-	}
-	ownerAddress := addresses[0] // Use the first address
-
-	// Decode the address
-	addr, err := btcutil.DecodeAddress(ownerAddress, s.blockchain.ChainParams())
-	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -5,
-				Message: fmt.Sprintf("Invalid address: %v", err),
-			},
-			ID: req.ID,
-		}
+	// Get wallet address and UTXOs
+	addr, utxos, errResp := s.getWalletAddressAndUTXOs(req.ID)
+	if errResp != nil {
+		return errResp
 	}
 
-	// Get wallet UTXOs for funding (including the NAME_NEW UTXO)
-	walletUTXOs, err := s.blockchain.GetUTXOsForAddress(ownerAddress)
-	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: fmt.Sprintf("Failed to get wallet UTXOs: %v", err),
-			},
-			ID: req.ID,
-		}
-	}
-
-	if len(walletUTXOs) == 0 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -6,
-				Message: "Insufficient funds. No UTXOs available in wallet.",
-			},
-			ID: req.ID,
-		}
-	}
-
-	// Convert namedb UTXOs to wallet UTXOs and find the NAME_NEW UTXO
-	var utxos []wallet.UTXO
+	// Find the NAME_NEW UTXO by checking for OP_NAME_NEW opcode in scripts
 	nameNewUtxoIndex := -1
-	for _, dbUTXO := range walletUTXOs {
-		wUtxo := wallet.UTXO{
-			TxHash:   dbUTXO.TxHash,
-			Vout:     dbUTXO.OutIndex,
-			Value:    dbUTXO.Value,
-			PkScript: dbUTXO.PkScript,
-			Address:  dbUTXO.Address,
-		}
-		// Check if this UTXO is a NAME_NEW output (contains the commitment hash in the script)
-		// We need to identify the NAME_NEW UTXO by checking if its script contains the commitment
-		// For now, we'll use all UTXOs and let the wallet transaction builder handle it
-		utxos = append(utxos, wUtxo)
-		
+	for i, utxo := range utxos {
 		// Try to identify NAME_NEW UTXO by checking the script
 		// NAME_NEW script format: OP_NAME_NEW <hash> OP_2DROP <P2PKH>
-		// The script should contain the commitment hash
-		if len(dbUTXO.PkScript) > 22 && dbUTXO.PkScript[0] == 0xd0 { // OP_NAME_NEW opcode
+		if len(utxo.PkScript) > 22 && utxo.PkScript[0] == opNameNew {
 			// This looks like a NAME_NEW output, mark it as a candidate
 			if nameNewUtxoIndex == -1 {
-				nameNewUtxoIndex = len(utxos) - 1
+				nameNewUtxoIndex = i
 			}
 		}
 	}

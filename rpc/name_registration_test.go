@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -15,21 +16,21 @@ func TestNameNewParameterValidation(t *testing.T) {
 		errorContains string
 	}{
 		{
-			name:          "no wallet",
+			name:          "no wallet - returns wallet error",
 			params:        []string{"d/example"},
 			expectedError: true,
 			errorCode:     -1,
 			errorContains: "Wallet not initialized",
 		},
 		{
-			name:          "invalid params - missing name",
+			name:          "no wallet - empty params returns wallet error",
 			params:        []string{},
 			expectedError: true,
 			errorCode:     -1,
 			errorContains: "Wallet not initialized",
 		},
 		{
-			name:          "invalid params - wrong type",
+			name:          "no wallet - invalid param type returns wallet error",
 			params:        "not-an-array",
 			expectedError: true,
 			errorCode:     -1,
@@ -64,7 +65,7 @@ func TestNameNewParameterValidation(t *testing.T) {
 				if resp.Error.Code != tt.errorCode {
 					t.Errorf("Expected error code %d, got %d", tt.errorCode, resp.Error.Code)
 				}
-				if tt.errorContains != "" && !contains(resp.Error.Message, tt.errorContains) {
+				if tt.errorContains != "" && !strings.Contains(resp.Error.Message, tt.errorContains) {
 					t.Errorf("Expected error message to contain '%s', got '%s'", tt.errorContains, resp.Error.Message)
 				}
 			}
@@ -82,21 +83,21 @@ func TestNameFirstUpdateParameterValidation(t *testing.T) {
 		errorContains string
 	}{
 		{
-			name:          "no wallet",
+			name:          "no wallet - returns wallet error",
 			params:        []string{"d/example", "0102030405060708090a0b0c0d0e0f1011121314", `{"test":"value"}`},
 			expectedError: true,
 			errorCode:     -1,
 			errorContains: "Wallet not initialized",
 		},
 		{
-			name:          "invalid params - missing parameters",
+			name:          "no wallet - missing parameters returns wallet error",
 			params:        []string{"d/example"},
 			expectedError: true,
 			errorCode:     -1,
 			errorContains: "Wallet not initialized",
 		},
 		{
-			name:          "invalid params - only 2 params",
+			name:          "no wallet - only 2 params returns wallet error",
 			params:        []string{"d/example", "0102030405060708090a0b0c0d0e0f1011121314"},
 			expectedError: true,
 			errorCode:     -1,
@@ -131,24 +132,10 @@ func TestNameFirstUpdateParameterValidation(t *testing.T) {
 				if resp.Error.Code != tt.errorCode {
 					t.Errorf("Expected error code %d, got %d", tt.errorCode, resp.Error.Code)
 				}
-				if tt.errorContains != "" && !contains(resp.Error.Message, tt.errorContains) {
+				if tt.errorContains != "" && !strings.Contains(resp.Error.Message, tt.errorContains) {
 					t.Errorf("Expected error message to contain '%s', got '%s'", tt.errorContains, resp.Error.Message)
 				}
 			}
 		})
 	}
-}
-
-// contains checks if a string contains a substring
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && stringContains(s, substr))
-}
-
-func stringContains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
