@@ -448,8 +448,8 @@ func TestEmbeddedClient_ExpiresInZero(t *testing.T) {
 		} else if errors.Is(err, ErrNameExpired) {
 			t.Errorf("UpdateName() error = %v, should NOT be ErrNameExpired for ExpiresIn=0", err)
 		} else if !strings.Contains(err.Error(), "wallet does not have key") {
-			// This is fine - it means expiration check passed
-			t.Logf("UpdateName() error (expected, expiration check passed): %v", err)
+			// Unexpected non-expiration error; still acceptable as it means the expiration check passed.
+			t.Logf("UpdateName() returned unexpected non-expiration error (expiration check passed): %v", err)
 		}
 	})
 }
