@@ -1,0 +1,49 @@
+# Example nmcd configuration file
+# 
+# This file demonstrates the configuration file format for nmcd.
+# Copy this to ~/.nmcd/nmcd.conf and customize as needed.
+#
+# Priority order for configuration:
+#   1. Command-line flags (highest priority)
+#   2. Environment variables
+#   3. Configuration file (this file)
+#   4. Built-in defaults
+#
+# Using a config file for RPC credentials is more secure than command-line flags
+# because credentials won't be visible in process listings (ps, top, etc).
+
+# Data directory for blockchain data, wallet, and database
+datadir = "/home/user/.nmcd"
+
+# Prometheus metrics endpoint (leave empty to disable)
+# Example: prometheusaddr = "127.0.0.1:9090"
+prometheusaddr = ""
+
+# Maximum number of peer connections
+maxpeers = 125
+
+# RPC Server Configuration
+[rpc]
+# RPC server listen address
+addr = "127.0.0.1:8336"
+
+# RPC authentication credentials
+# IMPORTANT: Set both user and password for RPC authentication
+# If only one is set, authentication will be disabled as a safety measure
+user = "your_rpc_username"
+password = "your_secure_rpc_password"
+
+# Network Configuration
+[network]
+# Network type: mainnet, testnet, or regtest
+type = "mainnet"
+
+# Network listen addresses (P2P protocol)
+# Multiple addresses can be specified for multi-homing
+listen = ["0.0.0.0:8334"]
+
+# Initial peers to connect to on startup
+# If empty, DNS seeds will be used for peer discovery
+# Example peers (replace with real addresses):
+# addpeer = ["peer1.example.com:8334", "peer2.example.com:8334"]
+addpeer = []

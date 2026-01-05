@@ -119,13 +119,17 @@ nmcd is a **library-first** Namecoin implementation built on btcd libraries, ena
   - ✅ Thread-safe concurrent request handling
   - ✅ MaxBytesReader protection against memory exhaustion attacks
   
-- [ ] **Credential Security Improvements** (1 day)
-  - Files: `cmd/nmcd/main.go`, `config/config.go`
-  - Add config file support for RPC credentials (TOML format)
-  - Read credentials from environment variables as fallback
-  - Document secure deployment patterns (systemd with EnvironmentFile)
-  - Warn on startup if credentials provided via command-line flags
-  - Test: Config file parsing, environment variable precedence
+- [x] **Credential Security Improvements** (1 day) **COMPLETED 2026-01-05**
+  - Files: `cmd/nmcd/main.go`, `config/config.go`, `config/configfile.go`, `config/configfile_test.go`, `examples/systemd/*`
+  - ✅ Added TOML config file support for RPC credentials (using BurntSushi/toml)
+  - ✅ Implemented environment variable support (NMCD_RPC_USER, NMCD_RPC_PASSWORD, etc.)
+  - ✅ Correct precedence: command-line flags > env vars > config file > defaults
+  - ✅ Created systemd service file with EnvironmentFile pattern
+  - ✅ Created example config files (nmcd.conf.example, nmcd.env.example)
+  - ✅ Comprehensive systemd deployment documentation with security best practices
+  - ✅ Warning displayed when credentials passed via command-line flags
+  - ✅ All tests passing (13 new tests, 100% pass rate)
+  - ✅ Documentation: Security recommendations and deployment guides
   
 - [ ] **Critical Bug Fixes** (0.5 days)
   - Files: Various as issues are identified
@@ -139,7 +143,7 @@ nmcd is a **library-first** Namecoin implementation built on btcd libraries, ena
 - ✅ Wallet encryption enabled by default with migration tool
 - ⏳ All AuxPow test vectors pass with real mainnet blocks (infrastructure complete, awaiting extraction)
 - ✅ RPC rate limiting prevents DoS with < 1% legitimate request impact
-- ⏳ No credentials visible in process listings when using config file (pending credential security improvements)
+- ✅ No credentials visible in process listings when using config file (credential security improvements complete)
 - ⏳ Zero race conditions reported by `go test -race ./...` (pending critical bug fixes)
 - ⏳ 24-hour daemon stability test (no crashes, memory leaks < 1MB/hour) (pending critical bug fixes)
 

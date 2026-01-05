@@ -92,12 +92,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 
 	// Warn if only one of rpcuser/rpcpassword is set
 	if (cfg.RPCUser != "" && cfg.RPCPassword == "") || (cfg.RPCUser == "" && cfg.RPCPassword != "") {
-		log.Printf("Warning: Both -rpcuser and -rpcpassword must be set for RPC authentication. Authentication is disabled.")
-	}
-
-	// Security warning about command-line credentials
-	if cfg.RPCUser != "" && cfg.RPCPassword != "" {
-		log.Printf("Warning: RPC credentials passed via command-line are visible in process listings. For production, consider using environment variables or a config file.")
+		log.Printf("Warning: Both RPC user and password must be set for authentication. Authentication is disabled.")
 	}
 
 	rpcServer, err := rpc.NewServer(rpcCfg)
