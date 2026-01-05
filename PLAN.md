@@ -91,13 +91,15 @@ nmcd is a **library-first** Namecoin implementation built on btcd libraries, ena
 
 ### Deliverables
 
-- [ ] **Wallet Encryption Implementation** (2 days)
-  - File: `wallet/wallet.go`
-  - Add AES-256-GCM encryption for private keys at rest
-  - Implement password-based key derivation (scrypt with salt)
-  - Create migration path from unencrypted to encrypted wallets
-  - Add `walletpassphrase` and `walletlock` RPC methods
-  - Test: Encryption/decryption correctness, password strength validation
+- [x] **Wallet Encryption Implementation** (2 days) **COMPLETED 2026-01-05**
+  - File: `wallet/wallet.go`, `wallet/encryption.go`
+  - ✅ Added AES-256-GCM encryption for private keys at rest
+  - ✅ Implemented password-based key derivation (scrypt with salt: N=32768, r=8, p=1)
+  - ✅ Created migration path from unencrypted to encrypted wallets (version 1 → version 2)
+  - ✅ Added `walletpassphrase`, `walletlock`, and `encryptwallet` RPC methods
+  - ✅ Test: Encryption/decryption correctness, password strength validation (37 tests passing)
+  - ✅ Security features: Memory clearing on lock, auto-lock timer, password hash verification
+  - ✅ Documentation: Updated README.md with security warnings and usage examples
   
 - [ ] **AuxPow Mainnet Validation Testing** (2 days)
   - Files: `chain/auxpow.go`, `chain/auxpow_test.go`, `testdata/blocks/*.json`

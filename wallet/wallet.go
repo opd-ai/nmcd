@@ -4,6 +4,7 @@ package wallet
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -27,6 +28,13 @@ type Wallet struct {
 	chainParams *chaincfg.Params
 	keys        map[string]*KeyPair // address -> key pair
 	mu          sync.RWMutex
+
+	// Encryption state
+	encrypted      bool   // Whether the wallet is encrypted
+	locked         bool   // Whether the wallet is currently locked
+	passwordHash   []byte // Hash of the password for verification (not the password itself)
+	passwordSalt   []byte // Random salt for password hashing (unique per wallet)
+	unlockPassword string // Cached password when unlocked (cleared on lock)
 }
 
 // KeyPair represents a private/public key pair.
@@ -37,11 +45,19 @@ type KeyPair struct {
 }
 
 // walletData is the serializable format for wallet storage.
+// Version 1: Unencrypted keys (legacy format)
+// Version 2: Encrypted keys with password protection
 type walletData struct {
-	Keys []keyData `json:"keys"`
+	Version      int       `json:"version"`                 // Wallet format version (1 or 2)
+	Encrypted    bool      `json:"encrypted"`               // Whether keys are encrypted
+	PasswordHash string    `json:"password_hash,omitempty"` // Hash of password (version 2 only)
+	PasswordSalt string    `json:"password_salt,omitempty"` // Salt for password hashing (version 2 only)
+	Keys         []keyData `json:"keys"`                    // Key pairs (encrypted or unencrypted)
 }
 
 // keyData represents a serializable key pair.
+// For version 1 (unencrypted): PrivateKeyHex is hex-encoded private key
+// For version 2 (encrypted): PrivateKeyHex is encrypted private key in format "salt:nonce:ciphertext"
 type keyData struct {
 	PrivateKeyHex string `json:"private_key"`
 	Address       string `json:"address"`
@@ -53,6 +69,8 @@ func NewWallet(dataDir string, chainParams *chaincfg.Params) (*Wallet, error) {
 		dataDir:     dataDir,
 		chainParams: chainParams,
 		keys:        make(map[string]*KeyPair),
+		encrypted:   false,
+		locked:      false,
 	}
 
 	// Try to load existing wallet
@@ -69,6 +87,7 @@ func (w *Wallet) walletPath() string {
 }
 
 // load reads the wallet from disk.
+// Supports both version 1 (unencrypted) and version 2 (encrypted) wallet formats.
 func (w *Wallet) load() error {
 	data, err := os.ReadFile(w.walletPath())
 	if err != nil {
@@ -80,10 +99,68 @@ func (w *Wallet) load() error {
 		return fmt.Errorf("failed to parse wallet: %w", err)
 	}
 
-	for _, kd := range wd.Keys {
-		privKeyBytes, err := hex.DecodeString(kd.PrivateKeyHex)
+	// Handle wallet version
+	if wd.Version == 0 {
+		// Legacy format (no version field) - treat as version 1
+		wd.Version = 1
+		wd.Encrypted = false
+	}
+
+	// Set wallet encryption state
+	w.encrypted = wd.Encrypted
+	if w.encrypted {
+		// Encrypted wallet starts locked
+		w.locked = true
+		w.passwordHash, err = hex.DecodeString(wd.PasswordHash)
 		if err != nil {
-			return fmt.Errorf("failed to decode private key: %w", err)
+			return fmt.Errorf("failed to decode password hash: %w", err)
+		}
+		w.passwordSalt, err = hex.DecodeString(wd.PasswordSalt)
+		if err != nil {
+			return fmt.Errorf("failed to decode password salt: %w", err)
+		}
+	} else {
+		// Unencrypted wallet is always unlocked
+		w.locked = false
+	}
+
+	// For encrypted wallets, we cannot load keys until unlocked
+	// For unencrypted wallets, load keys immediately
+	if !w.encrypted {
+		if err := w.loadKeys(&wd); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// loadKeys loads key pairs from wallet data.
+// For encrypted wallets, this must be called after unlock with the password.
+func (w *Wallet) loadKeys(wd *walletData) error {
+	for _, kd := range wd.Keys {
+		var privKeyBytes []byte
+		var err error
+
+		if w.encrypted && w.unlockPassword != "" {
+			// Decrypt the private key
+			encData, err := decodeEncryptedData(kd.PrivateKeyHex)
+			if err != nil {
+				return fmt.Errorf("failed to decode encrypted private key: %w", err)
+			}
+			privKeyBytes, err = decrypt(encData, w.unlockPassword)
+			if err != nil {
+				return fmt.Errorf("failed to decrypt private key: %w", err)
+			}
+		} else if !w.encrypted {
+			// Unencrypted wallet - decode hex directly
+			privKeyBytes, err = hex.DecodeString(kd.PrivateKeyHex)
+			if err != nil {
+				return fmt.Errorf("failed to decode private key: %w", err)
+			}
+		} else {
+			// Encrypted but not unlocked - should not happen
+			return fmt.Errorf("cannot load keys from encrypted wallet without password")
 		}
 
 		privKey, pubKey := btcec.PrivKeyFromBytes(privKeyBytes)
@@ -104,14 +181,40 @@ func (w *Wallet) load() error {
 }
 
 // save writes the wallet to disk.
+// For encrypted wallets, private keys are encrypted before saving.
+// For unencrypted wallets, private keys are stored as hex-encoded bytes.
 func (w *Wallet) save() error {
 	wd := walletData{
-		Keys: make([]keyData, 0, len(w.keys)),
+		Version:   2,
+		Encrypted: w.encrypted,
+		Keys:      make([]keyData, 0, len(w.keys)),
+	}
+
+	if w.encrypted {
+		wd.PasswordHash = hex.EncodeToString(w.passwordHash)
+		wd.PasswordSalt = hex.EncodeToString(w.passwordSalt)
 	}
 
 	for addr, kp := range w.keys {
+		var privKeyHex string
+
+		if w.encrypted {
+			if w.unlockPassword == "" {
+				return fmt.Errorf("cannot save encrypted wallet while locked")
+			}
+			// Encrypt the private key
+			encData, err := encrypt(kp.PrivateKey.Serialize(), w.unlockPassword)
+			if err != nil {
+				return fmt.Errorf("failed to encrypt private key: %w", err)
+			}
+			privKeyHex = encodeEncryptedData(encData)
+		} else {
+			// Unencrypted wallet - encode as hex
+			privKeyHex = hex.EncodeToString(kp.PrivateKey.Serialize())
+		}
+
 		wd.Keys = append(wd.Keys, keyData{
-			PrivateKeyHex: hex.EncodeToString(kp.PrivateKey.Serialize()),
+			PrivateKeyHex: privKeyHex,
 			Address:       addr,
 		})
 	}
@@ -195,6 +298,152 @@ func (w *Wallet) GetKey(address string) (*KeyPair, error) {
 		return nil, fmt.Errorf("no key found for address: %s", address)
 	}
 	return kp, nil
+}
+
+// EncryptWallet encrypts the wallet with a password.
+// This migrates an unencrypted wallet to encrypted format.
+// Returns an error if the wallet is already encrypted.
+func (w *Wallet) EncryptWallet(password string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.encrypted {
+		return fmt.Errorf("wallet is already encrypted")
+	}
+
+	// Validate password strength
+	if err := validatePassword(password); err != nil {
+		return fmt.Errorf("invalid password: %w", err)
+	}
+
+	// Generate random salt for password hashing
+	salt, err := generatePasswordSalt()
+	if err != nil {
+		return fmt.Errorf("failed to generate password salt: %w", err)
+	}
+
+	// Set encryption state
+	w.encrypted = true
+	w.locked = false // Starts unlocked after encryption
+	w.unlockPassword = password
+	w.passwordSalt = salt
+	w.passwordHash = hashPassword(password, salt)
+
+	// Save wallet with encryption
+	if err := w.save(); err != nil {
+		// Rollback encryption state on save failure
+		w.encrypted = false
+		w.locked = false
+		w.unlockPassword = ""
+		w.passwordHash = nil
+		w.passwordSalt = nil
+		w.passwordHash = nil
+		return fmt.Errorf("failed to save encrypted wallet: %w", err)
+	}
+
+	return nil
+}
+
+// Lock locks an encrypted wallet, clearing keys from memory.
+// Returns an error if the wallet is not encrypted.
+func (w *Wallet) Lock() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if !w.encrypted {
+		return fmt.Errorf("wallet is not encrypted")
+	}
+
+	if w.locked {
+		return fmt.Errorf("wallet is already locked")
+	}
+
+	// Clear sensitive data from memory
+	// Zero private key bytes before removing references
+	for _, kp := range w.keys {
+		if kp.PrivateKey != nil {
+			// Zero the private key bytes
+			privKeyBytes := kp.PrivateKey.Serialize()
+			for i := range privKeyBytes {
+				privKeyBytes[i] = 0
+			}
+		}
+	}
+	
+	// Clear the map and password
+	w.keys = make(map[string]*KeyPair)
+	
+	// Zero password bytes (convert string to byte slice and zero it)
+	// Note: This is best-effort as Go strings are immutable
+	if w.unlockPassword != "" {
+		passwordBytes := []byte(w.unlockPassword)
+		for i := range passwordBytes {
+			passwordBytes[i] = 0
+		}
+		w.unlockPassword = ""
+	}
+	
+	w.locked = true
+
+	return nil
+}
+
+// Unlock unlocks an encrypted wallet with a password.
+// Returns an error if the password is incorrect or the wallet is not encrypted.
+func (w *Wallet) Unlock(password string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if !w.encrypted {
+		return fmt.Errorf("wallet is not encrypted")
+	}
+
+	if !w.locked {
+		return fmt.Errorf("wallet is already unlocked")
+	}
+
+	// Verify password using constant-time comparison to prevent timing attacks
+	passwordHash := hashPassword(password, w.passwordSalt)
+	if len(passwordHash) != len(w.passwordHash) || subtle.ConstantTimeCompare(passwordHash, w.passwordHash) != 1 {
+		return fmt.Errorf("incorrect password")
+	}
+
+	// Load wallet file to decrypt keys
+	data, err := os.ReadFile(w.walletPath())
+	if err != nil {
+		return fmt.Errorf("failed to read wallet file: %w", err)
+	}
+
+	var wd walletData
+	if err := json.Unmarshal(data, &wd); err != nil {
+		return fmt.Errorf("failed to parse wallet: %w", err)
+	}
+
+	// Set password for decryption
+	w.unlockPassword = password
+
+	// Load and decrypt keys
+	if err := w.loadKeys(&wd); err != nil {
+		w.unlockPassword = ""
+		return fmt.Errorf("failed to load keys: %w", err)
+	}
+
+	w.locked = false
+	return nil
+}
+
+// IsEncrypted returns true if the wallet is encrypted.
+func (w *Wallet) IsEncrypted() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.encrypted
+}
+
+// IsLocked returns true if the wallet is locked.
+func (w *Wallet) IsLocked() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.locked
 }
 
 // Namecoin-specific opcodes for name operations.
