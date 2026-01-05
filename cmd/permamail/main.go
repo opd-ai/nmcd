@@ -144,6 +144,27 @@ func (c *CLI) parseGlobalFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.rpcPassword, "rpcpass", "", "RPC password")
 }
 
+// parseBackupAddresses parses a comma-separated string of backup email addresses
+// and returns a slice of trimmed addresses. Empty strings and whitespace-only
+// entries are filtered out.
+func parseBackupAddresses(backupAddrs string) []string {
+	if backupAddrs == "" {
+		return nil
+	}
+
+	parts := strings.Split(backupAddrs, ",")
+	backups := make([]string, 0, len(parts))
+	
+	for _, addr := range parts {
+		trimmed := strings.TrimSpace(addr)
+		if trimmed != "" {
+			backups = append(backups, trimmed)
+		}
+	}
+	
+	return backups
+}
+
 // register implements the register command
 func (c *CLI) register(args []string) error {
 	fs := flag.NewFlagSet("register", flag.ExitOnError)
@@ -158,12 +179,7 @@ func (c *CLI) register(args []string) error {
 	}
 
 	// Parse backup addresses
-	if backupAddrs != "" {
-		c.backups = strings.Split(backupAddrs, ",")
-		for i := range c.backups {
-			c.backups[i] = strings.TrimSpace(c.backups[i])
-		}
-	}
+	c.backups = parseBackupAddresses(backupAddrs)
 
 	// Get name from positional argument
 	if fs.NArg() < 1 {
@@ -229,12 +245,7 @@ func (c *CLI) update(args []string) error {
 	}
 
 	// Parse backup addresses
-	if backupAddrs != "" {
-		c.backups = strings.Split(backupAddrs, ",")
-		for i := range c.backups {
-			c.backups[i] = strings.TrimSpace(c.backups[i])
-		}
-	}
+	c.backups = parseBackupAddresses(backupAddrs)
 
 	// Get name from positional argument
 	if fs.NArg() < 1 {
@@ -408,7 +419,12 @@ func (c *CLI) serve(args []string) error {
 	return nil
 }
 
-// createClient creates a Namecoin client based on CLI configuration
+// createClient constructs a NameClient configured for daemon mode using the
+// current CLI settings. It reads network, data directory, and RPC credentials
+// from the CLI fields populated by global flags, and always sets Mode to
+// client.ModeDaemon so that the client talks to a running nmcd instance rather
+// than embedding its own chain. The returned client must be closed by the
+// caller when no longer needed.
 func (c *CLI) createClient() (client.NameClient, error) {
 	cfg := &client.Config{
 		Mode:        client.ModeDaemon, // Use daemon mode for CLI

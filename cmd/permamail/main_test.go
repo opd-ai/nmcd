@@ -5,52 +5,70 @@ import (
 	"testing"
 )
 
-// TestParseGlobalFlags tests that global flags are parsed correctly
-func TestParseGlobalFlags(t *testing.T) {
+// TestParseBackupAddresses tests the parseBackupAddresses helper function
+func TestParseBackupAddresses(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		wantNet  string
-		wantRPC  string
-		wantUser string
+		name      string
+		input     string
+		wantCount int
+		want      []string
 	}{
 		{
-			name:     "default values",
-			args:     []string{},
-			wantNet:  "mainnet",
-			wantRPC:  "localhost:8336",
-			wantUser: "",
+			name:      "empty string",
+			input:     "",
+			wantCount: 0,
+			want:      nil,
 		},
 		{
-			name:     "custom network",
-			args:     []string{"-network", "testnet"},
-			wantNet:  "testnet",
-			wantRPC:  "localhost:8336",
-			wantUser: "",
+			name:      "single address",
+			input:     "backup@example.com",
+			wantCount: 1,
+			want:      []string{"backup@example.com"},
 		},
 		{
-			name:     "custom RPC address",
-			args:     []string{"-rpcaddr", "192.168.1.1:8336"},
-			wantNet:  "mainnet",
-			wantRPC:  "192.168.1.1:8336",
-			wantUser: "",
+			name:      "multiple addresses",
+			input:     "backup1@example.com,backup2@example.com",
+			wantCount: 2,
+			want:      []string{"backup1@example.com", "backup2@example.com"},
 		},
 		{
-			name:     "with RPC credentials",
-			args:     []string{"-rpcuser", "testuser", "-rpcpass", "testpass"},
-			wantNet:  "mainnet",
-			wantRPC:  "localhost:8336",
-			wantUser: "testuser",
+			name:      "addresses with spaces",
+			input:     " backup1@example.com , backup2@example.com ",
+			wantCount: 2,
+			want:      []string{"backup1@example.com", "backup2@example.com"},
+		},
+		{
+			name:      "only commas",
+			input:     ",,,",
+			wantCount: 0,
+			want:      []string{},
+		},
+		{
+			name:      "leading and trailing commas",
+			input:     ",backup@example.com,",
+			wantCount: 1,
+			want:      []string{"backup@example.com"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Note: Testing flag parsing would require refactoring to make parseGlobalFlags testable
-			// For now, we verify the CLI structure is correct
-			cli := &CLI{}
-			if cli == nil {
-				t.Fatal("Failed to create CLI instance")
+			got := parseBackupAddresses(tt.input)
+			
+			if len(got) != tt.wantCount {
+				t.Errorf("parseBackupAddresses() returned %d addresses, want %d", len(got), tt.wantCount)
+			}
+			
+			if tt.want != nil {
+				if len(got) != len(tt.want) {
+					t.Errorf("parseBackupAddresses() = %v, want %v", got, tt.want)
+					return
+				}
+				for i := range got {
+					if got[i] != tt.want[i] {
+						t.Errorf("parseBackupAddresses()[%d] = %s, want %s", i, got[i], tt.want[i])
+					}
+				}
 			}
 		})
 	}
@@ -187,19 +205,40 @@ func TestBackupAddressParsing(t *testing.T) {
 			wantCount: 2,
 			wantFirst: "backup1@example.com",
 		},
+		{
+			name:      "empty string",
+			input:     "",
+			wantCount: 0,
+			wantFirst: "",
+		},
+		{
+			name:      "only commas",
+			input:     ",,",
+			wantCount: 0,
+			wantFirst: "",
+		},
+		{
+			name:      "trailing comma with spaces",
+			input:     ", backup@example.com ,",
+			wantCount: 1,
+			wantFirst: "backup@example.com",
+		},
+		{
+			name:      "spaces only",
+			input:     "   ",
+			wantCount: 0,
+			wantFirst: "",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			backups := strings.Split(tt.input, ",")
-			for i := range backups {
-				backups[i] = strings.TrimSpace(backups[i])
-			}
+			backups := parseBackupAddresses(tt.input)
 
 			if len(backups) != tt.wantCount {
 				t.Errorf("Backup count = %d, want %d", len(backups), tt.wantCount)
 			}
-			if len(backups) > 0 && backups[0] != tt.wantFirst {
+			if tt.wantCount > 0 && len(backups) > 0 && backups[0] != tt.wantFirst {
 				t.Errorf("First backup = %s, want %s", backups[0], tt.wantFirst)
 			}
 		})

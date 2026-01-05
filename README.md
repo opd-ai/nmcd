@@ -649,6 +649,9 @@ permamail update alice --forward newemail@proton.me --backup backup@proton.me
 permamail lookup alice
 
 # Start SMTP relay server
+# Note: Avoid passing SMTP passwords directly on the command line, as they
+# may be visible to other local users via process listings (ps, /proc).
+# Consider using environment variables or a config file with restricted permissions.
 permamail serve --upstream smtp.sendgrid.net --upstreamport 587 \
                 --smtpuser apikey --smtppass <api-key>
 ```
