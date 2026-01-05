@@ -718,24 +718,16 @@ func (s *Server) nameNew(req *Request) *Response {
 		utxos = append(utxos, wUtxo)
 	}
 
-	// Generate random salt (20 bytes)
-	randBytes := make([]byte, 20)
-	// Use cryptographically secure random from os package
-	_, err = os.ReadFile("/dev/urandom")
-	if err == nil {
-		// Read from /dev/urandom if available
-		f, err := os.Open("/dev/urandom")
-		if err == nil {
-			defer f.Close()
-			_, _ = f.Read(randBytes)
-		}
-	}
-	// Fallback to timestamp-based random if /dev/urandom not available
-	if randBytes[0] == 0 && randBytes[19] == 0 {
-		// Use current time as fallback
-		now := time.Now().UnixNano()
-		for i := 0; i < 20; i++ {
-			randBytes[i] = byte((now >> (i * 8)) & 0xFF)
+	// Generate random salt (20 bytes) using wallet's crypto/rand helper
+	randBytes, err := wallet.GenerateRand()
+	if err != nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: fmt.Sprintf("Failed to generate random salt for NAME_NEW: %v", err),
+			},
+			ID: req.ID,
 		}
 	}
 
@@ -874,7 +866,7 @@ func (s *Server) nameFirstUpdate(req *Request) *Response {
 			Jsonrpc: "2.0",
 			Error: &Error{
 				Code:    -25,
-				Message: fmt.Sprintf("NAME_NEW commitment not found. You must call name_new first and wait for confirmation."),
+				Message: "NAME_NEW commitment not found. You must call name_new first and wait for confirmation.",
 			},
 			ID: req.ID,
 		}
