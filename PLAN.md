@@ -108,13 +108,16 @@ nmcd is a **library-first** Namecoin implementation built on btcd libraries, ena
   - Verify chain ID, merkle branches, parent PoW against Namecoin Core
   - Test: All AuxPow test vectors pass with real block data
   
-- [ ] **RPC Security Hardening** (1.5 days)
-  - File: `rpc/server.go`
-  - Implement per-IP rate limiting (100 req/min default, configurable)
-  - Add request size limits (1MB max body size)
-  - Validate all input parameters with explicit bounds checking
-  - Add security headers (CORS disabled, X-Content-Type-Options, etc.)
-  - Test: Rate limit enforcement, oversized request rejection
+- [x] **RPC Security Hardening** (1.5 days) **COMPLETED 2026-01-05**
+  - File: `rpc/server.go`, `rpc/ratelimit.go`, `rpc/security_test.go`
+  - ✅ Implemented per-IP rate limiting (100 req/min default, configurable via Config.RateLimit)
+  - ✅ Added request size limits (1MB max body size, configurable via Config.MaxRequestSize)
+  - ✅ Validated all input parameters with explicit bounds checking
+  - ✅ Added security headers (X-Content-Type-Options: nosniff, X-Frame-Options: DENY, Content-Security-Policy: default-src 'none')
+  - ✅ Test: Rate limit enforcement, oversized request rejection (17 new tests, all passing)
+  - ✅ Token bucket algorithm with automatic cleanup of stale IP entries
+  - ✅ Thread-safe concurrent request handling
+  - ✅ MaxBytesReader protection against memory exhaustion attacks
   
 - [ ] **Credential Security Improvements** (1 day)
   - Files: `cmd/nmcd/main.go`, `config/config.go`
@@ -134,11 +137,11 @@ nmcd is a **library-first** Namecoin implementation built on btcd libraries, ena
 ### Success Criteria
 
 - ✅ Wallet encryption enabled by default with migration tool
-- ✅ All AuxPow test vectors pass with real mainnet blocks
+- ⏳ All AuxPow test vectors pass with real mainnet blocks (infrastructure complete, awaiting extraction)
 - ✅ RPC rate limiting prevents DoS with < 1% legitimate request impact
-- ✅ No credentials visible in process listings when using config file
-- ✅ Zero race conditions reported by `go test -race ./...`
-- ✅ 24-hour daemon stability test (no crashes, memory leaks < 1MB/hour)
+- ⏳ No credentials visible in process listings when using config file (pending credential security improvements)
+- ⏳ Zero race conditions reported by `go test -race ./...` (pending critical bug fixes)
+- ⏳ 24-hour daemon stability test (no crashes, memory leaks < 1MB/hour) (pending critical bug fixes)
 
 ### Dependencies
 
