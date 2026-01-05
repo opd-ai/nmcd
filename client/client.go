@@ -77,13 +77,13 @@ func NewClient(cfg *Config) (NameClient, error) {
 					if expectedNetwork == "" {
 						expectedNetwork = "mainnet"
 					}
-					
+
 					if detectedNetwork != expectedNetwork {
 						// Network mismatch - close daemon and return error
 						daemonClient.Close()
 						return nil, fmt.Errorf("network mismatch: daemon is running on %s but client configured for %s (ensure cfg.Network matches daemon's network or use explicit mode)", detectedNetwork, expectedNetwork)
 					}
-					
+
 					// Network matches - use daemon
 					return daemonClient, nil
 				}

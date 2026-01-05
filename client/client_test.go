@@ -425,4 +425,3 @@ func TestNewClient_AutoMode_NetworkMatch(t *testing.T) {
 		t.Errorf("GetInfo() mode = %v, want daemon", info.Mode)
 	}
 }
-

@@ -1141,7 +1141,7 @@ func TestEmbeddedClient_RegisterName(t *testing.T) {
 			}
 
 			ctx := context.Background()
-			
+
 			// For WaitForConfirmation test, use a context with short timeout
 			if strings.Contains(tt.name, "wait for confirmation") {
 				var cancel context.CancelFunc
@@ -1510,7 +1510,7 @@ func TestEmbeddedClient_UpdateName(t *testing.T) {
 			}
 
 			ctx := context.Background()
-			
+
 			// For WaitForConfirmation test, use a context with short timeout
 			if strings.Contains(tt.name, "wait for confirmation") {
 				var cancel context.CancelFunc

@@ -994,7 +994,7 @@ func TestDaemonClient_WaitForConfirmation(t *testing.T) {
 				// Call 3: 3 confirmations (fully confirmed - success!)
 				callCount := 0
 				expectedConfirmations := []int{0, 1, 3}
-				
+
 				return func(method string, params json.RawMessage) (interface{}, *rpcError) {
 					if method == "getrawtransaction" {
 						confs := 0
@@ -1002,7 +1002,7 @@ func TestDaemonClient_WaitForConfirmation(t *testing.T) {
 							confs = expectedConfirmations[callCount]
 						}
 						callCount++
-						
+
 						return map[string]interface{}{
 							"txid":          "def456",
 							"confirmations": confs,
@@ -1233,11 +1233,11 @@ func TestDaemonClient_getRawTransaction(t *testing.T) {
 
 func TestDaemonClient_GetBlockHash(t *testing.T) {
 	tests := []struct {
-		name      string
-		height    int32
-		wantHash  string
-		handler   func(method string, params json.RawMessage) (interface{}, *rpcError)
-		wantErr   bool
+		name     string
+		height   int32
+		wantHash string
+		handler  func(method string, params json.RawMessage) (interface{}, *rpcError)
+		wantErr  bool
 	}{
 		{
 			name:     "get genesis block hash",
@@ -1378,4 +1378,3 @@ func TestDaemonClient_DetectNetwork(t *testing.T) {
 		})
 	}
 }
-
