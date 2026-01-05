@@ -1,0 +1,68 @@
+# nmcd systemd service unit file
+# 
+# This is a template systemd service file for running nmcd as a system daemon.
+# It demonstrates secure credential management using EnvironmentFile.
+#
+# Installation:
+# 1. Copy this file to /etc/systemd/system/nmcd.service
+# 2. Create environment file at /etc/nmcd/nmcd.env with credentials (see below)
+# 3. Ensure nmcd binary is installed at /usr/local/bin/nmcd
+# 4. Create nmcd user: useradd -r -s /bin/false nmcd
+# 5. Create data directory: mkdir -p /var/lib/nmcd && chown nmcd:nmcd /var/lib/nmcd
+# 6. Reload systemd: systemctl daemon-reload
+# 7. Enable and start: systemctl enable nmcd && systemctl start nmcd
+#
+# Environment file (/etc/nmcd/nmcd.env) should contain:
+#   NMCD_RPC_USER=your_rpc_username
+#   NMCD_RPC_PASSWORD=your_secure_password
+#
+# Set permissions on environment file:
+#   chmod 600 /etc/nmcd/nmcd.env
+#   chown root:root /etc/nmcd/nmcd.env
+
+[Unit]
+Description=nmcd - Namecoin Daemon (Pure Go Implementation)
+Documentation=https://github.com/opd-ai/nmcd
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nmcd
+Group=nmcd
+
+# Binary and working directory
+ExecStart=/usr/local/bin/nmcd \
+    -datadir=/var/lib/nmcd \
+    -network=mainnet \
+    -rpcaddr=127.0.0.1:8336 \
+    -listen=0.0.0.0:8334 \
+    -maxpeers=125
+
+# Load credentials from environment file (secure - not visible in process listings)
+# This file should contain NMCD_RPC_USER and NMCD_RPC_PASSWORD
+EnvironmentFile=/etc/nmcd/nmcd.env
+
+# Restart policy
+Restart=on-failure
+RestartSec=10s
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/nmcd
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=2G
+CPUQuota=200%
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nmcd
+
+[Install]
+WantedBy=multi-user.target
