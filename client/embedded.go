@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -401,7 +402,7 @@ func (c *EmbeddedClient) RegisterName(ctx context.Context, name, value string, o
 		if err := c.peerMgr.BroadcastTx(nameNewTx); err != nil {
 			// Log warning but don't fail - transaction is still valid locally
 			// In offline mode or with no peers, transaction can be broadcast later
-			fmt.Printf("Warning: failed to broadcast NAME_NEW transaction: %v\n", err)
+			log.Printf("Warning: failed to broadcast NAME_NEW transaction: %v", err)
 		}
 	}
 
@@ -609,7 +610,7 @@ func (c *EmbeddedClient) UpdateName(ctx context.Context, name, value string, opt
 		if err := c.peerMgr.BroadcastTx(updateTx); err != nil {
 			// Log warning but don't fail - transaction is still valid locally
 			// In offline mode or with no peers, transaction can be broadcast later
-			fmt.Printf("Warning: failed to broadcast NAME_UPDATE transaction: %v\n", err)
+			log.Printf("Warning: failed to broadcast NAME_UPDATE transaction: %v", err)
 		}
 	}
 
@@ -899,6 +900,17 @@ func (c *EmbeddedClient) WaitForConfirmation(ctx context.Context, txHash string,
 		return fmt.Errorf("invalid transaction hash: %w", err)
 	}
 
+	// Check transaction status immediately before entering polling loop
+	// This provides faster response for already-confirmed transactions
+	txHeight, currentHeight, err := c.getTransactionConfirmationStatus(txHashBytes)
+	if err == nil {
+		// Transaction found, check if it has enough confirmations
+		txConfirmations := currentHeight - txHeight + 1
+		if txConfirmations >= int32(confirmations) {
+			return nil
+		}
+	}
+
 	// Poll for transaction confirmation
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
@@ -936,6 +948,9 @@ func (c *EmbeddedClient) getTransactionConfirmationStatus(txHash *chainhash.Hash
 	// We search backwards from current height for efficiency
 	// In production, this would use a transaction index
 	// For now, we check the last 100 blocks (should cover most cases)
+	// Performance note: This creates O(blocks * transactions_per_block) complexity.
+	// For blocks with many transactions, this linear search may be slow.
+	// Consider reducing maxBlocksToSearch if performance becomes an issue.
 	maxBlocksToSearch := int32(100)
 	startHeight := currentHeight - maxBlocksToSearch
 	if startHeight < 0 {
