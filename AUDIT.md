@@ -3,7 +3,7 @@ Generated: 2026-01-05T02:41:22.091Z
 Codebase Version: dd32faa9f4b50eb0343ae4b53a0013693cd0834f (2026-01-05 02:40:30 +0000)
 
 ## Executive Summary
-Total Gaps Found: 8
+Total Gaps Analyzed: 11 (8 actual gaps, 3 verified non-gaps)
 - Critical: 3
 - Moderate: 3
 - Minor: 2
@@ -59,7 +59,7 @@ if resp.ExpiresIn < 0 {
 
 ### Gap #2: RegisterName WaitForConfirmation Never Works in Embedded Mode
 **Documentation Reference:**
-> "RegisterName creates a new name registration with the given value. [...] Opts.WaitForConfirmation can be set to wait for both steps to complete." (README.md:24, types.go:24)
+> "RegisterName creates a new name registration with the given value. [...] Opts.WaitForConfirmation can be set to wait for both steps to complete." (client/types.go:24)
 
 **Implementation Location:** `client/embedded.go:408`
 
@@ -100,7 +100,7 @@ return nil, fmt.Errorf("WaitForConfirmation requires network integration (coming
 
 ### Gap #3: UpdateName TransferTo Feature Silently Ignored for Same Address
 **Documentation Reference:**
-> "UpdateName updates an existing name's value. [...] The wallet must contain the private key for the address that owns the name." (README.md:30, 413)
+> "UpdateName updates an existing name's value. [...] The wallet must contain the private key for the address that owns the name." (client/types.go:28-30)
 
 **Implementation Location:** `client/embedded.go:538-547`
 
@@ -402,7 +402,7 @@ return nil, fmt.Errorf("WaitForConfirmation requires network integration (coming
 
 ### Gap #10: [VERIFIED AS CORRECT - NOT A GAP]
 **Documentation Reference:**
-> "name_new - Create a NAME_NEW transaction to pre-register a name commitment [...] Returns: {\"txid\": \"transaction_hash\", \"name\": \"d/example\", \"rand\": \"hex_encoded_random_bytes\", \"status\": \"broadcasted\"}" (README.md:337-356)
+> "name_new - Create a NAME_NEW transaction to pre-register a name commitment [...] Returns: {\"txid\": \"transaction_hash\", \"name\": \"d/example\", \"rand\": \"hex_encoded_random_bytes\", \"status\": \"broadcasted\"}" (README.md:346-354)
 
 **Implementation Location:** `rpc/server.go:671-800`
 
@@ -515,7 +515,7 @@ func (c *EmbeddedClient) GetInfo(ctx context.Context) (*NodeInfo, error) {
 - **Gap #7:** WaitForConfirmation uses time-based estimation (Critical)
 
 ### RPC API Gaps
-- **Gap #10:** name_new RPC response format verification needed (Moderate)
+- **Gap #10:** [VERIFIED - NOT A GAP] name_new RPC response matches documentation (None)
 
 ### Infrastructure Gaps
 - **Gap #6:** [VERIFIED - NOT A GAP] Prometheus metrics fully implemented
@@ -535,9 +535,9 @@ func (c *EmbeddedClient) GetInfo(ctx context.Context) (*NodeInfo, error) {
 5. **Fix Gap #5:** Add network detection/validation in Auto mode to prevent network mismatches
 
 ### Medium Priority (Quality of Life)
-7. **Improve Gap #3:** Add explicit error or warning when TransferTo matches current address
-8. **Fix Gap #11:** Integrate network manager connection count into embedded GetInfo
-9. **Clarify Gap #4:** Improve NamePattern documentation wording
+6. **Improve Gap #3:** Add explicit error or warning when TransferTo matches current address
+7. **Fix Gap #11:** Integrate network manager connection count into embedded GetInfo
+8. **Clarify Gap #4:** Improve NamePattern documentation wording
 
 ## Testing Recommendations
 
