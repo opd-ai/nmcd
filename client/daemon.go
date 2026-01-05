@@ -750,3 +750,50 @@ func (c *DaemonClient) SetRetryConfig(cfg RetryConfig) {
 
 	c.retryConfig = cfg
 }
+
+// GetBlockHash retrieves the hash of a block at the specified height.
+// This is primarily used for network detection via genesis block hash.
+func (c *DaemonClient) GetBlockHash(ctx context.Context, height int32) (string, error) {
+	params := []interface{}{height}
+	result, err := c.rpcCall(ctx, "getblockhash", params)
+	if err != nil {
+		return "", fmt.Errorf("failed to get block hash: %w", err)
+	}
+
+	var blockHash string
+	if err := json.Unmarshal(result, &blockHash); err != nil {
+		return "", fmt.Errorf("failed to parse block hash: %w", err)
+	}
+
+	return blockHash, nil
+}
+
+// DetectNetwork queries the daemon to detect which network it's running on.
+// It does this by retrieving the genesis block hash and comparing it against
+// known Namecoin network genesis hashes.
+//
+// Returns:
+//   - "mainnet", "testnet", or "regtest" on successful detection
+//   - error if network cannot be determined or RPC call fails
+func (c *DaemonClient) DetectNetwork(ctx context.Context) (string, error) {
+	// Get genesis block hash (block 0)
+	genesisHash, err := c.GetBlockHash(ctx, 0)
+	if err != nil {
+		return "", fmt.Errorf("failed to get genesis hash: %w", err)
+	}
+
+	// Compare against known Namecoin network genesis hashes
+	// Mainnet: 000000000062b72c5e2ceb45fbc8c80c7b157c0da7e635483dfba2a9f0a9c770
+	// Testnet: 00000007199508e34a9ff81e6ec0c477a4cccff2a4767a8eee39c11db367b008
+	// These are reversed from the internal representation in config/namecoin_params.go
+	switch genesisHash {
+	case "000000000062b72c5e2ceb45fbc8c80c7b157c0da7e635483dfba2a9f0a9c770":
+		return "mainnet", nil
+	case "00000007199508e34a9ff81e6ec0c477a4cccff2a4767a8eee39c11db367b008":
+		return "testnet", nil
+	default:
+		// Regtest can have any genesis hash, but since we can't reliably detect it,
+		// we'll assume anything not mainnet/testnet is regtest
+		return "regtest", nil
+	}
+}

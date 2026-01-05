@@ -1230,3 +1230,152 @@ func TestDaemonClient_getRawTransaction(t *testing.T) {
 		})
 	}
 }
+
+func TestDaemonClient_GetBlockHash(t *testing.T) {
+	tests := []struct {
+		name      string
+		height    int32
+		wantHash  string
+		handler   func(method string, params json.RawMessage) (interface{}, *rpcError)
+		wantErr   bool
+	}{
+		{
+			name:     "get genesis block hash",
+			height:   0,
+			wantHash: "000000000062b72c5e2ceb45fbc8c80c7b157c0da7e635483dfba2a9f0a9c770",
+			handler: func(method string, params json.RawMessage) (interface{}, *rpcError) {
+				if method == "getblockhash" {
+					var p []interface{}
+					json.Unmarshal(params, &p)
+					if len(p) > 0 && p[0] == float64(0) {
+						return "000000000062b72c5e2ceb45fbc8c80c7b157c0da7e635483dfba2a9f0a9c770", nil
+					}
+				}
+				return nil, &rpcError{Code: -32601, Message: "Method not found"}
+			},
+			wantErr: false,
+		},
+		{
+			name:     "get block 100 hash",
+			height:   100,
+			wantHash: "0000000000573993a3c9e41ce34471c079dcf5f52a0e824a81e7f953b8661a14",
+			handler: func(method string, params json.RawMessage) (interface{}, *rpcError) {
+				if method == "getblockhash" {
+					var p []interface{}
+					json.Unmarshal(params, &p)
+					if len(p) > 0 && p[0] == float64(100) {
+						return "0000000000573993a3c9e41ce34471c079dcf5f52a0e824a81e7f953b8661a14", nil
+					}
+				}
+				return nil, &rpcError{Code: -32601, Message: "Method not found"}
+			},
+			wantErr: false,
+		},
+		{
+			name:   "RPC error",
+			height: 0,
+			handler: func(method string, params json.RawMessage) (interface{}, *rpcError) {
+				return nil, &rpcError{Code: -5, Message: "Block height out of range"}
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := mockRPCServer(t, tt.handler)
+			defer server.Close()
+
+			client, err := NewDaemonClient(&Config{RPCAddr: server.URL})
+			if err != nil {
+				t.Fatalf("NewDaemonClient() error = %v", err)
+			}
+			defer client.Close()
+
+			ctx := context.Background()
+			hash, err := client.GetBlockHash(ctx, tt.height)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("GetBlockHash() expected error but got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("GetBlockHash() unexpected error = %v", err)
+				}
+				if hash != tt.wantHash {
+					t.Errorf("GetBlockHash() hash = %s, want %s", hash, tt.wantHash)
+				}
+			}
+		})
+	}
+}
+
+func TestDaemonClient_DetectNetwork(t *testing.T) {
+	tests := []struct {
+		name        string
+		genesisHash string
+		wantNetwork string
+		wantErr     bool
+	}{
+		{
+			name:        "mainnet genesis hash",
+			genesisHash: "000000000062b72c5e2ceb45fbc8c80c7b157c0da7e635483dfba2a9f0a9c770",
+			wantNetwork: "mainnet",
+			wantErr:     false,
+		},
+		{
+			name:        "testnet genesis hash",
+			genesisHash: "00000007199508e34a9ff81e6ec0c477a4cccff2a4767a8eee39c11db367b008",
+			wantNetwork: "testnet",
+			wantErr:     false,
+		},
+		{
+			name:        "regtest or unknown genesis hash",
+			genesisHash: "0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206",
+			wantNetwork: "regtest",
+			wantErr:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := func(method string, params json.RawMessage) (interface{}, *rpcError) {
+				if method == "getblockhash" {
+					var p []interface{}
+					json.Unmarshal(params, &p)
+					if len(p) > 0 && p[0] == float64(0) {
+						return tt.genesisHash, nil
+					}
+				}
+				return nil, &rpcError{Code: -32601, Message: "Method not found"}
+			}
+
+			server := mockRPCServer(t, handler)
+			defer server.Close()
+
+			client, err := NewDaemonClient(&Config{RPCAddr: server.URL})
+			if err != nil {
+				t.Fatalf("NewDaemonClient() error = %v", err)
+			}
+			defer client.Close()
+
+			ctx := context.Background()
+			network, err := client.DetectNetwork(ctx)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("DetectNetwork() expected error but got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("DetectNetwork() unexpected error = %v", err)
+				}
+				if network != tt.wantNetwork {
+					t.Errorf("DetectNetwork() network = %s, want %s", network, tt.wantNetwork)
+				}
+			}
+		})
+	}
+}
+

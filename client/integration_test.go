@@ -331,6 +331,14 @@ func TestIntegration_AutoMode_Switching(t *testing.T) {
 			}, nil
 		case "getbestblockhash":
 			return "0000000000000000000000000000000000000000000000000000000000000150", nil
+		case "getblockhash":
+			// Return mainnet genesis hash for network detection
+			var p []interface{}
+			json.Unmarshal(params, &p)
+			if len(p) > 0 && p[0] == float64(0) {
+				return "000000000062b72c5e2ceb45fbc8c80c7b157c0da7e635483dfba2a9f0a9c770", nil
+			}
+			return nil, &rpcError{Code: -8, Message: "Block height out of range"}
 		default:
 			return nil, &rpcError{Code: -32601, Message: "Method not found"}
 		}
@@ -342,6 +350,7 @@ func TestIntegration_AutoMode_Switching(t *testing.T) {
 	cfg := &Config{
 		Mode:    ModeAuto,
 		RPCAddr: server.URL,
+		Network: "mainnet", // Must match daemon's network
 	}
 
 	client, err := NewClient(cfg)
