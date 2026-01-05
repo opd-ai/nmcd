@@ -113,18 +113,22 @@ func TestRateLimiter_Cleanup(t *testing.T) {
 		t.Error("Bucket should exist after request")
 	}
 
-	// Manually mark bucket as stale
+	// Manually mark bucket as stale by setting lastUsed to 11 minutes ago
 	rl.mu.Lock()
-	rl.buckets[ip].lastRefill = time.Now().Add(-11 * time.Minute)
+	rl.buckets[ip].lastUsed = time.Now().Add(-11 * time.Minute)
 	rl.mu.Unlock()
 
-	// Wait for cleanup cycle (5 minutes + buffer)
-	// Since this is too long for tests, we'll just verify the logic exists
-	// by checking that stale buckets would be removed
+	// Manually trigger cleanup
+	rl.triggerCleanup()
 
-	// For testing purposes, let's just verify the cleanup function exists
-	// and the bucket tracking works correctly
-	time.Sleep(100 * time.Millisecond)
+	// Verify bucket was removed
+	rl.mu.RLock()
+	_, exists = rl.buckets[ip]
+	rl.mu.RUnlock()
+
+	if exists {
+		t.Error("Stale bucket should have been cleaned up")
+	}
 }
 
 func TestExtractIP(t *testing.T) {

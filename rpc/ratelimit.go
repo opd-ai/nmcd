@@ -17,8 +17,9 @@ type rateLimiter struct {
 
 // bucket represents a token bucket for a single IP
 type bucket struct {
-	tokens    int
+	tokens     float64
 	lastRefill time.Time
+	lastUsed   time.Time // Track last usage for cleanup
 }
 
 // newRateLimiter creates a new rate limiter with the specified rate (requests per minute)
@@ -47,26 +48,30 @@ func (rl *rateLimiter) allow(ip string) bool {
 	b, exists := rl.buckets[ip]
 	if !exists {
 		b = &bucket{
-			tokens:     rl.rate,
+			tokens:     float64(rl.rate),
 			lastRefill: now,
+			lastUsed:   now,
 		}
 		rl.buckets[ip] = b
 	}
 
 	// Refill tokens based on elapsed time
 	elapsed := now.Sub(b.lastRefill)
-	tokensToAdd := int(elapsed.Minutes() * float64(rl.rate))
+	tokensToAdd := elapsed.Minutes() * float64(rl.rate)
 	if tokensToAdd > 0 {
 		b.tokens += tokensToAdd
-		if b.tokens > rl.rate {
-			b.tokens = rl.rate
+		if b.tokens > float64(rl.rate) {
+			b.tokens = float64(rl.rate)
 		}
-		b.lastRefill = now
 	}
+	
+	// Always update lastRefill when tokens are added or consumed
+	b.lastRefill = now
+	b.lastUsed = now
 
 	// Check if request can be allowed
-	if b.tokens > 0 {
-		b.tokens--
+	if b.tokens >= 1.0 {
+		b.tokens -= 1.0
 		return true
 	}
 
@@ -82,13 +87,27 @@ func (rl *rateLimiter) cleanupLoop() {
 			now := time.Now()
 			for ip, b := range rl.buckets {
 				// Remove buckets that haven't been used in 10 minutes
-				if now.Sub(b.lastRefill) > 10*time.Minute {
+				if now.Sub(b.lastUsed) > 10*time.Minute {
 					delete(rl.buckets, ip)
 				}
 			}
 			rl.mu.Unlock()
 		case <-rl.done:
 			return
+		}
+	}
+}
+
+// triggerCleanup manually triggers the cleanup process (for testing)
+func (rl *rateLimiter) triggerCleanup() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	
+	now := time.Now()
+	for ip, b := range rl.buckets {
+		// Remove buckets that haven't been used in 10 minutes
+		if now.Sub(b.lastUsed) > 10*time.Minute {
+			delete(rl.buckets, ip)
 		}
 	}
 }
