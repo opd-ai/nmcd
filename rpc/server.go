@@ -1236,10 +1236,9 @@ func (s *Server) walletPassphrase(req *Request) *Response {
 	}
 
 	// Schedule auto-lock after timeout
-	go func() {
-		time.Sleep(time.Duration(timeout) * time.Second)
+	time.AfterFunc(time.Duration(timeout)*time.Second, func() {
 		s.wallet.Lock()
-	}()
+	})
 
 	return &Response{
 		Jsonrpc: "2.0",
