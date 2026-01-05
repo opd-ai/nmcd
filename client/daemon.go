@@ -578,55 +578,85 @@ func (c *DaemonClient) GetNameHistory(ctx context.Context, name string) ([]*Name
 	return records, nil
 }
 
+// txInfo holds transaction information from getrawtransaction RPC
+type txInfo struct {
+	TxID          string `json:"txid"`
+	Confirmations int    `json:"confirmations"`
+	BlockHash     string `json:"blockhash,omitempty"`
+	BlockHeight   int32  `json:"blockheight,omitempty"`
+}
+
+// getRawTransaction calls the getrawtransaction RPC method to get transaction info.
+// Returns transaction information including confirmation count, or an error if the
+// transaction is not found or the RPC call fails.
+func (c *DaemonClient) getRawTransaction(ctx context.Context, txHash string) (*txInfo, error) {
+	// Call getrawtransaction with verbose=true (second parameter) to get JSON response with confirmations
+	// When verbose=false, it returns hex-encoded transaction data instead
+	params := []interface{}{txHash, true}
+	result, err := c.rpcCall(ctx, "getrawtransaction", params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get transaction: %w", err)
+	}
+
+	var info txInfo
+	if err := json.Unmarshal(result, &info); err != nil {
+		return nil, fmt.Errorf("failed to parse transaction info: %w", err)
+	}
+
+	return &info, nil
+}
+
 // WaitForConfirmation waits for a transaction to be confirmed in a block.
 //
-// IMPORTANT: This is a simplified implementation that estimates confirmation time
-// based on Namecoin's average block interval (10 minutes). The current nmcd daemon
-// does not expose a gettransaction RPC that returns confirmation count.
+// This method polls the daemon using the getrawtransaction RPC to check actual
+// blockchain confirmations. It polls every second to allow for timely context
+// cancellation and responsive feedback without excessive RPC load.
 //
-// TODO: Implement proper confirmation checking when gettransaction RPC is added.
-// See: https://github.com/opd-ai/nmcd/issues - tracking issue for gettransaction RPC
+// Note: DaemonClient uses a 1-second polling interval (vs EmbeddedClient's 10-second
+// interval) because RPC calls to an external daemon are typically more tolerant of
+// frequent requests than direct blockchain access, and faster polling provides better
+// responsiveness for remote operations.
 //
-// The function polls at 60-second intervals (1/10th of a block interval) to allow
-// for context cancellation, and returns success after waiting for the expected time
-// based on the number of confirmations requested.
+// The function returns when the transaction has reached the requested number of
+// confirmations, or when the context is canceled. If the transaction is not found
+// in the blockchain, it continues polling until the context deadline.
 func (c *DaemonClient) WaitForConfirmation(ctx context.Context, txHash string, confirmations int) error {
 	if confirmations < 1 {
 		return fmt.Errorf("confirmations must be at least 1, got %d", confirmations)
 	}
 
-	// Calculate expected wait time based on confirmations
-	// Namecoin block interval is approximately 10 minutes
-	expectedWait := time.Duration(confirmations) * 10 * time.Minute
-	waitUntil := time.Now().Add(expectedWait)
-
-	// Check immediately if we've already waited long enough (handles quick confirmations)
-	if time.Now().After(waitUntil) {
-		return nil
+	// Check context before proceeding to avoid race condition
+	select {
+	case <-ctx.Done():
+		return ErrContextCanceled
+	default:
 	}
 
-	// Poll every 60 seconds (1/10th of a block interval)
-	// This allows for timely context cancellation while avoiding excessive checks
-	ticker := time.NewTicker(60 * time.Second)
+	// Poll every second for responsive feedback without excessive RPC load
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
-	// Maximum wait time (2x expected wait as safety margin)
-	maxWait := expectedWait * 2
-	deadline := time.Now().Add(maxWait)
+	// Check immediately before starting the polling loop
+	info, err := c.getRawTransaction(ctx, txHash)
+	if err == nil && info.Confirmations >= confirmations {
+		return nil
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ErrContextCanceled
 		case <-ticker.C:
-			// Check if we've exceeded the deadline
-			if time.Now().After(deadline) {
-				return fmt.Errorf("timeout waiting for %d confirmations for tx %s", confirmations, txHash)
+			// Query actual confirmations from the blockchain
+			info, err := c.getRawTransaction(ctx, txHash)
+			if err != nil {
+				// Transaction not found yet - this is normal for newly broadcast transactions
+				// Continue polling until context deadline
+				continue
 			}
 
-			// Check if we've waited long enough for the expected confirmations
-			// This is a time-based estimation since we can't query actual confirmations
-			if time.Now().After(waitUntil) {
+			// Check if we have enough confirmations
+			if info.Confirmations >= confirmations {
 				return nil
 			}
 

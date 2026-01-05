@@ -956,3 +956,277 @@ func TestIsTransientError(t *testing.T) {
 		})
 	}
 }
+
+func TestDaemonClient_WaitForConfirmation(t *testing.T) {
+	tests := []struct {
+		name          string
+		txHash        string
+		confirmations int
+		handler       func(method string, params json.RawMessage) (interface{}, *rpcError)
+		wantErr       bool
+		errType       error
+	}{
+		{
+			name:          "transaction already confirmed",
+			txHash:        "abc123",
+			confirmations: 1,
+			handler: func(method string, params json.RawMessage) (interface{}, *rpcError) {
+				if method == "getrawtransaction" {
+					return map[string]interface{}{
+						"txid":          "abc123",
+						"confirmations": 1,
+						"blockhash":     "block123",
+						"blockheight":   1000,
+					}, nil
+				}
+				return nil, &rpcError{Code: -32601, Message: "Method not found"}
+			},
+			wantErr: false,
+		},
+		{
+			name:          "transaction confirmed after polling",
+			txHash:        "def456",
+			confirmations: 3,
+			handler: func() func(method string, params json.RawMessage) (interface{}, *rpcError) {
+				// Track call count and return increasing confirmations
+				// Call 1: 0 confirmations (not yet confirmed)
+				// Call 2: 1 confirmation (partially confirmed)
+				// Call 3: 3 confirmations (fully confirmed - success!)
+				callCount := 0
+				expectedConfirmations := []int{0, 1, 3}
+				
+				return func(method string, params json.RawMessage) (interface{}, *rpcError) {
+					if method == "getrawtransaction" {
+						confs := 0
+						if callCount < len(expectedConfirmations) {
+							confs = expectedConfirmations[callCount]
+						}
+						callCount++
+						
+						return map[string]interface{}{
+							"txid":          "def456",
+							"confirmations": confs,
+							"blockhash":     "block456",
+							"blockheight":   2000,
+						}, nil
+					}
+					return nil, &rpcError{Code: -32601, Message: "Method not found"}
+				}
+			}(),
+			wantErr: false,
+		},
+		{
+			name:          "transaction not found initially then confirmed",
+			txHash:        "ghi789",
+			confirmations: 1,
+			handler: func() func(method string, params json.RawMessage) (interface{}, *rpcError) {
+				callCount := 0
+				return func(method string, params json.RawMessage) (interface{}, *rpcError) {
+					if method == "getrawtransaction" {
+						callCount++
+						// First two calls: transaction not found
+						if callCount <= 2 {
+							return nil, &rpcError{Code: -5, Message: "Transaction not found"}
+						}
+						// Third call: transaction confirmed
+						return map[string]interface{}{
+							"txid":          "ghi789",
+							"confirmations": 1,
+							"blockhash":     "block789",
+							"blockheight":   3000,
+						}, nil
+					}
+					return nil, &rpcError{Code: -32601, Message: "Method not found"}
+				}
+			}(),
+			wantErr: false,
+		},
+		{
+			name:          "invalid confirmations count",
+			txHash:        "jkl012",
+			confirmations: 0,
+			handler:       nil, // Won't be called
+			wantErr:       true,
+		},
+		{
+			name:          "negative confirmations count",
+			txHash:        "mno345",
+			confirmations: -1,
+			handler:       nil, // Won't be called
+			wantErr:       true,
+		},
+		{
+			name:          "context canceled before confirmation",
+			txHash:        "pqr678",
+			confirmations: 1,
+			handler: func(method string, params json.RawMessage) (interface{}, *rpcError) {
+				if method == "getrawtransaction" {
+					// Return 0 confirmations - will never reach 1
+					return map[string]interface{}{
+						"txid":          "pqr678",
+						"confirmations": 0,
+						"blockhash":     "blockpqr",
+						"blockheight":   4000,
+					}, nil
+				}
+				return nil, &rpcError{Code: -32601, Message: "Method not found"}
+			},
+			wantErr: true,
+			errType: ErrContextCanceled,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// For tests with handler, create mock server
+			var client *DaemonClient
+			if tt.handler != nil {
+				server := mockRPCServer(t, tt.handler)
+				defer server.Close()
+
+				var err error
+				client, err = NewDaemonClient(&Config{RPCAddr: server.URL})
+				if err != nil {
+					t.Fatalf("NewDaemonClient() error = %v", err)
+				}
+				defer client.Close()
+			} else {
+				// For validation tests (invalid confirmations), create client with dummy server
+				server := mockRPCServer(t, func(method string, params json.RawMessage) (interface{}, *rpcError) {
+					return nil, &rpcError{Code: -1, Message: "Unexpected call"}
+				})
+				defer server.Close()
+
+				var err error
+				client, err = NewDaemonClient(&Config{RPCAddr: server.URL})
+				if err != nil {
+					t.Fatalf("NewDaemonClient() error = %v", err)
+				}
+				defer client.Close()
+			}
+
+			ctx := context.Background()
+			var cancel context.CancelFunc
+
+			// For context cancellation test, use a timeout long enough to enter the polling loop
+			if tt.errType == ErrContextCanceled {
+				ctx, cancel = context.WithTimeout(ctx, 2*time.Second)
+				defer cancel()
+			} else if tt.name == "transaction confirmed after polling" {
+				// Add timeout to ensure test completes promptly if polling logic is broken
+				ctx, cancel = context.WithTimeout(ctx, 5*time.Second)
+				defer cancel()
+			}
+
+			err := client.WaitForConfirmation(ctx, tt.txHash, tt.confirmations)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("WaitForConfirmation() expected error but got nil")
+				}
+				if tt.errType != nil && !errors.Is(err, tt.errType) {
+					t.Errorf("WaitForConfirmation() error = %v, want error type %v", err, tt.errType)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("WaitForConfirmation() unexpected error = %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestDaemonClient_getRawTransaction(t *testing.T) {
+	tests := []struct {
+		name              string
+		txHash            string
+		handler           func(method string, params json.RawMessage) (interface{}, *rpcError)
+		wantErr           bool
+		wantConfirmations int
+		wantBlockHeight   int32
+	}{
+		{
+			name:   "transaction found",
+			txHash: "abc123",
+			handler: func(method string, params json.RawMessage) (interface{}, *rpcError) {
+				if method == "getrawtransaction" {
+					return map[string]interface{}{
+						"txid":          "abc123",
+						"confirmations": 5,
+						"blockhash":     "block123",
+						"blockheight":   1000,
+					}, nil
+				}
+				return nil, &rpcError{Code: -32601, Message: "Method not found"}
+			},
+			wantErr:           false,
+			wantConfirmations: 5,
+			wantBlockHeight:   1000,
+		},
+		{
+			name:   "transaction not found",
+			txHash: "notfound",
+			handler: func(method string, params json.RawMessage) (interface{}, *rpcError) {
+				if method == "getrawtransaction" {
+					return nil, &rpcError{Code: -5, Message: "Transaction not found"}
+				}
+				return nil, &rpcError{Code: -32601, Message: "Method not found"}
+			},
+			wantErr: true,
+		},
+		{
+			name:   "unconfirmed transaction",
+			txHash: "unconfirmed",
+			handler: func(method string, params json.RawMessage) (interface{}, *rpcError) {
+				if method == "getrawtransaction" {
+					return map[string]interface{}{
+						"txid":          "unconfirmed",
+						"confirmations": 0,
+					}, nil
+				}
+				return nil, &rpcError{Code: -32601, Message: "Method not found"}
+			},
+			wantErr:           false,
+			wantConfirmations: 0,
+			wantBlockHeight:   0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := mockRPCServer(t, tt.handler)
+			defer server.Close()
+
+			client, err := NewDaemonClient(&Config{RPCAddr: server.URL})
+			if err != nil {
+				t.Fatalf("NewDaemonClient() error = %v", err)
+			}
+			defer client.Close()
+
+			ctx := context.Background()
+			info, err := client.getRawTransaction(ctx, tt.txHash)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("getRawTransaction() expected error but got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("getRawTransaction() unexpected error = %v", err)
+				}
+				if info == nil {
+					t.Fatal("getRawTransaction() returned nil info")
+				}
+				if info.Confirmations != tt.wantConfirmations {
+					t.Errorf("getRawTransaction() confirmations = %d, want %d", info.Confirmations, tt.wantConfirmations)
+				}
+				if info.BlockHeight != tt.wantBlockHeight {
+					t.Errorf("getRawTransaction() blockheight = %d, want %d", info.BlockHeight, tt.wantBlockHeight)
+				}
+				if info.TxID != tt.txHash {
+					t.Errorf("getRawTransaction() txid = %s, want %s", info.TxID, tt.txHash)
+				}
+			}
+		})
+	}
+}
