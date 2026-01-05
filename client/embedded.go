@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/opd-ai/nmcd/chain"
 	"github.com/opd-ai/nmcd/config"
 	"github.com/opd-ai/nmcd/namedb"
@@ -393,10 +396,15 @@ func (c *EmbeddedClient) RegisterName(ctx context.Context, name, value string, o
 		return nil, fmt.Errorf("failed to create NAME_NEW transaction: %w", err)
 	}
 
-	// TODO: Broadcast NAME_NEW transaction to network
-	// For now, we return a pending result
-	// Network integration will be added in a future phase
+	// Broadcast NAME_NEW transaction to network
 	nameNewTxHash := nameNewTx.TxHash()
+	if c.peerMgr != nil {
+		if err := c.peerMgr.BroadcastTx(nameNewTx); err != nil {
+			// Log warning but don't fail - transaction is still valid locally
+			// In offline mode or with no peers, transaction can be broadcast later
+			log.Printf("Warning: failed to broadcast NAME_NEW transaction: %v", err)
+		}
+	}
 
 	// TODO: Store pending registration for NAME_FIRSTUPDATE completion in Phase 3
 	// The following data should be persisted to enable NAME_FIRSTUPDATE after 12 blocks:
@@ -423,14 +431,24 @@ func (c *EmbeddedClient) RegisterName(ctx context.Context, name, value string, o
 		return result, nil
 	}
 
-	// TODO: Wait for NAME_NEW confirmation and create NAME_FIRSTUPDATE
-	// This requires:
-	// 1. Transaction broadcasting to network
-	// 2. Waiting for 12 block confirmations
-	// 3. Creating and broadcasting NAME_FIRSTUPDATE transaction
-	//
-	// For now, return an error indicating this functionality requires network integration
-	return nil, fmt.Errorf("WaitForConfirmation requires network integration (coming in future phase)")
+	// Wait for NAME_NEW confirmation
+	// Use default confirmations if not specified
+	confirmations := opts.Confirmations
+	if confirmations == 0 {
+		confirmations = 1
+	}
+
+	if err := c.WaitForConfirmation(ctx, nameNewTxHash.String(), confirmations); err != nil {
+		return nil, fmt.Errorf("failed to wait for NAME_NEW confirmation: %w", err)
+	}
+
+	// Update result with confirmation status
+	result.Status = TxStatusConfirmed
+	result.Confirmations = confirmations
+	// TODO: Once NAME_FIRSTUPDATE is implemented, create and broadcast it here
+	// For now, we just wait for NAME_NEW confirmation
+
+	return result, nil
 }
 
 // UpdateName updates the value of an existing name using a NAME_UPDATE operation.
@@ -586,10 +604,15 @@ func (c *EmbeddedClient) UpdateName(ctx context.Context, name, value string, opt
 		return nil, fmt.Errorf("failed to create NAME_UPDATE transaction: %w", err)
 	}
 
-	// TODO: Broadcast NAME_UPDATE transaction to network
-	// For now, we return a pending result
-	// Network integration will be added in a future phase
+	// Broadcast NAME_UPDATE transaction to network
 	updateTxHash := updateTx.TxHash()
+	if c.peerMgr != nil {
+		if err := c.peerMgr.BroadcastTx(updateTx); err != nil {
+			// Log warning but don't fail - transaction is still valid locally
+			// In offline mode or with no peers, transaction can be broadcast later
+			log.Printf("Warning: failed to broadcast NAME_UPDATE transaction: %v", err)
+		}
+	}
 
 	result := &TxResult{
 		TxHash:        updateTxHash.String(),
@@ -605,14 +628,22 @@ func (c *EmbeddedClient) UpdateName(ctx context.Context, name, value string, opt
 		return result, nil
 	}
 
-	// TODO: Wait for NAME_UPDATE confirmation
-	// This requires:
-	// 1. Transaction broadcasting to network
-	// 2. Waiting for block confirmations
-	// 3. Updating name record in database
-	//
-	// For now, return an error indicating this functionality requires network integration
-	return nil, fmt.Errorf("WaitForConfirmation requires network integration (coming in future phase)")
+	// Wait for NAME_UPDATE confirmation
+	// Use default confirmations if not specified
+	confirmations := opts.Confirmations
+	if confirmations == 0 {
+		confirmations = 1
+	}
+
+	if err := c.WaitForConfirmation(ctx, updateTxHash.String(), confirmations); err != nil {
+		return nil, fmt.Errorf("failed to wait for NAME_UPDATE confirmation: %w", err)
+	}
+
+	// Update result with confirmation status
+	result.Status = TxStatusConfirmed
+	result.Confirmations = confirmations
+
+	return result, nil
 }
 
 // ListNames returns all registered names, optionally filtered.
@@ -838,10 +869,10 @@ func (c *EmbeddedClient) GetNameHistory(ctx context.Context, name string) ([]*Na
 // Returns:
 //   - error: ErrContextCanceled if context is canceled, or other errors
 //
-// Note: This is a placeholder implementation. Full implementation requires:
-// - Transaction mempool tracking
-// - Block notification system
-// - Reorganization handling
+// Implementation notes:
+// - Uses polling approach to check for transaction in blockchain
+// - Poll interval: 10 seconds (average block time is 600 seconds)
+// - Does not handle reorganizations (assumes forward-only blockchain)
 func (c *EmbeddedClient) WaitForConfirmation(ctx context.Context, txHash string, confirmations int) error {
 	// Check context
 	select {
@@ -863,15 +894,84 @@ func (c *EmbeddedClient) WaitForConfirmation(ctx context.Context, txHash string,
 		return fmt.Errorf("confirmations must be at least 1, got %d", confirmations)
 	}
 
-	// TODO: Implement actual confirmation waiting logic
-	// This requires:
-	// 1. Blockchain notification system for new blocks
-	// 2. Transaction lookup in blocks
-	// 3. Confirmation counting
-	// 4. Reorganization detection and handling
-	//
-	// For now, return an error indicating this functionality requires blockchain integration
-	return fmt.Errorf("WaitForConfirmation requires blockchain notification system (coming in future phase)")
+	// Parse transaction hash
+	txHashBytes, err := chainhash.NewHashFromStr(txHash)
+	if err != nil {
+		return fmt.Errorf("invalid transaction hash: %w", err)
+	}
+
+	// Check transaction status immediately before entering polling loop
+	// This provides faster response for already-confirmed transactions
+	txHeight, currentHeight, err := c.getTransactionConfirmationStatus(txHashBytes)
+	if err == nil {
+		// Transaction found, check if it has enough confirmations
+		txConfirmations := currentHeight - txHeight + 1
+		if txConfirmations >= int32(confirmations) {
+			return nil
+		}
+	}
+
+	// Poll for transaction confirmation
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ErrContextCanceled
+		case <-ticker.C:
+			// Check if transaction is confirmed
+			txHeight, currentHeight, err := c.getTransactionConfirmationStatus(txHashBytes)
+			if err != nil {
+				// Transaction not found yet, continue waiting
+				continue
+			}
+
+			// Calculate confirmations (current height - tx height + 1)
+			txConfirmations := currentHeight - txHeight + 1
+			if txConfirmations >= int32(confirmations) {
+				return nil
+			}
+		}
+	}
+}
+
+// getTransactionConfirmationStatus checks if a transaction is confirmed and returns its height.
+// Returns (txHeight, currentHeight, error).
+// Returns error if transaction is not found in blockchain.
+func (c *EmbeddedClient) getTransactionConfirmationStatus(txHash *chainhash.Hash) (int32, int32, error) {
+	// Get current best height
+	bestSnapshot := c.chain.BestSnapshot()
+	currentHeight := bestSnapshot.Height
+
+	// Search through recent blocks for the transaction
+	// We search backwards from current height for efficiency
+	// In production, this would use a transaction index
+	// For now, we check the last 100 blocks (should cover most cases)
+	// Performance note: This creates O(blocks * transactions_per_block) complexity.
+	// For blocks with many transactions, this linear search may be slow.
+	// Consider reducing maxBlocksToSearch if performance becomes an issue.
+	maxBlocksToSearch := int32(100)
+	startHeight := currentHeight - maxBlocksToSearch
+	if startHeight < 0 {
+		startHeight = 0
+	}
+
+	for height := currentHeight; height >= startHeight; height-- {
+		block, err := c.chain.BlockByHeight(height)
+		if err != nil {
+			continue
+		}
+
+		// Check if transaction is in this block
+		for _, tx := range block.Transactions() {
+			if tx.Hash().IsEqual(txHash) {
+				return height, currentHeight, nil
+			}
+		}
+	}
+
+	return 0, 0, fmt.Errorf("transaction not found in recent blocks")
 }
 
 // GetInfo returns general information about the node/network state.
