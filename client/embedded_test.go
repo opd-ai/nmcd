@@ -1075,14 +1075,14 @@ func TestEmbeddedClient_RegisterName(t *testing.T) {
 			errContains: "insufficient funds",
 		},
 		{
-			name:        "wait for confirmation requires network",
+			name:        "wait for confirmation times out without blocks",
 			regName:     "d/test",
 			value:       "value",
-			opts:        &RegisterOpts{WaitForConfirmation: true},
+			opts:        &RegisterOpts{WaitForConfirmation: true, Confirmations: 1},
 			setupWallet: true,
 			setupUTXOs:  true,
 			wantErr:     true,
-			errContains: "requires network integration",
+			errContains: "context",
 		},
 	}
 
@@ -1141,6 +1141,13 @@ func TestEmbeddedClient_RegisterName(t *testing.T) {
 			}
 
 			ctx := context.Background()
+			
+			// For WaitForConfirmation test, use a context with short timeout
+			if strings.Contains(tt.name, "wait for confirmation") {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+			}
 
 			// Call RegisterName
 			result, err := client.RegisterName(ctx, tt.regName, tt.value, tt.opts)
@@ -1218,10 +1225,15 @@ func TestEmbeddedClient_WaitForConfirmation(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Test with valid parameters (should return not implemented for now)
-	err = client.WaitForConfirmation(ctx, "abc123", 1)
+	// Test with valid parameters but short timeout (transaction not found)
+	ctx1, cancel1 := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel1()
+	err = client.WaitForConfirmation(ctx1, "0000000000000000000000000000000000000000000000000000000000000001", 1)
 	if err == nil {
-		t.Error("expected error for not implemented functionality")
+		t.Error("expected error for transaction not found or timeout")
+	}
+	if !strings.Contains(err.Error(), "context deadline exceeded") && !strings.Contains(err.Error(), "context canceled") {
+		t.Errorf("expected timeout/canceled error, got %v", err)
 	}
 
 	// Test with invalid confirmations
@@ -1229,11 +1241,23 @@ func TestEmbeddedClient_WaitForConfirmation(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for invalid confirmations")
 	}
+	if !strings.Contains(err.Error(), "confirmations must be at least 1") {
+		t.Errorf("expected confirmations error, got %v", err)
+	}
+
+	// Test with invalid transaction hash
+	err = client.WaitForConfirmation(ctx, "invalid", 1)
+	if err == nil {
+		t.Error("expected error for invalid transaction hash")
+	}
+	if !strings.Contains(err.Error(), "invalid transaction hash") {
+		t.Errorf("expected invalid hash error, got %v", err)
+	}
 
 	// Test with canceled context
 	ctx2, cancel := context.WithCancel(context.Background())
 	cancel()
-	err = client.WaitForConfirmation(ctx2, "abc123", 1)
+	err = client.WaitForConfirmation(ctx2, "0000000000000000000000000000000000000000000000000000000000000001", 1)
 	if err != ErrContextCanceled {
 		t.Errorf("expected ErrContextCanceled, got %v", err)
 	}
@@ -1357,15 +1381,15 @@ func TestEmbeddedClient_UpdateName(t *testing.T) {
 			errContains: "insufficient funds",
 		},
 		{
-			name:        "wait for confirmation requires network",
+			name:        "wait for confirmation times out without blocks",
 			updateName:  "d/test",
 			value:       "value",
-			opts:        &UpdateOpts{WaitForConfirmation: true},
+			opts:        &UpdateOpts{WaitForConfirmation: true, Confirmations: 1},
 			setupWallet: true,
 			setupUTXOs:  true,
 			setupName:   true,
 			wantErr:     true,
-			errContains: "requires network integration",
+			errContains: "context",
 		},
 		{
 			name:        "transfer to new address requires network",
@@ -1486,6 +1510,13 @@ func TestEmbeddedClient_UpdateName(t *testing.T) {
 			}
 
 			ctx := context.Background()
+			
+			// For WaitForConfirmation test, use a context with short timeout
+			if strings.Contains(tt.name, "wait for confirmation") {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+			}
 
 			// Call UpdateName
 			result, err := client.UpdateName(ctx, tt.updateName, tt.value, tt.opts)
