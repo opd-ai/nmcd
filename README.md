@@ -432,6 +432,59 @@ curl -X POST http://127.0.0.1:8336 \
   
   Returns an array of address strings currently stored in the wallet.
 
+#### Wallet Encryption
+
+**Security Warning:** By default, nmcd wallets store private keys **unencrypted** in `wallet.json` with file permissions `0600`. For production use, always encrypt your wallet.
+
+- `encryptwallet` - Encrypt the wallet with a password (one-time operation)
+  ```bash
+  curl -X POST http://127.0.0.1:8336 \
+    -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"encryptwallet","params":["YourSecurePassword123"],"id":1}'
+  ```
+  
+  **Parameters:** `["password"]`
+  - Password must be at least 8 characters with 2+ character types (lowercase, uppercase, digits, special)
+  - Encrypts all private keys using AES-256-GCM with scrypt key derivation (N=32768)
+  - Wallet remains unlocked immediately after encryption
+  - **This cannot be undone** - backup your wallet before encrypting
+  
+  **Returns:** Success message with backup reminder
+
+- `walletpassphrase` - Unlock the encrypted wallet temporarily
+  ```bash
+  curl -X POST http://127.0.0.1:8336 \
+    -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"walletpassphrase","params":["YourSecurePassword123",300],"id":1}'
+  ```
+  
+  **Parameters:** `["password", timeout]` or `["password"]`
+  - `password` - Your wallet password
+  - `timeout` - Seconds to keep wallet unlocked (default: 60)
+  
+  Unlocks the wallet for the specified duration. The wallet will automatically lock after the timeout expires. While unlocked, you can:
+  - Generate new addresses
+  - Send transactions
+  - Register/update names
+  
+  **Security:** Keys are loaded into memory while unlocked and cleared on lock.
+
+- `walletlock` - Lock the wallet immediately
+  ```bash
+  curl -X POST http://127.0.0.1:8336 \
+    -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"walletlock","params":[],"id":1}'
+  ```
+  
+  Locks an encrypted wallet, removing all private keys from memory. The wallet must be unlocked again with `walletpassphrase` before performing operations that require private keys.
+  
+  **Security Best Practices:**
+  - Use `walletlock` immediately after completing sensitive operations
+  - Set short timeouts (1-5 minutes) when using `walletpassphrase`
+  - Never store passwords in scripts or command history
+  - Use strong passwords (12+ characters recommended)
+  - Backup encrypted wallet file regularly
+
 ### Prometheus Metrics Endpoint
 
 nmcd can optionally expose metrics in Prometheus format for monitoring and observability. The metrics are served on a separate HTTP endpoint from the RPC server.
