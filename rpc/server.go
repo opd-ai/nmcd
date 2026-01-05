@@ -59,7 +59,7 @@ type Config struct {
 	ListenAddr     string
 	RPCUser        string
 	RPCPassword    string
-	RateLimit      int   // Requests per minute per IP (0 = unlimited, default: 100)
+	RateLimit      int   // Requests per minute per IP (0 = use default (100))
 	MaxRequestSize int64 // Maximum request body size in bytes (0 = 1MB default)
 }
 
