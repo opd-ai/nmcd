@@ -803,7 +803,43 @@ See `examples/smtp_relay/` for a complete production-ready SMTP relay deployment
 
 ## Security
 
-- **RPC Authentication**: Use `-rpcuser` and `-rpcpassword` to require HTTP Basic Authentication for all RPC requests
+### RPC Security Features
+
+**Authentication:**
+- Use `-rpcuser` and `-rpcpassword` to require HTTP Basic Authentication for all RPC requests
+- Constant-time comparison prevents timing attacks on credentials
+
+**Rate Limiting:**
+- Per-IP rate limiting protects against DoS attacks (default: 100 requests/minute)
+- Configurable via `Config.RateLimit` when using as a library
+- Automatic cleanup of stale IP tracking entries
+
+**Request Size Limits:**
+- Maximum request body size enforced (default: 1MB)
+- Configurable via `Config.MaxRequestSize` when using as a library
+- Early rejection prevents memory exhaustion attacks
+
+**Security Headers:**
+- `X-Content-Type-Options: nosniff` - Prevents MIME type sniffing
+- `X-Frame-Options: DENY` - Prevents clickjacking attacks
+- `Content-Security-Policy: default-src 'none'` - Restricts resource loading
+
+**Example RPC Server Configuration:**
+```go
+server, err := rpc.NewServer(&rpc.Config{
+    Blockchain:     blockchain,
+    PeerMgr:        peerMgr,
+    Wallet:         wallet,
+    ListenAddr:     "127.0.0.1:8336",
+    RPCUser:        "myuser",
+    RPCPassword:    "mypassword",
+    RateLimit:      100,        // requests per minute (0 = use default)
+    MaxRequestSize: 1024 * 1024, // 1MB (0 = use default)
+})
+```
+
+### Name Operation Security
+
 - All name operations are validated before blockchain processing
 - Names must be unique and unexpired
 - Value size limits enforced (1023 bytes)

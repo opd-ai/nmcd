@@ -15,8 +15,10 @@ import (
 // The blockchain and peerMgr are nil since we only test auth logic.
 func testServer(user, pass string) *Server {
 	return &Server{
-		rpcUser:     user,
-		rpcPassword: pass,
+		rpcUser:        user,
+		rpcPassword:    pass,
+		rateLimiter:    newRateLimiter(defaultRateLimit),
+		maxRequestSize: defaultMaxRequestSize,
 	}
 }
 
