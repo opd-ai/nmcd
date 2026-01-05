@@ -303,6 +303,157 @@ func TestEmbeddedClient_ResolveExpiredName(t *testing.T) {
 	}
 }
 
+func TestEmbeddedClient_ExpiresInZero(t *testing.T) {
+	// This test addresses Gap #1 from AUDIT.md:
+	// Verifies that names with ExpiresIn=0 (expires at current block)
+	// are treated as still valid, matching daemon mode behavior.
+
+	tmpDir := t.TempDir()
+
+	cfg := &Config{
+		DataDir: tmpDir,
+		Network: "regtest",
+	}
+	client, err := NewEmbeddedClient(cfg)
+	if err != nil {
+		t.Fatalf("NewEmbeddedClient() error: %v", err)
+	}
+	defer client.Close()
+
+	// Get current blockchain height
+	bestHeight := client.chain.BestSnapshot().Height
+
+	// Test cases for different expiration scenarios
+	tests := []struct {
+		name          string
+		nameToInsert  string
+		expiresAt     int32
+		shouldBeValid bool
+		description   string
+	}{
+		{
+			name:          "ExpiresIn=0 (expires at current block)",
+			nameToInsert:  "d/expires-at-current",
+			expiresAt:     bestHeight,
+			shouldBeValid: true,
+			description:   "Name that expires at current block should still be valid",
+		},
+		{
+			name:          "ExpiresIn=1 (expires one block in future)",
+			nameToInsert:  "d/expires-future",
+			expiresAt:     bestHeight + 1,
+			shouldBeValid: true,
+			description:   "Name that expires in future should be valid",
+		},
+		{
+			name:          "ExpiresIn=-1 (expired one block ago)",
+			nameToInsert:  "d/expires-past",
+			expiresAt:     bestHeight - 1,
+			shouldBeValid: false,
+			description:   "Name that expired in the past should be invalid",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Insert name with specific expiration
+			testValue := `{"ip":"1.2.3.4"}`
+			testAddr := "NTest1234567890abcdefghijklmno"
+			txHash, _ := chainhash.NewHashFromStr("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef")
+
+			nameRecord := &namedb.NameRecord{
+				Value:     testValue,
+				TxHash:    *txHash,
+				Height:    tt.expiresAt - 36000, // Registered 36000 blocks before expiration
+				ExpiresAt: tt.expiresAt,
+				Address:   testAddr,
+				UpdatedAt: time.Now(),
+			}
+
+			if err := client.nameDB.PutName(tt.nameToInsert, nameRecord); err != nil {
+				t.Fatalf("PutName() error: %v", err)
+			}
+
+			// Try to resolve the name
+			ctx := context.Background()
+			record, err := client.ResolveName(ctx, tt.nameToInsert)
+
+			if tt.shouldBeValid {
+				if err != nil {
+					t.Errorf("%s: ResolveName() error = %v, want nil (name should be valid)", tt.description, err)
+				}
+				if record == nil {
+					t.Errorf("%s: ResolveName() returned nil record, want valid record", tt.description)
+				} else {
+					// Verify ExpiresIn calculation
+					expectedExpiresIn := tt.expiresAt - bestHeight
+					if record.ExpiresIn != expectedExpiresIn {
+						t.Errorf("%s: ExpiresIn = %d, want %d", tt.description, record.ExpiresIn, expectedExpiresIn)
+					}
+				}
+			} else {
+				if err != ErrNameExpired {
+					t.Errorf("%s: ResolveName() error = %v, want %v", tt.description, err, ErrNameExpired)
+				}
+			}
+		})
+	}
+
+	// Also test ListNames with ExpiresIn=0
+	t.Run("ListNames with ExpiresIn=0", func(t *testing.T) {
+		filter := &ListFilter{
+			IncludeExpired: false,
+		}
+		ctx := context.Background()
+		names, err := client.ListNames(ctx, filter)
+		if err != nil {
+			t.Fatalf("ListNames() error: %v", err)
+		}
+
+		// Should include the name with ExpiresIn=0
+		foundExpiresAtCurrent := false
+		for _, name := range names {
+			if name.Name == "d/expires-at-current" {
+				foundExpiresAtCurrent = true
+				if name.ExpiresIn != 0 {
+					t.Errorf("ListNames: ExpiresIn = %d, want 0 for name that expires at current block", name.ExpiresIn)
+				}
+			}
+			// Should not include expired names (ExpiresIn < 0)
+			if name.ExpiresIn < 0 {
+				t.Errorf("ListNames with IncludeExpired=false returned expired name: %s (ExpiresIn=%d)", name.Name, name.ExpiresIn)
+			}
+		}
+
+		if !foundExpiresAtCurrent {
+			t.Errorf("ListNames did not return name with ExpiresIn=0, but it should be included")
+		}
+	})
+
+	// Test UpdateName with ExpiresIn=0
+	t.Run("UpdateName with ExpiresIn=0", func(t *testing.T) {
+		// Note: This test will fail with "wallet does not have key" error
+		// because we don't have a way to add keys to the wallet in the test setup.
+		// However, the expiration check happens before the wallet check,
+		// so if the name is treated as expired, we'll get ErrNameExpired instead.
+		ctx := context.Background()
+		opts := &UpdateOpts{
+			WaitForConfirmation: false,
+		}
+		_, err := client.UpdateName(ctx, "d/expires-at-current", `{"ip":"2.3.4.5"}`, opts)
+
+		// We expect a wallet error, not an expiration error
+		if err == nil {
+			t.Errorf("UpdateName() should have failed (no wallet key), but got success")
+		} else if errors.Is(err, ErrNameExpired) {
+			t.Errorf("UpdateName() error = %v, should NOT be ErrNameExpired for ExpiresIn=0", err)
+		} else if !strings.Contains(err.Error(), "wallet does not have key") {
+			// This is fine - it means expiration check passed
+			t.Logf("UpdateName() error (expected, expiration check passed): %v", err)
+		}
+	})
+}
+
 func TestEmbeddedClient_GetInfo(t *testing.T) {
 	// Create temporary directory for test
 	tmpDir := t.TempDir()

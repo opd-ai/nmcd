@@ -54,11 +54,11 @@ func TestParseBackupAddresses(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := parseBackupAddresses(tt.input)
-			
+
 			if len(got) != tt.wantCount {
 				t.Errorf("parseBackupAddresses() returned %d addresses, want %d", len(got), tt.wantCount)
 			}
-			
+
 			if tt.want != nil {
 				if len(got) != len(tt.want) {
 					t.Errorf("parseBackupAddresses() = %v, want %v", got, tt.want)
@@ -91,15 +91,15 @@ func TestCLICommands(t *testing.T) {
 	}
 
 	validCommands := map[string]bool{
-		"register": true,
-		"update":   true,
-		"lookup":   true,
-		"serve":    true,
-		"help":     true,
-		"-h":       true,
-		"--help":   true,
-		"version":  true,
-		"-v":       true,
+		"register":  true,
+		"update":    true,
+		"lookup":    true,
+		"serve":     true,
+		"help":      true,
+		"-h":        true,
+		"--help":    true,
+		"version":   true,
+		"-v":        true,
 		"--version": true,
 	}
 
