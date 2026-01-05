@@ -737,13 +737,14 @@ func (c *EmbeddedClient) ListNames(ctx context.Context, filter *ListFilter) ([]*
 			}
 		}
 
-		// Filter by name pattern (simple prefix matching for now)
-		// More advanced pattern matching (glob) can be added later
+		// Filter by name pattern (string prefix matching)
+		// Matches if record.Name starts with filter.NamePattern (character-by-character)
+		// More advanced pattern matching (glob, regex) can be added later if needed
 		if filter.NamePattern != "" {
 			if len(record.Name) < len(filter.NamePattern) {
-				continue
+				continue // Name is shorter than pattern, cannot match
 			}
-			// Simple prefix matching
+			// String prefix matching: check if name starts with pattern
 			if record.Name[:len(filter.NamePattern)] != filter.NamePattern {
 				continue
 			}
