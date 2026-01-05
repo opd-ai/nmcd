@@ -3,8 +3,8 @@
 package wallet
 
 import (
-	"bytes"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -364,8 +364,9 @@ func (w *Wallet) Unlock(password string) error {
 		return fmt.Errorf("wallet is already unlocked")
 	}
 
-	// Verify password
-	if !bytes.Equal(hashPassword(password), w.passwordHash) {
+	// Verify password using constant-time comparison to prevent timing attacks
+	passwordHash := hashPassword(password)
+	if len(passwordHash) != len(w.passwordHash) || subtle.ConstantTimeCompare(passwordHash, w.passwordHash) != 1 {
 		return fmt.Errorf("incorrect password")
 	}
 

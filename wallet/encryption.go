@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"strings"
 
 	"golang.org/x/crypto/scrypt"
 )
@@ -193,10 +194,26 @@ func validatePassword(password string) error {
 }
 
 // hashPassword creates a non-reversible hash of a password for verification.
-// This is used to check if the user provided the correct password without storing it.
+// Uses scrypt with a fixed salt to prevent rainbow table attacks while allowing
+// verification without storing the salt separately. The hash is used only for
+// password verification, not for encryption (encryption uses its own random salt).
 func hashPassword(password string) []byte {
-	hash := sha256.Sum256([]byte(password))
-	return hash[:]
+	// Use a fixed salt for password verification
+	// This is safe because:
+	// 1. We're not encrypting with this hash (encryption uses random salt)
+	// 2. We're only verifying the password matches
+	// 3. Scrypt with any salt is better than SHA-256 alone
+	salt := []byte("nmcd-wallet-password-verification")
+	
+	// Use lighter scrypt parameters for verification (faster unlock)
+	// N=16384 is still strong enough to resist brute-force
+	hash, err := scrypt.Key([]byte(password), salt, 16384, 8, 1, 32)
+	if err != nil {
+		// Fallback to SHA-256 if scrypt fails (should never happen)
+		h := sha256.Sum256([]byte(password))
+		return h[:]
+	}
+	return hash
 }
 
 // encodeEncryptedData encodes encrypted data to base64 for storage.
@@ -211,15 +228,7 @@ func encodeEncryptedData(data *encryptedData) string {
 // decodeEncryptedData decodes base64-encoded encrypted data.
 func decodeEncryptedData(encoded string) (*encryptedData, error) {
 	// Parse format: base64(salt):base64(nonce):base64(ciphertext)
-	parts := make([]string, 0, 3)
-	start := 0
-	for i := 0; i < len(encoded); i++ {
-		if encoded[i] == ':' {
-			parts = append(parts, encoded[start:i])
-			start = i + 1
-		}
-	}
-	parts = append(parts, encoded[start:])
+	parts := strings.Split(encoded, ":")
 
 	if len(parts) != 3 {
 		return nil, fmt.Errorf("invalid encrypted data format")
