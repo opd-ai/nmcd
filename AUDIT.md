@@ -133,10 +133,10 @@ if err := c.WaitForConfirmation(ctx, nameNewTxHash.String(), confirmations); err
 - Behavior remains the same (redundant transfer is allowed but treated as no-op)
 - Users now receive explicit feedback via log when transfer is ignored
 
-**Verification:** Added comprehensive test `TestEmbeddedClient_UpdateName/transfer_to_same_address_succeeds_with_warning` that validates:
-- UpdateName succeeds when TransferTo matches current owner
-- Warning message is logged to inform user
-- Transaction is created successfully
+**Verification:** Added comprehensive tests for same-address transfer behavior:
+- `TestEmbeddedClient_UpdateName/transfer_to_same_address_succeeds` - Validates UpdateName succeeds without error when TransferTo matches current owner
+- `TestEmbeddedClient_UpdateName_SameAddressTransferWarning` - Captures and verifies warning log message is output when same-address transfer is attempted
+- Transaction is created successfully in both cases
 - All existing tests continue to pass
 
 **Files Modified:**
@@ -679,7 +679,7 @@ if c.peerMgr != nil {
 - ✅ **COMPLETED:** Test for Auto mode network mismatch scenarios (TestNewClient_AutoMode_NetworkMismatch, TestNewClient_AutoMode_NetworkMatch)
 - ✅ **COMPLETED:** Test for DaemonClient GetBlockHash method (TestDaemonClient_GetBlockHash)
 - ✅ **COMPLETED:** Test for DaemonClient DetectNetwork method (TestDaemonClient_DetectNetwork)
-- ✅ **COMPLETED:** Test for same-address transfer warning in UpdateName (TestEmbeddedClient_UpdateName/transfer_to_same_address_succeeds_with_warning)
+- ✅ **COMPLETED:** Test for same-address transfer behavior in UpdateName (TestEmbeddedClient_UpdateName/transfer_to_same_address_succeeds, TestEmbeddedClient_UpdateName_SameAddressTransferWarning)
 
 ### Integration Tests Needed
 - ✅ **COMPLETED:** End-to-end name registration/update with WaitForConfirmation (TestEmbeddedClient tests)
