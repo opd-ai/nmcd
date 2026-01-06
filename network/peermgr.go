@@ -2,7 +2,6 @@ package network
 
 import (
 	"fmt"
-	"log"
 	"net"
 	"sync"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/opd-ai/nmcd/chain"
 	"github.com/opd-ai/nmcd/config"
+	"github.com/opd-ai/nmcd/internal/logging"
 	"github.com/opd-ai/nmcd/metrics"
 )
 
@@ -27,6 +27,7 @@ type PeerManager struct {
 	syncManager *SyncManager
 	chainParams *chaincfg.Params
 	maxPeers    int
+	logger      *logging.Logger
 	mu          sync.RWMutex
 	quit        chan struct{}
 	wg          sync.WaitGroup
@@ -42,6 +43,9 @@ type Config struct {
 
 // NewPeerManager creates a new peer manager
 func NewPeerManager(cfg *Config) (*PeerManager, error) {
+	// Get logger
+	logger := logging.GetDefault().WithComponent("network")
+
 	// Create mempool with validation
 	mempoolCfg := &MempoolConfig{
 		Validator:   cfg.Blockchain, // BlockChain implements TxValidator
@@ -56,6 +60,7 @@ func NewPeerManager(cfg *Config) (*PeerManager, error) {
 		mempool:     NewMempoolWithConfig(mempoolCfg),
 		chainParams: cfg.ChainParams,
 		maxPeers:    cfg.MaxPeers,
+		logger:      logger,
 		quit:        make(chan struct{}),
 	}
 
@@ -118,7 +123,7 @@ func (pm *PeerManager) listenLoop(listener net.Listener) {
 		case err := <-errCh:
 			// Accept error, likely due to listener closure.
 			// The accept goroutine has already stopped, so we should exit too.
-			log.Printf("Accept error: %v", err)
+			pm.logger.Warn("accept error, listener closing", "error", err)
 			return
 		}
 	}
@@ -277,8 +282,8 @@ func (pm *PeerManager) onInv(p *peer.Peer, msg *wire.MsgInv) {
 func (pm *PeerManager) onBlock(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
 	// Check if blockchain is available for processing
 	if pm.blockchain == nil {
-		log.Printf("Cannot process block %s: blockchain not initialized",
-			msg.BlockHash().String())
+		pm.logger.Warn("cannot process block: blockchain not initialized",
+			"block_hash", msg.BlockHash().String())
 		return
 	}
 
@@ -291,8 +296,9 @@ func (pm *PeerManager) onBlock(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
 	// We need to extract and store the AuxPow for later validation.
 	if buf != nil && len(buf) > 0 {
 		if err := pm.blockchain.SetBlockAuxPowFromBytes(blockHash, buf); err != nil {
-			log.Printf("Warning: Failed to parse AuxPow for block %s: %v (continuing anyway)",
-				msg.BlockHash().String(), err)
+			pm.logger.Warn("failed to parse AuxPow data, continuing anyway",
+				"block_hash", msg.BlockHash().String(),
+				"error", err)
 			// Don't return - continue with validation, which will catch AuxPow issues
 		}
 	}
@@ -301,8 +307,10 @@ func (pm *PeerManager) onBlock(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
 	// BFNone means no special behavior flags
 	isMainChain, isOrphan, err := pm.blockchain.ProcessBlock(block, blockchain.BFNone)
 	if err != nil {
-		log.Printf("Failed to process block %s from peer %s: %v",
-			msg.BlockHash().String(), p.Addr(), err)
+		pm.logger.Error("failed to process block",
+			"block_hash", msg.BlockHash().String(),
+			"peer_id", p.Addr(),
+			"error", err)
 		return
 	}
 
@@ -325,14 +333,17 @@ func (pm *PeerManager) onBlock(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
 
 	// Log the result for debugging
 	if isOrphan {
-		log.Printf("Received orphan block %s from peer %s",
-			msg.BlockHash().String(), p.Addr())
+		pm.logger.Debug("received orphan block",
+			"block_hash", msg.BlockHash().String(),
+			"peer_id", p.Addr())
 	} else if isMainChain {
-		log.Printf("Accepted block %s from peer %s on main chain",
-			msg.BlockHash().String(), p.Addr())
+		pm.logger.Info("accepted block on main chain",
+			"block_hash", msg.BlockHash().String(),
+			"peer_id", p.Addr())
 	} else {
-		log.Printf("Accepted block %s from peer %s on side chain",
-			msg.BlockHash().String(), p.Addr())
+		pm.logger.Info("accepted block on side chain",
+			"block_hash", msg.BlockHash().String(),
+			"peer_id", p.Addr())
 	}
 }
 
@@ -353,13 +364,17 @@ func (pm *PeerManager) onTx(p *peer.Peer, msg *wire.MsgTx) {
 	// Add transaction to mempool (includes validation)
 	err := pm.mempool.AddTx(msg)
 	if err != nil {
-		log.Printf("Rejected transaction %s from peer %s: %v",
-			txHash, p.Addr(), err)
+		pm.logger.Warn("rejected transaction from peer",
+			"tx_hash", txHash.String(),
+			"peer_id", p.Addr(),
+			"error", err)
 		return
 	}
 
-	log.Printf("Accepted transaction %s from peer %s (mempool: %d)",
-		txHash, p.Addr(), pm.mempool.Count())
+	pm.logger.Info("accepted transaction",
+		"tx_hash", txHash.String(),
+		"peer_id", p.Addr(),
+		"mempool_size", pm.mempool.Count())
 
 	// Relay transaction to other peers (transaction propagation)
 	// This implements the critical transaction relay functionality
@@ -397,7 +412,9 @@ func (pm *PeerManager) relayTransaction(tx *wire.MsgTx, excludePeer *peer.Peer) 
 	}
 
 	if relayCount > 0 {
-		log.Printf("Relayed transaction %s to %d peers", txHash, relayCount)
+		pm.logger.Debug("relayed transaction to peers",
+			"tx_hash", txHash.String(),
+			"peer_count", relayCount)
 	}
 }
 
@@ -408,21 +425,24 @@ func (pm *PeerManager) onGetData(p *peer.Peer, msg *wire.MsgGetData) {
 		case wire.InvTypeBlock:
 			// Block requests are handled but not fully implemented
 			// This would require fetching blocks from the blockchain database
-			log.Printf("Received block request from %s: %s (not implemented)",
-				p.Addr(), inv.Hash.String())
+			pm.logger.Debug("received block request (not implemented)",
+				"peer_id", p.Addr(),
+				"block_hash", inv.Hash.String())
 
 		case wire.InvTypeTx:
 			// Send transaction from mempool if we have it
 			tx, exists := pm.mempool.GetTx(&inv.Hash)
 			if exists {
 				p.QueueMessage(tx, nil)
-				log.Printf("Sent transaction %s to peer %s",
-					inv.Hash.String(), p.Addr())
+				pm.logger.Debug("sent transaction to peer",
+					"tx_hash", inv.Hash.String(),
+					"peer_id", p.Addr())
 			} else {
 				// Transaction not found in mempool
 				// Could also check blockchain for confirmed transactions
-				log.Printf("Transaction %s not found in mempool (requested by %s)",
-					inv.Hash.String(), p.Addr())
+				pm.logger.Debug("transaction not found in mempool",
+					"tx_hash", inv.Hash.String(),
+					"requested_by", p.Addr())
 			}
 		}
 	}
@@ -440,14 +460,16 @@ func (pm *PeerManager) onHeaders(p *peer.Peer, msg *wire.MsgHeaders) {
 func (pm *PeerManager) onGetHeaders(p *peer.Peer, msg *wire.MsgGetHeaders) {
 	// Handle getheaders message - respond with block headers for sync
 	if pm.blockchain == nil {
-		log.Printf("Cannot process getheaders: blockchain not initialized")
+		pm.logger.Warn("cannot process getheaders: blockchain not initialized")
 		return
 	}
 
 	// Use btcd's LocateHeaders to find headers to send
 	headers := pm.blockchain.LocateHeaders(msg.BlockLocatorHashes, &msg.HashStop)
 
-	log.Printf("Received getheaders request from %s, sending %d headers", p.Addr(), len(headers))
+	pm.logger.Debug("received getheaders request",
+		"peer_id", p.Addr(),
+		"header_count", len(headers))
 
 	// Create and send headers message
 	headersMsg := wire.NewMsgHeaders()
@@ -462,7 +484,7 @@ func (pm *PeerManager) onGetHeaders(p *peer.Peer, msg *wire.MsgGetHeaders) {
 func (pm *PeerManager) onGetBlocks(p *peer.Peer, msg *wire.MsgGetBlocks) {
 	// Handle getblocks message - respond with block inventory for sync
 	if pm.blockchain == nil {
-		log.Printf("Cannot process getblocks: blockchain not initialized")
+		pm.logger.Warn("cannot process getblocks: blockchain not initialized")
 		return
 	}
 
@@ -473,7 +495,9 @@ func (pm *PeerManager) onGetBlocks(p *peer.Peer, msg *wire.MsgGetBlocks) {
 	// 1. Find the common ancestor with msg.BlockLocatorHashes
 	// 2. Send inventory message with block hashes from that point
 	// For now, just log that we received the request
-	log.Printf("Received getblocks request from %s (best hash: %s)", p.Addr(), bestHash.String())
+	pm.logger.Debug("received getblocks request",
+		"peer_id", p.Addr(),
+		"best_hash", bestHash.String())
 
 	// Create inv message (empty for minimal implementation)
 	invMsg := wire.NewMsgInv()
@@ -510,7 +534,8 @@ func (pm *PeerManager) BroadcastTx(tx *wire.MsgTx) error {
 	defer pm.mu.RUnlock()
 
 	if len(pm.peers) == 0 {
-		log.Printf("Warning: no peers connected, transaction %s not relayed", tx.TxHash())
+		pm.logger.Warn("no peers connected, transaction not relayed",
+			"tx_hash", tx.TxHash().String())
 		return nil
 	}
 
@@ -528,7 +553,9 @@ func (pm *PeerManager) BroadcastTx(tx *wire.MsgTx) error {
 		}
 	}
 
-	log.Printf("Broadcast transaction %s to %d peers", txHash, broadcastCount)
+	pm.logger.Info("broadcast transaction",
+		"tx_hash", txHash.String(),
+		"peer_count", broadcastCount)
 	return nil
 }
 
@@ -567,7 +594,7 @@ func (pm *PeerManager) SyncBlocks() {
 	defer pm.mu.RUnlock()
 
 	if pm.blockchain == nil {
-		log.Printf("Cannot sync blocks: blockchain not initialized")
+		pm.logger.Warn("cannot sync blocks: blockchain not initialized")
 		return
 	}
 
@@ -582,8 +609,9 @@ func (pm *PeerManager) SyncBlocks() {
 	for _, p := range pm.peers {
 		if p.Connected() {
 			p.QueueMessage(getHeadersMsg, nil)
-			log.Printf("Requesting headers from peer %s (our best: %s)",
-				p.Addr(), bestHash.String())
+			pm.logger.Debug("requesting headers from peer",
+				"peer_id", p.Addr(),
+				"our_best_hash", bestHash.String())
 		}
 	}
 }

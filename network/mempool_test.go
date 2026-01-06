@@ -6,6 +6,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/peer"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/opd-ai/nmcd/internal/logging"
 )
 
 // TestNewMempool tests mempool creation
@@ -191,6 +192,7 @@ func TestMempoolConcurrency(t *testing.T) {
 func TestSyncBlocks(t *testing.T) {
 	// Create a PeerManager with no blockchain (should handle gracefully)
 	pm := &PeerManager{
+		logger:     logging.GetDefault().WithComponent("test"),
 		peers:      make(map[string]*peer.Peer),
 		blockchain: nil,
 		mempool:    NewMempool(),
@@ -208,6 +210,7 @@ func TestSyncBlocks(t *testing.T) {
 // TestGetMempoolMethod tests the GetMempool accessor
 func TestGetMempoolMethod(t *testing.T) {
 	pm := &PeerManager{
+		logger:     logging.GetDefault().WithComponent("test"),
 		peers:   make(map[string]*peer.Peer),
 		mempool: NewMempool(),
 		quit:    make(chan struct{}),

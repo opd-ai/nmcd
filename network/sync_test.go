@@ -8,12 +8,14 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/peer"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/opd-ai/nmcd/internal/logging"
 )
 
 // TestSyncManagerCreation tests that a sync manager can be created
 func TestSyncManagerCreation(t *testing.T) {
 	// Create a minimal peer manager for testing
 	pm := &PeerManager{
+		logger:     logging.GetDefault().WithComponent("test"),
 		peers:       make(map[string]*peer.Peer),
 		blockchain:  nil, // Can be nil for this test
 		chainParams: &chaincfg.MainNetParams,
@@ -43,6 +45,7 @@ func TestSyncManagerCreation(t *testing.T) {
 // TestSyncManagerUpdatePeerHeight tests updating peer height
 func TestSyncManagerUpdatePeerHeight(t *testing.T) {
 	pm := &PeerManager{
+		logger:     logging.GetDefault().WithComponent("test"),
 		peers:       make(map[string]*peer.Peer),
 		blockchain:  nil,
 		chainParams: &chaincfg.MainNetParams,
@@ -88,6 +91,7 @@ func TestSyncManagerUpdatePeerHeight(t *testing.T) {
 // TestSyncManagerBlockReceived tests block request tracking
 func TestSyncManagerBlockReceived(t *testing.T) {
 	pm := &PeerManager{
+		logger:     logging.GetDefault().WithComponent("test"),
 		peers:       make(map[string]*peer.Peer),
 		blockchain:  nil,
 		chainParams: &chaincfg.MainNetParams,
@@ -128,6 +132,7 @@ func TestSyncManagerBlockReceived(t *testing.T) {
 // TestSyncManagerCleanupOldRequests tests old request cleanup
 func TestSyncManagerCleanupOldRequests(t *testing.T) {
 	pm := &PeerManager{
+		logger:     logging.GetDefault().WithComponent("test"),
 		peers:       make(map[string]*peer.Peer),
 		blockchain:  nil,
 		chainParams: &chaincfg.MainNetParams,
@@ -169,6 +174,7 @@ func TestSyncManagerCleanupOldRequests(t *testing.T) {
 // TestSyncManagerHandleHeaders tests header message handling
 func TestSyncManagerHandleHeaders(t *testing.T) {
 	pm := &PeerManager{
+		logger:     logging.GetDefault().WithComponent("test"),
 		peers:       make(map[string]*peer.Peer),
 		blockchain:  nil,
 		chainParams: &chaincfg.MainNetParams,
