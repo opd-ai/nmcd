@@ -485,6 +485,69 @@ curl -X POST http://127.0.0.1:8336 \
   - Use strong passwords (12+ characters recommended)
   - Backup encrypted wallet file regularly
 
+### Health and Readiness Endpoints
+
+nmcd provides HTTP health check endpoints suitable for Kubernetes liveness and readiness probes, load balancers, and monitoring systems.
+
+**Health Endpoint (`/health`):**
+
+```bash
+curl http://127.0.0.1:8336/health
+```
+
+Returns HTTP 200 OK when the daemon is running and initialized, or 503 Service Unavailable when initializing.
+
+Response:
+```json
+{
+  "status": "healthy",
+  "block_height": 500000,
+  "peers": 8
+}
+```
+
+Use this endpoint for **liveness probes** to detect if the process is alive and responsive.
+
+**Readiness Endpoint (`/ready`):**
+
+```bash
+curl http://127.0.0.1:8336/ready
+```
+
+Returns HTTP 200 OK when the daemon is ready to serve requests (sync complete), or 503 Service Unavailable when syncing or initializing.
+
+Response:
+```json
+{
+  "status": "ready",
+  "block_height": 500000,
+  "peers": 8,
+  "syncing": false
+}
+```
+
+Use this endpoint for **readiness probes** to detect if the node is ready to handle traffic.
+
+**Kubernetes Example:**
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8336
+  initialDelaySeconds: 30
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 8336
+  initialDelaySeconds: 5
+  periodSeconds: 5
+```
+
+**Security Note:** These endpoints do **not** require authentication and are intended for health checking systems. Bind the RPC server to localhost (default) or use network-level controls to restrict access.
+
 ### Prometheus Metrics Endpoint
 
 nmcd can optionally expose metrics in Prometheus format for monitoring and observability. The metrics are served on a separate HTTP endpoint from the RPC server.
