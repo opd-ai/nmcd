@@ -117,6 +117,8 @@ func NewServer(cfg *Config) (*Server, error) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleRequest)
+	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/ready", s.handleReady)
 
 	s.server = &http.Server{
 		Handler:      mux,
@@ -1846,5 +1848,120 @@ func (s *Server) writeError(w http.ResponseWriter, req *Request, code int, messa
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to encode JSON-RPC error response: %v\n", err)
+	}
+}
+
+// HealthResponse represents the JSON response for health endpoints
+type HealthResponse struct {
+	Status      string `json:"status"`
+	BlockHeight int32  `json:"block_height"`
+	Peers       int    `json:"peers"`
+	Syncing     bool   `json:"syncing,omitempty"`
+}
+
+// handleHealth handles GET requests to /health endpoint
+// Returns 200 OK if the daemon is running, 503 Service Unavailable if initializing
+// This endpoint is suitable for Kubernetes liveness probes
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	// Only allow GET requests
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Set Content-Type header before any writes
+	w.Header().Set("Content-Type", "application/json")
+
+	// Check if blockchain is initialized
+	if s.blockchain == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		if err := json.NewEncoder(w).Encode(HealthResponse{
+			Status: "initializing",
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to encode health response: %v\n", err)
+		}
+		return
+	}
+
+	// Daemon is running - get current state
+	best := s.blockchain.BestSnapshot()
+	peers := 0
+	if s.peerMgr != nil {
+		peers = s.peerMgr.GetConnectedPeers()
+	}
+
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(HealthResponse{
+		Status:      "healthy",
+		BlockHeight: best.Height,
+		Peers:       peers,
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to encode health response: %v\n", err)
+	}
+}
+
+// handleReady handles GET requests to /ready endpoint
+// Returns 200 OK if sync is complete, 503 Service Unavailable if still syncing
+// This endpoint is suitable for Kubernetes readiness probes
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	// Only allow GET requests
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Set Content-Type header before any writes
+	w.Header().Set("Content-Type", "application/json")
+
+	// Check if blockchain is initialized
+	if s.blockchain == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		if err := json.NewEncoder(w).Encode(HealthResponse{
+			Status:  "initializing",
+			Syncing: true,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to encode ready response: %v\n", err)
+		}
+		return
+	}
+
+	// Get current state
+	best := s.blockchain.BestSnapshot()
+	peers := 0
+	syncing := false
+	if s.peerMgr != nil {
+		peers = s.peerMgr.GetConnectedPeers()
+		syncing = s.peerMgr.IsSyncing()
+	}
+
+	// If syncing, return 503 Service Unavailable
+	if syncing {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		if err := json.NewEncoder(w).Encode(HealthResponse{
+			Status:      "syncing",
+			BlockHeight: best.Height,
+			Peers:       peers,
+			Syncing:     true,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to encode ready response: %v\n", err)
+		}
+		return
+	}
+
+	// Ready - sync is complete
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(HealthResponse{
+		Status:      "ready",
+		BlockHeight: best.Height,
+		Peers:       peers,
+		Syncing:     false,
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to encode ready response: %v\n", err)
 	}
 }
