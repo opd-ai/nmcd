@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/opd-ai/nmcd/config"
+	"github.com/opd-ai/nmcd/internal/logging"
 	"github.com/opd-ai/nmcd/internal/server"
 )
 
@@ -16,35 +17,73 @@ func main() {
 	// Parse command line flags
 	cfg := parseFlags()
 
+	// Initialize structured logging
+	logCfg := &logging.Config{
+		Level:           logging.LogLevel(cfg.LogLevel),
+		Format:          cfg.LogFormat,
+		Output:          cfg.LogOutput,
+		Component:       "nmcd",
+		EnableRotation:  cfg.LogRotation,
+		MaxSizeMB:       cfg.LogMaxSizeMB,
+		MaxBackups:      10,
+		MaxAgeDays:      30,
+		CompressBackups: true,
+	}
+
+	logger, err := logging.Init(logCfg)
+	if err != nil {
+		log.Fatalf("Failed to initialize logger: %v", err)
+	}
+	defer logger.Close()
+
+	// Set as default logger for the application
+	logging.SetDefault(logger)
+
+	logger.Info("nmcd starting",
+		"version", "0.1.0",
+		"network", cfg.Network,
+		"data_dir", cfg.DataDir,
+	)
+
 	// Create and initialize server
 	srv, err := server.NewServer(cfg)
 	if err != nil {
-		log.Fatalf("Failed to create server: %v", err)
+		logger.Error("Failed to create server", "error", err)
+		os.Exit(1)
 	}
 	defer func() {
 		if err := srv.Stop(); err != nil {
-			log.Printf("Failed to stop server: %v", err)
+			logger.Warn("Failed to stop server cleanly", "error", err)
 		}
 	}()
 
 	// Start server components
 	rpcErrCh, err := srv.Start()
 	if err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+		logger.Error("Failed to start server", "error", err)
+		os.Exit(1)
 	}
+
+	logger.Info("nmcd started successfully",
+		"rpc_addr", cfg.RPCAddr,
+		"prometheus_addr", cfg.PrometheusAddr,
+		"listen_addrs", cfg.ListenAddrs,
+	)
 
 	// Wait for shutdown signal or RPC error
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 	select {
-	case <-sigChan:
-		log.Printf("Shutdown signal received...")
+	case sig := <-sigChan:
+		logger.Info("Shutdown signal received", "signal", sig)
 	case err := <-rpcErrCh:
 		if err != nil {
-			log.Printf("RPC server error: %v", err)
+			logger.Error("RPC server error", "error", err)
 		}
 	}
+
+	logger.Info("nmcd shutting down...")
 }
 
 func parseFlags() *config.Config {
@@ -77,6 +116,14 @@ func parseFlags() *config.Config {
 
 	var maxPeersFlag int
 	flag.IntVar(&maxPeersFlag, "maxpeers", 0, "Maximum number of peers")
+
+	// Logging flags
+	var logLevelFlag string
+	flag.StringVar(&logLevelFlag, "loglevel", "", "Log level: DEBUG, INFO, WARN, ERROR")
+	var logFormatFlag string
+	flag.StringVar(&logFormatFlag, "logformat", "", "Log format: text, json")
+	var logOutputFlag string
+	flag.StringVar(&logOutputFlag, "logoutput", "", "Log output: stdout, stderr, or file path")
 
 	flag.Parse()
 
@@ -123,6 +170,15 @@ func parseFlags() *config.Config {
 	}
 	if maxPeersFlag > 0 {
 		cfg.MaxPeers = maxPeersFlag
+	}
+	if logLevelFlag != "" {
+		cfg.LogLevel = logLevelFlag
+	}
+	if logFormatFlag != "" {
+		cfg.LogFormat = logFormatFlag
+	}
+	if logOutputFlag != "" {
+		cfg.LogOutput = logOutputFlag
 	}
 
 	// Parse listen addresses (comma-separated)

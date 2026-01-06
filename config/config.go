@@ -102,6 +102,13 @@ type Config struct {
 	ListenAddrs    []string
 	MaxPeers       int
 	AddPeers       []string
+
+	// Logging configuration
+	LogLevel     string // Log level: DEBUG, INFO, WARN, ERROR (default: INFO)
+	LogFormat    string // Log format: text, json (default: text)
+	LogOutput    string // Log output: stdout, stderr, or file path (default: stdout)
+	LogRotation  bool   // Enable log file rotation (default: false)
+	LogMaxSizeMB int    // Max log file size in MB before rotation (default: 100)
 }
 
 // DefaultConfig returns default configuration
@@ -119,6 +126,11 @@ func DefaultConfig() *Config {
 		ListenAddrs:    []string{"0.0.0.0:8334"},
 		MaxPeers:       125,
 		AddPeers:       []string{},
+		LogLevel:       "INFO",
+		LogFormat:      "text",
+		LogOutput:      "stdout",
+		LogRotation:    false,
+		LogMaxSizeMB:   100,
 	}
 }
 
