@@ -72,9 +72,8 @@ type Metrics struct {
 	dbWriteCount        uint64            // Number of DB writes (internal)
 
 	// RPC metrics (per-method tracking)
-	rpcRequests  map[string]uint64     // RPC requests by method
+	rpcRequests  map[string]uint64        // RPC requests by method
 	rpcDurations map[string]time.Duration // Total RPC duration by method
-	rpcCounts    map[string]uint64     // Request counts for averaging (internal)
 
 	// Error metrics by category
 	NetworkErrors  uint64 // Network-related errors
@@ -87,7 +86,6 @@ var global = &Metrics{
 	StartTime:    time.Now(),
 	rpcRequests:  make(map[string]uint64),
 	rpcDurations: make(map[string]time.Duration),
-	rpcCounts:    make(map[string]uint64),
 }
 
 // Get returns the global metrics instance
@@ -263,7 +261,6 @@ func (m *Metrics) RecordRPCRequest(method string, duration time.Duration) {
 	defer m.mu.Unlock()
 	m.rpcRequests[method]++
 	m.rpcDurations[method] += duration
-	m.rpcCounts[method]++
 }
 
 // GetRPCStats returns RPC statistics for a specific method
@@ -271,8 +268,8 @@ func (m *Metrics) GetRPCStats(method string) (count uint64, avgDuration time.Dur
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	count = m.rpcRequests[method]
-	if c := m.rpcCounts[method]; c > 0 {
-		avgDuration = m.rpcDurations[method] / time.Duration(c)
+	if count > 0 {
+		avgDuration = m.rpcDurations[method] / time.Duration(count)
 	}
 	return
 }

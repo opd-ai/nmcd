@@ -2,9 +2,54 @@ package metrics
 
 import (
 	"runtime"
+	"sync"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
+
+// goRuntimeStats holds cached Go runtime statistics
+type goRuntimeStats struct {
+	mu               sync.RWMutex
+	goroutines       int
+	allocBytes       uint64
+	heapAllocBytes   uint64
+	heapIdleBytes    uint64
+	heapInuseBytes   uint64
+	lastUpdate       time.Time
+}
+
+var cachedGoStats = &goRuntimeStats{}
+
+func init() {
+	// Update stats immediately on startup
+	updateGoRuntimeStats()
+	
+	// Start background goroutine to update Go runtime stats every 30 seconds
+	// This avoids stop-the-world pauses during Prometheus scrapes
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			updateGoRuntimeStats()
+		}
+	}()
+}
+
+func updateGoRuntimeStats() {
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+	
+	cachedGoStats.mu.Lock()
+	defer cachedGoStats.mu.Unlock()
+	
+	cachedGoStats.goroutines = runtime.NumGoroutine()
+	cachedGoStats.allocBytes = memStats.Alloc
+	cachedGoStats.heapAllocBytes = memStats.HeapAlloc
+	cachedGoStats.heapIdleBytes = memStats.HeapIdle
+	cachedGoStats.heapInuseBytes = memStats.HeapInuse
+	cachedGoStats.lastUpdate = time.Now()
+}
 
 // PrometheusCollector implements prometheus.Collector to expose nmcd metrics
 // It reads directly from the global metrics instance on each scrape
@@ -434,17 +479,21 @@ func (c *PrometheusCollector) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.MustNewConstMetric(c.rpcRequestsTotalDesc, prometheus.CounterValue, float64(count), method)
 	}
 	for method, duration := range snapshot.RPCDurations {
-		ch <- prometheus.MustNewConstMetric(c.rpcDurationSecondsDesc, prometheus.GaugeValue, duration.Seconds(), method)
+		count := snapshot.RPCRequests[method]
+		if count == 0 {
+			continue
+		}
+		avgDuration := duration.Seconds() / float64(count)
+		ch <- prometheus.MustNewConstMetric(c.rpcDurationSecondsDesc, prometheus.GaugeValue, avgDuration, method)
 	}
 
-	// Go runtime metrics
-	var memStats runtime.MemStats
-	runtime.ReadMemStats(&memStats)
-	
-	ch <- prometheus.MustNewConstMetric(c.goGoroutinesDesc, prometheus.GaugeValue, float64(runtime.NumGoroutine()))
-	ch <- prometheus.MustNewConstMetric(c.goMemstatAllocBytesDesc, prometheus.GaugeValue, float64(memStats.Alloc))
-	ch <- prometheus.MustNewConstMetric(c.goMemstatHeapAllocDesc, prometheus.GaugeValue, float64(memStats.HeapAlloc))
-	ch <- prometheus.MustNewConstMetric(c.goMemstatHeapIdleDesc, prometheus.GaugeValue, float64(memStats.HeapIdle))
-	ch <- prometheus.MustNewConstMetric(c.goMemstatHeapInuseDesc, prometheus.GaugeValue, float64(memStats.HeapInuse))
+	// Go runtime metrics (from cached stats to avoid stop-the-world pauses)
+	cachedGoStats.mu.RLock()
+	ch <- prometheus.MustNewConstMetric(c.goGoroutinesDesc, prometheus.GaugeValue, float64(cachedGoStats.goroutines))
+	ch <- prometheus.MustNewConstMetric(c.goMemstatAllocBytesDesc, prometheus.GaugeValue, float64(cachedGoStats.allocBytes))
+	ch <- prometheus.MustNewConstMetric(c.goMemstatHeapAllocDesc, prometheus.GaugeValue, float64(cachedGoStats.heapAllocBytes))
+	ch <- prometheus.MustNewConstMetric(c.goMemstatHeapIdleDesc, prometheus.GaugeValue, float64(cachedGoStats.heapIdleBytes))
+	ch <- prometheus.MustNewConstMetric(c.goMemstatHeapInuseDesc, prometheus.GaugeValue, float64(cachedGoStats.heapInuseBytes))
+	cachedGoStats.mu.RUnlock()
 }
 

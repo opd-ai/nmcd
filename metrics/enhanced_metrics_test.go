@@ -15,7 +15,6 @@ func TestDatabaseMetrics(t *testing.T) {
 		StartTime:    time.Now(),
 		rpcRequests:  make(map[string]uint64),
 		rpcDurations: make(map[string]time.Duration),
-		rpcCounts:    make(map[string]uint64),
 	}
 
 	// Test database read metrics
@@ -52,7 +51,6 @@ func TestRPCMetrics(t *testing.T) {
 		StartTime:    time.Now(),
 		rpcRequests:  make(map[string]uint64),
 		rpcDurations: make(map[string]time.Duration),
-		rpcCounts:    make(map[string]uint64),
 	}
 
 	// Record some RPC requests
@@ -96,7 +94,6 @@ func TestErrorCategoryMetrics(t *testing.T) {
 		StartTime:    time.Now(),
 		rpcRequests:  make(map[string]uint64),
 		rpcDurations: make(map[string]time.Duration),
-		rpcCounts:    make(map[string]uint64),
 	}
 
 	// Record different types of errors
@@ -124,7 +121,6 @@ func TestPrometheusCollector_NewMetrics(t *testing.T) {
 		StartTime:    time.Now(),
 		rpcRequests:  make(map[string]uint64),
 		rpcDurations: make(map[string]time.Duration),
-		rpcCounts:    make(map[string]uint64),
 	}
 
 	// Set some values
@@ -183,7 +179,6 @@ func TestPrometheusCollector_RPCLabels(t *testing.T) {
 		StartTime:    time.Now(),
 		rpcRequests:  make(map[string]uint64),
 		rpcDurations: make(map[string]time.Duration),
-		rpcCounts:    make(map[string]uint64),
 	}
 
 	// Record RPC requests for different methods
@@ -206,13 +201,38 @@ nmcd_rpc_requests_total{method="name_show"} 1
 	}
 }
 
+// TestPrometheusCollector_RPCDurationAverage tests that RPC duration emits average, not total
+func TestPrometheusCollector_RPCDurationAverage(t *testing.T) {
+	m := &Metrics{
+		StartTime:    time.Now(),
+		rpcRequests:  make(map[string]uint64),
+		rpcDurations: make(map[string]time.Duration),
+	}
+
+	// Record 2 requests: 5ms and 15ms (average should be 10ms = 0.01s)
+	m.RecordRPCRequest("getinfo", 5*time.Millisecond)
+	m.RecordRPCRequest("getinfo", 15*time.Millisecond)
+
+	collector := NewPrometheusCollector(m)
+
+	// Verify that Prometheus emits the average (0.01s), not the total (0.02s)
+	expected := `
+# HELP nmcd_rpc_duration_seconds Average RPC request duration in seconds by method
+# TYPE nmcd_rpc_duration_seconds gauge
+nmcd_rpc_duration_seconds{method="getinfo"} 0.01
+`
+
+	if err := testutil.CollectAndCompare(collector, strings.NewReader(expected), "nmcd_rpc_duration_seconds"); err != nil {
+		t.Errorf("RPC duration metrics comparison failed: %v", err)
+	}
+}
+
 // TestPrometheusCollector_ErrorLabels tests that error metrics have proper category labels
 func TestPrometheusCollector_ErrorLabels(t *testing.T) {
 	m := &Metrics{
 		StartTime:    time.Now(),
 		rpcRequests:  make(map[string]uint64),
 		rpcDurations: make(map[string]time.Duration),
-		rpcCounts:    make(map[string]uint64),
 	}
 
 	// Record errors by category
@@ -244,7 +264,6 @@ func TestPrometheusCollector_GoMetrics(t *testing.T) {
 		StartTime:    time.Now(),
 		rpcRequests:  make(map[string]uint64),
 		rpcDurations: make(map[string]time.Duration),
-		rpcCounts:    make(map[string]uint64),
 	}
 
 	collector := NewPrometheusCollector(m)
@@ -287,7 +306,6 @@ func TestMetrics_Concurrent(t *testing.T) {
 		StartTime:    time.Now(),
 		rpcRequests:  make(map[string]uint64),
 		rpcDurations: make(map[string]time.Duration),
-		rpcCounts:    make(map[string]uint64),
 	}
 
 	done := make(chan bool)
