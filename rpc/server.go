@@ -157,7 +157,19 @@ func (s *Server) Stop() error {
 	if s.rateLimiter != nil {
 		s.rateLimiter.stop()
 	}
-	return s.server.Close()
+	
+	// Close the HTTP server
+	serverErr := s.server.Close()
+	
+	// Close the listener to release the port binding
+	// This is especially important for tests that create servers without starting them
+	if s.listener != nil {
+		if err := s.listener.Close(); err != nil && serverErr == nil {
+			serverErr = err
+		}
+	}
+	
+	return serverErr
 }
 
 // Close closes the RPC server (alias for Stop for compatibility)
@@ -182,6 +194,10 @@ func (s *Server) checkAuth(r *http.Request) bool {
 // withPanicRecovery wraps an HTTP handler with panic recovery middleware.
 // If a panic occurs, it logs the panic with full stack trace and returns a 500 error.
 // This prevents the entire server from crashing due to unexpected panics.
+//
+// Note: If the handler already started writing the response (via w.WriteHeader or w.Write)
+// before panicking, the http.Error call will not modify the response headers, but the panic
+// will still be logged properly with full context.
 func (s *Server) withPanicRecovery(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
@@ -199,6 +215,7 @@ func (s *Server) withPanicRecovery(handler http.HandlerFunc) http.HandlerFunc {
 				metrics.Get().RecordValidationError("panic")
 
 				// Return internal server error to client (don't expose panic details)
+				// Note: This may fail silently if headers were already written
 				http.Error(w, "Internal server error", http.StatusInternalServerError)
 			}
 		}()

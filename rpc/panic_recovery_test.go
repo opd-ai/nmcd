@@ -6,23 +6,34 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/opd-ai/nmcd/internal/logging"
 )
 
-// TestPanicRecovery tests that panics in HTTP handlers are recovered
-func TestPanicRecovery(t *testing.T) {
-	// Initialize logger for testing
-	logCfg := logging.DefaultConfig()
-	logCfg.Level = logging.LevelError // Only show errors during test
-	logCfg.Output = "stderr"
-	logger, err := logging.Init(logCfg)
-	if err != nil {
-		t.Fatalf("Failed to initialize logger: %v", err)
-	}
-	logging.SetDefault(logger)
+var (
+	testLoggerOnce sync.Once
+)
 
+// setupTestLogger initializes the test logger once for all tests in this file
+func setupTestLogger() {
+	testLoggerOnce.Do(func() {
+		logCfg := logging.DefaultConfig()
+		logCfg.Level = logging.LevelError // Only show errors during test
+		logCfg.Output = "stderr"
+		logger, err := logging.Init(logCfg)
+		if err != nil {
+			panic("Failed to initialize test logger: " + err.Error())
+		}
+		logging.SetDefault(logger)
+	})
+}
+
+// setupTestServer creates a test server with default configuration
+func setupTestServer(t *testing.T) *Server {
+	setupTestLogger()
+	
 	cfg := &Config{
 		ListenAddr: "127.0.0.1:0",
 	}
@@ -31,6 +42,12 @@ func TestPanicRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
+	return server
+}
+
+// TestPanicRecovery tests that panics in HTTP handlers are recovered
+func TestPanicRecovery(t *testing.T) {
+	server := setupTestServer(t)
 	defer server.Close()
 
 	// Create a handler that panics
@@ -60,24 +77,7 @@ func TestPanicRecovery(t *testing.T) {
 
 // TestPanicRecoveryWithNilPointer tests recovery from nil pointer dereference
 func TestPanicRecoveryWithNilPointer(t *testing.T) {
-	// Initialize logger for testing
-	logCfg := logging.DefaultConfig()
-	logCfg.Level = logging.LevelError
-	logCfg.Output = "stderr"
-	logger, err := logging.Init(logCfg)
-	if err != nil {
-		t.Fatalf("Failed to initialize logger: %v", err)
-	}
-	logging.SetDefault(logger)
-
-	cfg := &Config{
-		ListenAddr: "127.0.0.1:0",
-	}
-
-	server, err := NewServer(cfg)
-	if err != nil {
-		t.Fatalf("Failed to create server: %v", err)
-	}
+	server := setupTestServer(t)
 	defer server.Close()
 
 	// Create a handler that dereferences nil
@@ -103,24 +103,7 @@ func TestPanicRecoveryWithNilPointer(t *testing.T) {
 
 // TestPanicRecoveryDoesNotAffectNormalRequests tests that normal requests work fine
 func TestPanicRecoveryDoesNotAffectNormalRequests(t *testing.T) {
-	// Initialize logger for testing
-	logCfg := logging.DefaultConfig()
-	logCfg.Level = logging.LevelError
-	logCfg.Output = "stderr"
-	logger, err := logging.Init(logCfg)
-	if err != nil {
-		t.Fatalf("Failed to initialize logger: %v", err)
-	}
-	logging.SetDefault(logger)
-
-	cfg := &Config{
-		ListenAddr: "127.0.0.1:0",
-	}
-
-	server, err := NewServer(cfg)
-	if err != nil {
-		t.Fatalf("Failed to create server: %v", err)
-	}
+	server := setupTestServer(t)
 	defer server.Close()
 
 	// Create a normal handler
@@ -150,24 +133,7 @@ func TestPanicRecoveryDoesNotAffectNormalRequests(t *testing.T) {
 
 // TestErrorLogging tests that errors are properly logged
 func TestErrorLogging(t *testing.T) {
-	// Initialize logger for testing
-	logCfg := logging.DefaultConfig()
-	logCfg.Level = logging.LevelDebug
-	logCfg.Output = "stderr"
-	logger, err := logging.Init(logCfg)
-	if err != nil {
-		t.Fatalf("Failed to initialize logger: %v", err)
-	}
-	logging.SetDefault(logger)
-
-	cfg := &Config{
-		ListenAddr: "127.0.0.1:0",
-	}
-
-	server, err := NewServer(cfg)
-	if err != nil {
-		t.Fatalf("Failed to create server: %v", err)
-	}
+	server := setupTestServer(t)
 	defer server.Close()
 
 	// Test invalid JSON (should trigger parse error)
@@ -198,24 +164,7 @@ func TestErrorLogging(t *testing.T) {
 
 // TestMultiplePanicRecoveries tests that multiple panics are handled independently
 func TestMultiplePanicRecoveries(t *testing.T) {
-	// Initialize logger for testing
-	logCfg := logging.DefaultConfig()
-	logCfg.Level = logging.LevelError
-	logCfg.Output = "stderr"
-	logger, err := logging.Init(logCfg)
-	if err != nil {
-		t.Fatalf("Failed to initialize logger: %v", err)
-	}
-	logging.SetDefault(logger)
-
-	cfg := &Config{
-		ListenAddr: "127.0.0.1:0",
-	}
-
-	server, err := NewServer(cfg)
-	if err != nil {
-		t.Fatalf("Failed to create server: %v", err)
-	}
+	server := setupTestServer(t)
 	defer server.Close()
 
 	// Create a handler that panics
@@ -241,24 +190,7 @@ func TestMultiplePanicRecoveries(t *testing.T) {
 
 // TestPanicRecoveryPreservesContext tests that panic recovery includes request context
 func TestPanicRecoveryPreservesContext(t *testing.T) {
-	// Initialize logger for testing
-	logCfg := logging.DefaultConfig()
-	logCfg.Level = logging.LevelError
-	logCfg.Output = "stderr"
-	logger, err := logging.Init(logCfg)
-	if err != nil {
-		t.Fatalf("Failed to initialize logger: %v", err)
-	}
-	logging.SetDefault(logger)
-
-	cfg := &Config{
-		ListenAddr: "127.0.0.1:0",
-	}
-
-	server, err := NewServer(cfg)
-	if err != nil {
-		t.Fatalf("Failed to create server: %v", err)
-	}
+	server := setupTestServer(t)
 	defer server.Close()
 
 	// Create a handler that panics

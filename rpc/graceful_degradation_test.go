@@ -74,7 +74,10 @@ func TestGracefulDegradationNoBlockchain(t *testing.T) {
 				Method:  tc.method,
 				ID:      1,
 			}
-			body, _ := json.Marshal(reqBody)
+			body, err := json.Marshal(reqBody)
+			if err != nil {
+				t.Fatalf("Failed to marshal request: %v", err)
+			}
 
 			req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
 			w := httptest.NewRecorder()
@@ -134,7 +137,10 @@ func TestGracefulDegradationWallet(t *testing.T) {
 		Method:  "getnewaddress",
 		ID:      1,
 	}
-	body, _ := json.Marshal(reqBody)
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		t.Fatalf("Failed to marshal request: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
 	w := httptest.NewRecorder()
