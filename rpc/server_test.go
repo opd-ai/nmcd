@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/opd-ai/nmcd/internal/logging"
 	"github.com/opd-ai/nmcd/wallet"
 )
 
@@ -19,6 +20,7 @@ func testServer(user, pass string) *Server {
 		rpcPassword:    pass,
 		rateLimiter:    newRateLimiter(defaultRateLimit),
 		maxRequestSize: defaultMaxRequestSize,
+		logger:         logging.GetDefault().WithComponent("rpc"),
 	}
 }
 

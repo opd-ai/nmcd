@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/opd-ai/nmcd/chain"
+	"github.com/opd-ai/nmcd/internal/logging"
 	"github.com/opd-ai/nmcd/metrics"
 	"github.com/opd-ai/nmcd/network"
 	"github.com/opd-ai/nmcd/wallet"
@@ -48,6 +50,7 @@ type Server struct {
 	rpcPassword    string
 	rateLimiter    *rateLimiter
 	maxRequestSize int64
+	logger         *logging.Logger
 	mu             sync.RWMutex
 }
 
@@ -104,6 +107,9 @@ func NewServer(cfg *Config) (*Server, error) {
 		maxRequestSize = defaultMaxRequestSize
 	}
 
+	// Initialize logger for RPC server
+	logger := logging.GetDefault().WithComponent("rpc")
+
 	s := &Server{
 		blockchain:     cfg.Blockchain,
 		peerMgr:        cfg.PeerMgr,
@@ -113,12 +119,13 @@ func NewServer(cfg *Config) (*Server, error) {
 		rpcPassword:    cfg.RPCPassword,
 		rateLimiter:    newRateLimiter(rateLimit),
 		maxRequestSize: maxRequestSize,
+		logger:         logger,
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", s.handleRequest)
-	mux.HandleFunc("/health", s.handleHealth)
-	mux.HandleFunc("/ready", s.handleReady)
+	mux.HandleFunc("/", s.withPanicRecovery(s.handleRequest))
+	mux.HandleFunc("/health", s.withPanicRecovery(s.handleHealth))
+	mux.HandleFunc("/ready", s.withPanicRecovery(s.handleReady))
 
 	s.server = &http.Server{
 		Handler:      mux,
@@ -153,6 +160,11 @@ func (s *Server) Stop() error {
 	return s.server.Close()
 }
 
+// Close closes the RPC server (alias for Stop for compatibility)
+func (s *Server) Close() error {
+	return s.Stop()
+}
+
 // checkAuth validates HTTP Basic Authentication credentials.
 // Returns true if the request contains valid credentials matching
 // the configured rpcUser and rpcPassword.
@@ -165,6 +177,35 @@ func (s *Server) checkAuth(r *http.Request) bool {
 	userMatch := subtle.ConstantTimeCompare([]byte(user), []byte(s.rpcUser))
 	passMatch := subtle.ConstantTimeCompare([]byte(pass), []byte(s.rpcPassword))
 	return userMatch == 1 && passMatch == 1
+}
+
+// withPanicRecovery wraps an HTTP handler with panic recovery middleware.
+// If a panic occurs, it logs the panic with full stack trace and returns a 500 error.
+// This prevents the entire server from crashing due to unexpected panics.
+func (s *Server) withPanicRecovery(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				// Log the panic with full context
+				s.logger.Error("panic recovered in HTTP handler",
+					"error", err,
+					"method", r.Method,
+					"path", r.URL.Path,
+					"remote_addr", r.RemoteAddr,
+					"stack", string(debug.Stack()),
+				)
+
+				// Record error metric
+				metrics.Get().RecordValidationError("panic")
+
+				// Return internal server error to client (don't expose panic details)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+			}
+		}()
+
+		// Call the actual handler
+		handler(w, r)
+	}
 }
 
 // handleRequest handles incoming RPC requests with security hardening:
@@ -223,10 +264,24 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	resp := s.processRequest(&req)
 
+	// Log errors for internal tracking (don't expose details to clients)
+	if resp.Error != nil && s.logger != nil {
+		s.logger.Warn("rpc request error",
+			"method", req.Method,
+			"error_code", resp.Error.Code,
+			"error_message", resp.Error.Message,
+		)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		// Log encoding error but can't send another response at this point
-		fmt.Fprintf(os.Stderr, "failed to encode JSON-RPC response: %v\n", err)
+		// Log encoding error with structured logging
+		if s.logger != nil {
+			s.logger.Error("failed to encode JSON-RPC response",
+				"error", err,
+				"method", req.Method,
+			)
+		}
 	}
 }
 
@@ -1836,6 +1891,15 @@ func (s *Server) getRawTransaction(req *Request) *Response {
 
 // writeError writes an error response
 func (s *Server) writeError(w http.ResponseWriter, req *Request, code int, message string) {
+	// Log error with structured logging
+	if s.logger != nil {
+		s.logger.Warn("rpc error response",
+			"method", req.Method,
+			"error_code", code,
+			"error_message", message,
+		)
+	}
+
 	resp := &Response{
 		Jsonrpc: "2.0",
 		Error: &Error{
@@ -1847,7 +1911,12 @@ func (s *Server) writeError(w http.ResponseWriter, req *Request, code int, messa
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to encode JSON-RPC error response: %v\n", err)
+		if s.logger != nil {
+			s.logger.Error("failed to encode JSON-RPC error response",
+				"error", err,
+				"method", req.Method,
+			)
+		}
 	}
 }
 
