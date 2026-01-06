@@ -41,8 +41,10 @@ func TestPrometheusCollector_Describe(t *testing.T) {
 		count++
 	}
 
-	// We expect 32 metrics (based on the number of NewDesc calls)
-	expectedCount := 32
+	// We expect 43 metrics (32 original + 11 new metrics)
+	// Original: 32 (blocks, names, peers, txs, validation, performance)
+	// New: 11 (3 database, 1 error breakdown, 2 RPC, 5 Go runtime)
+	expectedCount := 43
 	if count != expectedCount {
 		t.Errorf("Expected %d metric descriptors, got %d", expectedCount, count)
 	}
