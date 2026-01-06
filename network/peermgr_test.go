@@ -7,6 +7,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/peer"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/opd-ai/nmcd/internal/logging"
 )
 
 // TestPeerManagerCreation tests that PeerManager can be created with proper configuration.
@@ -49,6 +50,7 @@ func TestPeerManagerCreation(t *testing.T) {
 // TestPeerManagerGetConnectedPeers tests the GetConnectedPeers method.
 func TestPeerManagerGetConnectedPeers(t *testing.T) {
 	pm := &PeerManager{
+		logger:     logging.GetDefault().WithComponent("test"),
 		peers:       make(map[string]*peer.Peer),
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    10,
@@ -64,6 +66,7 @@ func TestPeerManagerGetConnectedPeers(t *testing.T) {
 // TestPeerManagerGetPeerInfo tests the GetPeerInfo method.
 func TestPeerManagerGetPeerInfo(t *testing.T) {
 	pm := &PeerManager{
+		logger:     logging.GetDefault().WithComponent("test"),
 		peers:       make(map[string]*peer.Peer),
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    10,
@@ -80,6 +83,7 @@ func TestPeerManagerGetPeerInfo(t *testing.T) {
 // TestPeerManagerStop tests that Stop can be called safely.
 func TestPeerManagerStop(t *testing.T) {
 	pm := &PeerManager{
+		logger:     logging.GetDefault().WithComponent("test"),
 		peers:       make(map[string]*peer.Peer),
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    10,
@@ -165,6 +169,7 @@ func TestConfigStruct(t *testing.T) {
 // When blockchain is nil, the handler should log a message and return without panicking.
 func TestOnBlockWithNilBlockchain(t *testing.T) {
 	pm := &PeerManager{
+		logger:     logging.GetDefault().WithComponent("test"),
 		peers:       make(map[string]*peer.Peer),
 		blockchain:  nil, // nil blockchain
 		chainParams: &chaincfg.MainNetParams,
@@ -194,6 +199,7 @@ func TestOnBlockWithNilBlockchain(t *testing.T) {
 // when given a valid block structure, even if the block would be rejected.
 func TestOnBlockDoesNotPanicWithValidBlock(t *testing.T) {
 	pm := &PeerManager{
+		logger:     logging.GetDefault().WithComponent("test"),
 		peers:       make(map[string]*peer.Peer),
 		blockchain:  nil, // We use nil to test the nil check path
 		chainParams: &chaincfg.MainNetParams,
@@ -233,6 +239,7 @@ func TestOnBlockDoesNotPanicWithValidBlock(t *testing.T) {
 // TestOnBlockBufferParameter tests that the buf parameter is properly handled.
 func TestOnBlockBufferParameter(t *testing.T) {
 	pm := &PeerManager{
+		logger:     logging.GetDefault().WithComponent("test"),
 		peers:       make(map[string]*peer.Peer),
 		blockchain:  nil,
 		chainParams: &chaincfg.MainNetParams,
