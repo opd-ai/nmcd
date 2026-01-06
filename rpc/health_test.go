@@ -22,18 +22,18 @@ type mockPeerMgrForHealth interface {
 func TestHandleHealth_Healthy(t *testing.T) {
 	// Create a test server using the NewServer constructor with mux configured
 	// We'll test via HTTP since the server struct has private fields
-	
+
 	// Create a minimal server for testing
 	s := &Server{
 		rateLimiter:    newRateLimiter(defaultRateLimit),
 		maxRequestSize: defaultMaxRequestSize,
 	}
-	
+
 	// Set up HTTP mux like in NewServer
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/ready", s.handleReady)
-	
+
 	testServer := httptest.NewServer(mux)
 	defer testServer.Close()
 
@@ -211,4 +211,3 @@ func TestReadyEndpoint_ResponseStructure(t *testing.T) {
 		t.Error("Syncing field should be true when initializing")
 	}
 }
-

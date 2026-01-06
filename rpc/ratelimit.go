@@ -64,7 +64,7 @@ func (rl *rateLimiter) allow(ip string) bool {
 			b.tokens = float64(rl.rate)
 		}
 	}
-	
+
 	// Always update lastRefill when tokens are added or consumed
 	b.lastRefill = now
 	b.lastUsed = now
@@ -102,7 +102,7 @@ func (rl *rateLimiter) cleanupLoop() {
 func (rl *rateLimiter) triggerCleanup() {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
-	
+
 	now := time.Now()
 	for ip, b := range rl.buckets {
 		// Remove buckets that haven't been used in 10 minutes
