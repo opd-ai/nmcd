@@ -61,11 +61,31 @@ type Metrics struct {
 	StartTime           time.Time     // Node start time
 	AvgBlockProcessTime time.Duration // Average block processing time
 	totalBlockTime      time.Duration // Total time spent processing blocks (internal)
+
+	// Database metrics
+	NameDBSizeBytes     uint64            // Size of name database in bytes
+	NameDBReadLatency   time.Duration     // Average namedb read latency
+	NameDBWriteLatency  time.Duration     // Average namedb write latency
+	totalDBReadTime     time.Duration     // Total time spent on DB reads (internal)
+	totalDBWriteTime    time.Duration     // Total time spent on DB writes (internal)
+	dbReadCount         uint64            // Number of DB reads (internal)
+	dbWriteCount        uint64            // Number of DB writes (internal)
+
+	// RPC metrics (per-method tracking)
+	rpcRequests  map[string]uint64        // RPC requests by method
+	rpcDurations map[string]time.Duration // Total RPC duration by method
+
+	// Error metrics by category
+	NetworkErrors  uint64 // Network-related errors
+	DatabaseErrors uint64 // Database-related errors
+	// ValidationErrors already exists above
 }
 
 // Global metrics instance
 var global = &Metrics{
-	StartTime: time.Now(),
+	StartTime:    time.Now(),
+	rpcRequests:  make(map[string]uint64),
+	rpcDurations: make(map[string]time.Duration),
 }
 
 // Get returns the global metrics instance
@@ -206,6 +226,69 @@ func (m *Metrics) RecordValidationError(errorType string) {
 	}
 }
 
+// RecordDatabaseRead records a database read operation
+func (m *Metrics) RecordDatabaseRead(duration time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.totalDBReadTime += duration
+	m.dbReadCount++
+	if m.dbReadCount > 0 {
+		m.NameDBReadLatency = m.totalDBReadTime / time.Duration(m.dbReadCount)
+	}
+}
+
+// RecordDatabaseWrite records a database write operation
+func (m *Metrics) RecordDatabaseWrite(duration time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.totalDBWriteTime += duration
+	m.dbWriteCount++
+	if m.dbWriteCount > 0 {
+		m.NameDBWriteLatency = m.totalDBWriteTime / time.Duration(m.dbWriteCount)
+	}
+}
+
+// UpdateDatabaseSize updates the database size metric
+func (m *Metrics) UpdateDatabaseSize(sizeBytes uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.NameDBSizeBytes = sizeBytes
+}
+
+// RecordRPCRequest records an RPC request with its method and duration
+func (m *Metrics) RecordRPCRequest(method string, duration time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.rpcRequests[method]++
+	m.rpcDurations[method] += duration
+}
+
+// GetRPCStats returns RPC statistics for a specific method
+func (m *Metrics) GetRPCStats(method string) (count uint64, avgDuration time.Duration) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	count = m.rpcRequests[method]
+	if count > 0 {
+		avgDuration = m.rpcDurations[method] / time.Duration(count)
+	}
+	return
+}
+
+// RecordNetworkError records a network-related error
+func (m *Metrics) RecordNetworkError() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.NetworkErrors++
+}
+
+// RecordDatabaseError records a database-related error
+func (m *Metrics) RecordDatabaseError() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.DatabaseErrors++
+}
+
+
 // Snapshot returns a snapshot of current metrics
 // This creates a copy to avoid holding the lock during serialization
 func (m *Metrics) Snapshot() MetricsSnapshot {
@@ -263,7 +346,38 @@ func (m *Metrics) Snapshot() MetricsSnapshot {
 		StartTime:           m.StartTime,
 		Uptime:              time.Since(m.StartTime),
 		AvgBlockProcessTime: m.AvgBlockProcessTime,
+
+		// Database metrics
+		NameDBSizeBytes:    m.NameDBSizeBytes,
+		NameDBReadLatency:  m.NameDBReadLatency,
+		NameDBWriteLatency: m.NameDBWriteLatency,
+
+		// Error metrics by category
+		NetworkErrors:  m.NetworkErrors,
+		DatabaseErrors: m.DatabaseErrors,
+
+		// RPC metrics - create a copy of the maps
+		RPCRequests:  copyUint64Map(m.rpcRequests),
+		RPCDurations: copyDurationMap(m.rpcDurations),
 	}
+}
+
+// copyUint64Map creates a copy of a uint64 map
+func copyUint64Map(src map[string]uint64) map[string]uint64 {
+	dst := make(map[string]uint64, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+// copyDurationMap creates a copy of a duration map
+func copyDurationMap(src map[string]time.Duration) map[string]time.Duration {
+	dst := make(map[string]time.Duration, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
 
 // MetricsSnapshot is an immutable copy of metrics at a point in time
@@ -318,4 +432,17 @@ type MetricsSnapshot struct {
 	StartTime           time.Time     `json:"start_time"`
 	Uptime              time.Duration `json:"uptime"`
 	AvgBlockProcessTime time.Duration `json:"avg_block_process_time"`
+
+	// Database metrics
+	NameDBSizeBytes    uint64        `json:"namedb_size_bytes"`
+	NameDBReadLatency  time.Duration `json:"namedb_read_latency"`
+	NameDBWriteLatency time.Duration `json:"namedb_write_latency"`
+
+	// Error metrics by category
+	NetworkErrors  uint64 `json:"network_errors"`
+	DatabaseErrors uint64 `json:"database_errors"`
+
+	// RPC metrics
+	RPCRequests  map[string]uint64        `json:"rpc_requests"`
+	RPCDurations map[string]time.Duration `json:"rpc_durations"`
 }

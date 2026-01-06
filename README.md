@@ -544,6 +544,27 @@ Validation Errors:
 - `nmcd_name_theft_attempts_total` - Name theft attempts detected
 - `nmcd_double_spend_attempts_total` - Double-spend attempts detected
 
+Database Performance (New):
+- `nmcd_namedb_size_bytes` - Size of name database in bytes
+- `nmcd_namedb_read_latency_seconds` - Average database read latency
+- `nmcd_namedb_write_latency_seconds` - Average database write latency
+
+RPC Performance (New):
+- `nmcd_rpc_requests_total{method="METHOD"}` - Total RPC requests by method
+- `nmcd_rpc_duration_seconds{method="METHOD"}` - Average RPC duration by method
+
+Error Breakdown (New):
+- `nmcd_errors_total{type="validation"}` - Validation errors
+- `nmcd_errors_total{type="network"}` - Network errors
+- `nmcd_errors_total{type="database"}` - Database errors
+
+Go Runtime (New):
+- `nmcd_go_goroutines` - Number of goroutines
+- `nmcd_go_memstats_alloc_bytes` - Bytes allocated and in use
+- `nmcd_go_memstats_heap_alloc_bytes` - Heap bytes allocated and in use
+- `nmcd_go_memstats_heap_idle_bytes` - Heap bytes waiting to be used
+- `nmcd_go_memstats_heap_inuse_bytes` - Heap bytes that are in use
+
 **Example Prometheus Query:**
 
 ```bash
@@ -567,6 +588,24 @@ The metrics can be visualized in Grafana. Key panels to consider:
 - Name operation activity (rate of `nmcd_name_*_total` metrics)
 - Validation error rates (rate of `nmcd_*_errors_total` metrics)
 - Mempool size over time (`nmcd_txs_in_mempool`)
+- Database performance (`nmcd_namedb_read_latency_seconds`, `nmcd_namedb_write_latency_seconds`)
+- RPC performance by method (`rate(nmcd_rpc_requests_total[5m])`, `nmcd_rpc_duration_seconds`)
+- Error breakdown by category (`nmcd_errors_total` grouped by type label)
+- Memory usage (`nmcd_go_memstats_alloc_bytes`, `nmcd_go_memstats_heap_inuse_bytes`)
+- Goroutine count (`nmcd_go_goroutines`)
+
+**Example Queries:**
+```promql
+# Top 5 slowest RPC methods
+topk(5, nmcd_rpc_duration_seconds)
+
+# Error rate by category (per second)
+rate(nmcd_errors_total[5m])
+
+# Database read/write latency comparison
+nmcd_namedb_read_latency_seconds
+nmcd_namedb_write_latency_seconds
+```
 
 ---
 

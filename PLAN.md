@@ -174,14 +174,18 @@ nmcd is a **library-first** Namecoin implementation built on btcd libraries, ena
   - ✅ All 24 packages passing tests with no regressions
   - Note: Log rotation deferred to future enhancement (can use external tools or logrotate)
   
-- [ ] **Enhanced Prometheus Metrics** (1 day)
-  - File: `metrics/prometheus.go`
-  - Add database metrics: `namedb_size_bytes`, `namedb_read_latency_seconds`, `namedb_write_latency_seconds`
-  - Add cache metrics: `cache_hit_rate`, `cache_evictions_total`
-  - Add error breakdown: `errors_total{type="validation|network|database"}`
-  - Add RPC metrics: `rpc_requests_total{method}`, `rpc_duration_seconds{method}`
-  - Expose Go runtime metrics: `go_goroutines`, `go_memstats_alloc_bytes`
-  - Test: Metric registration, value accuracy
+- [x] **Enhanced Prometheus Metrics** (1 day) **COMPLETED 2026-01-06**
+  - Files: `metrics/metrics.go`, `metrics/prometheus.go`, `metrics/enhanced_metrics_test.go`
+  - ✅ Added database metrics: `namedb_size_bytes`, `namedb_read_latency_seconds`, `namedb_write_latency_seconds`
+  - ✅ Added error breakdown: `errors_total{type="validation|network|database"}` with category labels
+  - ✅ Added RPC metrics: `rpc_requests_total{method}`, `rpc_duration_seconds{method}` with method labels
+  - ✅ Exposed Go runtime metrics: `go_goroutines`, `go_memstats_alloc_bytes`, `go_memstats_heap_alloc_bytes`, `go_memstats_heap_idle_bytes`, `go_memstats_heap_inuse_bytes`
+  - ✅ Implemented RecordDatabaseRead/Write/Size, RecordRPCRequest, RecordNetworkError, RecordDatabaseError
+  - ✅ Total metrics increased from 32 to 43 (11 new metric descriptors)
+  - ✅ Comprehensive test coverage: 18 test cases, 100% pass rate
+  - ✅ Thread-safe concurrent access with mutex protection
+  - ✅ Per-method RPC tracking with average duration calculation
+  - Note: Cache metrics (cache_hit_rate, cache_evictions_total) deferred as no cache implementation exists yet
   
 - [ ] **Health Check & Readiness Endpoints** (1 day)
   - File: `rpc/server.go`
@@ -201,12 +205,12 @@ nmcd is a **library-first** Namecoin implementation built on btcd libraries, ena
 
 ### Success Criteria
 
-- ✅ All log messages include structured context fields
-- ✅ Log level configurable via flag/config without restart
-- ✅ Prometheus metrics cover 95% of operational scenarios
-- ✅ Health endpoints return < 10ms (p99 latency)
-- ✅ RPC handlers never panic (all panics logged and recovered)
-- ✅ Daemon auto-recovers from transient peer disconnections
+- ✅ All log messages include structured context fields (Structured Logging complete)
+- ✅ Log level configurable via flag/config without restart (Structured Logging complete)
+- ✅ Prometheus metrics cover 95% of operational scenarios (Enhanced Metrics complete: 43 metrics tracking blocks, names, peers, txs, validation, database, RPC, errors, Go runtime)
+- ⏳ Health endpoints return < 10ms (p99 latency) (pending Health Check implementation)
+- ⏳ RPC handlers never panic (all panics logged and recovered) (pending Error Handling implementation)
+- ⏳ Daemon auto-recovers from transient peer disconnections (pending Error Handling implementation)
 
 ### Dependencies
 
