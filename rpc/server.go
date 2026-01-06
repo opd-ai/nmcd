@@ -362,12 +362,28 @@ func getDifficultyRatio(bits uint32, params *chaincfg.Params) float64 {
 
 // getInfo returns general information
 func (s *Server) getInfo(req *Request) *Response {
+	if s.blockchain == nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32603,
+				Message: "Blockchain not initialized",
+			},
+			ID: req.ID,
+		}
+	}
+
 	best := s.blockchain.BestSnapshot()
+
+	connections := 0
+	if s.peerMgr != nil {
+		connections = s.peerMgr.GetConnectedPeers()
+	}
 
 	info := map[string]interface{}{
 		"version":     "0.1.0",
 		"blocks":      best.Height,
-		"connections": s.peerMgr.GetConnectedPeers(),
+		"connections": connections,
 		"difficulty":  best.Bits,
 	}
 
@@ -380,6 +396,17 @@ func (s *Server) getInfo(req *Request) *Response {
 
 // getBlockCount returns the current block count
 func (s *Server) getBlockCount(req *Request) *Response {
+	if s.blockchain == nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32603,
+				Message: "Blockchain not initialized",
+			},
+			ID: req.ID,
+		}
+	}
+
 	best := s.blockchain.BestSnapshot()
 
 	return &Response{
@@ -391,6 +418,17 @@ func (s *Server) getBlockCount(req *Request) *Response {
 
 // getBestBlockHash returns the best block hash
 func (s *Server) getBestBlockHash(req *Request) *Response {
+	if s.blockchain == nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32603,
+				Message: "Blockchain not initialized",
+			},
+			ID: req.ID,
+		}
+	}
+
 	best := s.blockchain.BestSnapshot()
 
 	return &Response{
@@ -402,7 +440,10 @@ func (s *Server) getBestBlockHash(req *Request) *Response {
 
 // getConnectionCount returns the number of connections
 func (s *Server) getConnectionCount(req *Request) *Response {
-	count := s.peerMgr.GetConnectedPeers()
+	count := 0
+	if s.peerMgr != nil {
+		count = s.peerMgr.GetConnectedPeers()
+	}
 
 	return &Response{
 		Jsonrpc: "2.0",
@@ -413,6 +454,14 @@ func (s *Server) getConnectionCount(req *Request) *Response {
 
 // getPeerInfo returns information about peers
 func (s *Server) getPeerInfo(req *Request) *Response {
+	if s.peerMgr == nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Result:  []interface{}{},
+			ID:      req.ID,
+		}
+	}
+
 	peers := s.peerMgr.GetPeerInfo()
 
 	return &Response{
