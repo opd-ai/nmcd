@@ -582,6 +582,14 @@ func (pm *PeerManager) GetPeerInfo() []PeerInfo {
 	return info
 }
 
+// IsSyncing returns whether we're currently syncing with peers
+func (pm *PeerManager) IsSyncing() bool {
+	if pm.syncManager == nil {
+		return false
+	}
+	return pm.syncManager.IsSyncing()
+}
+
 // GetMempool returns the mempool instance
 func (pm *PeerManager) GetMempool() *Mempool {
 	return pm.mempool
