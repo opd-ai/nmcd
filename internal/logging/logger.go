@@ -189,56 +189,62 @@ func (l *Logger) Close() error {
 }
 
 // WithComponent creates a new logger with an additional component context
+// Child loggers do not manage the closer resource - only the root logger should close files
 func (l *Logger) WithComponent(component string) *Logger {
 	return &Logger{
 		Logger: l.Logger.With("component", component),
 		config: l.config,
-		closer: l.closer,
+		closer: nil, // Child loggers don't own the closer
 	}
 }
 
 // WithOperation creates a child logger with operation context
+// Child loggers do not manage the closer resource - only the root logger should close files
 func (l *Logger) WithOperation(operation string) *Logger {
 	return &Logger{
 		Logger: l.Logger.With("operation", operation),
 		config: l.config,
-		closer: l.closer,
+		closer: nil, // Child loggers don't own the closer
 	}
 }
 
 // WithBlockHeight creates a child logger with block height context
+// Child loggers do not manage the closer resource - only the root logger should close files
 func (l *Logger) WithBlockHeight(height int32) *Logger {
 	return &Logger{
 		Logger: l.Logger.With("block_height", height),
 		config: l.config,
-		closer: l.closer,
+		closer: nil, // Child loggers don't own the closer
 	}
 }
 
 // WithPeerID creates a child logger with peer ID context
+// Child loggers do not manage the closer resource - only the root logger should close files
 func (l *Logger) WithPeerID(peerID string) *Logger {
 	return &Logger{
 		Logger: l.Logger.With("peer_id", peerID),
 		config: l.config,
-		closer: l.closer,
+		closer: nil, // Child loggers don't own the closer
 	}
 }
 
 // WithTxHash creates a child logger with transaction hash context
+// Child loggers do not manage the closer resource - only the root logger should close files
 func (l *Logger) WithTxHash(txHash string) *Logger {
 	return &Logger{
 		Logger: l.Logger.With("tx_hash", txHash),
 		config: l.config,
-		closer: l.closer,
+		closer: nil, // Child loggers don't own the closer
 	}
 }
 
 // WithError creates a child logger with error context
+// Child loggers do not manage the closer resource - only the root logger should close files
 func (l *Logger) WithError(err error) *Logger {
 	return &Logger{
 		Logger: l.Logger.With("error", err),
 		config: l.config,
-		closer: l.closer,
+		closer: nil, // Child loggers don't own the closer
 	}
 }
 

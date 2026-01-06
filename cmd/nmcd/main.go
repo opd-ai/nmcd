@@ -18,17 +18,13 @@ func main() {
 	cfg := parseFlags()
 
 	// Initialize structured logging
-	logCfg := &logging.Config{
-		Level:           logging.LogLevel(cfg.LogLevel),
-		Format:          cfg.LogFormat,
-		Output:          cfg.LogOutput,
-		Component:       "nmcd",
-		EnableRotation:  cfg.LogRotation,
-		MaxSizeMB:       cfg.LogMaxSizeMB,
-		MaxBackups:      10,
-		MaxAgeDays:      30,
-		CompressBackups: true,
-	}
+	logCfg := logging.DefaultConfig()
+	logCfg.Level = logging.LogLevel(cfg.LogLevel)
+	logCfg.Format = cfg.LogFormat
+	logCfg.Output = cfg.LogOutput
+	logCfg.Component = "nmcd"
+	logCfg.EnableRotation = cfg.LogRotation
+	logCfg.MaxSizeMB = cfg.LogMaxSizeMB
 
 	logger, err := logging.Init(logCfg)
 	if err != nil {

@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -293,20 +292,21 @@ func TestWithContext(t *testing.T) {
 }
 
 func TestGetDefault(t *testing.T) {
-	// Reset the once to allow re-initialization
-	once = sync.Once{}
-	defaultLogger = nil
-
+	// This test verifies GetDefault behavior but doesn't modify global state
+	// We just verify the function works correctly
 	logger := GetDefault()
 	if logger == nil {
 		t.Fatal("GetDefault returned nil")
 	}
 
-	// Verify it returns the same instance
+	// Verify it returns the same instance on subsequent calls
 	logger2 := GetDefault()
 	if logger != logger2 {
 		t.Error("GetDefault should return the same instance")
 	}
+
+	// Verify the logger is functional
+	logger.Info("test message")
 }
 
 func TestSetDefault(t *testing.T) {
