@@ -1878,9 +1878,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	// Check if blockchain is initialized
 	if s.blockchain == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(HealthResponse{
+		if err := json.NewEncoder(w).Encode(HealthResponse{
 			Status: "initializing",
-		})
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to encode health response: %v\n", err)
+		}
 		return
 	}
 
@@ -1892,11 +1894,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(HealthResponse{
+	if err := json.NewEncoder(w).Encode(HealthResponse{
 		Status:      "healthy",
 		BlockHeight: best.Height,
 		Peers:       peers,
-	})
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to encode health response: %v\n", err)
+	}
 }
 
 // handleReady handles GET requests to /ready endpoint
@@ -1918,10 +1922,12 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	// Check if blockchain is initialized
 	if s.blockchain == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(HealthResponse{
+		if err := json.NewEncoder(w).Encode(HealthResponse{
 			Status:  "initializing",
 			Syncing: true,
-		})
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to encode ready response: %v\n", err)
+		}
 		return
 	}
 
@@ -1937,21 +1943,25 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	// If syncing, return 503 Service Unavailable
 	if syncing {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(HealthResponse{
+		if err := json.NewEncoder(w).Encode(HealthResponse{
 			Status:      "syncing",
 			BlockHeight: best.Height,
 			Peers:       peers,
 			Syncing:     true,
-		})
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to encode ready response: %v\n", err)
+		}
 		return
 	}
 
 	// Ready - sync is complete
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(HealthResponse{
+	if err := json.NewEncoder(w).Encode(HealthResponse{
 		Status:      "ready",
 		BlockHeight: best.Height,
 		Peers:       peers,
 		Syncing:     false,
-	})
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to encode ready response: %v\n", err)
+	}
 }
