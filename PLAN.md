@@ -233,7 +233,7 @@ nmcd is a **library-first** Namecoin implementation built on btcd libraries, ena
 ### Deliverables
 
 - [x] **Benchmark Suite** (2 days) **COMPLETED 2026-01-07**
-  - Files: `namedb/namedb_bench_test.go`, `chain/blockchain_bench_test.go`, `rpc/rpc_bench_test.go`, `client/client_bench_test.go` (reviewed)
+  - Files: `namedb/namedb_bench_test.go`, `chain/blockchain_bench_test.go`, `rpc/rpc_bench_test.go`, `client/benchmark_test.go` (reviewed)
   - ✅ Benchmark name resolution: actual 1.15 µs (target < 1ms) - 870x better than target
   - ✅ Benchmark name registration: validation ~10 µs (target < 50ms) - 5000x better than target
   - ✅ Benchmark RPC methods: JSON parsing 1.32 µs (target < 100ms p99) - well within target

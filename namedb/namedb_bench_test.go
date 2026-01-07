@@ -31,7 +31,11 @@ func populateBenchmarkData(b *testing.B, db *NameDatabase, count int) {
 		name := fmt.Sprintf("d/benchmark%d", i)
 		value := fmt.Sprintf(`{"ip":"192.168.%d.%d"}`, i/256, i%256)
 
-		txHash, _ := chainhash.NewHashFromStr(fmt.Sprintf("%064x", i))
+		txHashStr := fmt.Sprintf("%064x", i)
+		txHash, err := chainhash.NewHashFromStr(txHashStr)
+		if err != nil {
+			b.Fatalf("Failed to create tx hash for benchmark data (i=%d, hash=%s): %v", i, txHashStr, err)
+		}
 		record := &NameRecord{
 			Name:      name,
 			Value:     value,
@@ -352,14 +356,20 @@ func BenchmarkUTXOOperations(b *testing.B) {
 
 	// Add some UTXOs for GetUTXO test
 	for i := 0; i < 100; i++ {
-		txHash, _ := chainhash.NewHashFromStr(fmt.Sprintf("%064x", 40000+i))
+		txHashStr := fmt.Sprintf("%064x", 40000+i)
+		txHash, err := chainhash.NewHashFromStr(txHashStr)
+		if err != nil {
+			b.Fatalf("Failed to create tx hash for UTXO setup (i=%d, hash=%s): %v", i, txHashStr, err)
+		}
 		utxo := &UTXO{
 			TxHash:   *txHash,
 			OutIndex: 0,
 			Address:  "NTestAddress",
 			Value:    100000000,
 		}
-		db.AddUTXO(utxo)
+		if err := db.AddUTXO(utxo); err != nil {
+			b.Fatalf("Failed to add UTXO during setup (i=%d): %v", i, err)
+		}
 	}
 
 	b.Run("GetUTXO", func(b *testing.B) {
@@ -386,22 +396,27 @@ func BenchmarkUTXOOperations(b *testing.B) {
 
 	b.Run("RemoveUTXO", func(b *testing.B) {
 		// Need to add UTXOs first
-		b.StopTimer()
 		for i := 0; i < b.N; i++ {
-			txHash, _ := chainhash.NewHashFromStr(fmt.Sprintf("%064x", 50000+i))
+			b.StopTimer()
+			txHashStr := fmt.Sprintf("%064x", 50000+i)
+			txHash, err := chainhash.NewHashFromStr(txHashStr)
+			if err != nil {
+				b.Fatalf("Failed to create tx hash for RemoveUTXO benchmark (i=%d, hash=%s): %v", i, txHashStr, err)
+			}
 			utxo := &UTXO{
 				TxHash:   *txHash,
 				OutIndex: 0,
 				Address:  "NTestAddress",
 				Value:    100000000,
 			}
-			db.AddUTXO(utxo)
+			if err := db.AddUTXO(utxo); err != nil {
+				b.Fatalf("Failed to add UTXO for RemoveUTXO benchmark (i=%d): %v", i, err)
+			}
 
 			b.StartTimer()
 			if err := db.RemoveUTXO(txHash, 0); err != nil {
 				b.Fatalf("RemoveUTXO failed: %v", err)
 			}
-			b.StopTimer()
 		}
 	})
 }

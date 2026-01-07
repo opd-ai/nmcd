@@ -79,7 +79,9 @@ func BenchmarkValidateNameFormat(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		name := names[i%len(names)]
 		value := values[i%len(values)]
-		_ = validateNameFormat(name, value)
+		if err := validateNameFormat(name, value); err != nil {
+			b.Fatalf("validateNameFormat failed for benchmark input (name=%q, value=%q): %v", name, value, err)
+		}
 	}
 }
 
