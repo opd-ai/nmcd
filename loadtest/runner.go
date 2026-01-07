@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -241,18 +242,14 @@ func RPCLoadTest(config LoadTestConfig) (*TestResult, error) {
 
 		// Calculate percentiles - need to sort first
 		if len(latencies) >= 20 {
-			// Sort latencies for accurate percentile calculation
+			// Sort latencies for accurate percentile calculation using sort.Slice
 			sortedLatencies := make([]time.Duration, len(latencies))
 			copy(sortedLatencies, latencies)
 			
-			// Simple bubble sort for small arrays, or use sort.Slice for production
-			for i := 0; i < len(sortedLatencies); i++ {
-				for j := i + 1; j < len(sortedLatencies); j++ {
-					if sortedLatencies[i] > sortedLatencies[j] {
-						sortedLatencies[i], sortedLatencies[j] = sortedLatencies[j], sortedLatencies[i]
-					}
-				}
-			}
+			// Use standard library sort for O(n log n) performance
+			sort.Slice(sortedLatencies, func(i, j int) bool {
+				return sortedLatencies[i] < sortedLatencies[j]
+			})
 			
 			result.P95Latency = sortedLatencies[int(float64(len(sortedLatencies))*0.95)]
 			result.P99Latency = sortedLatencies[int(float64(len(sortedLatencies))*0.99)]
@@ -378,6 +375,7 @@ func ContinuousOperationTest(config ContinuousOperationConfig) (*TestResult, err
 
 	start := time.Now()
 	var requestCount, successCount, failureCount int64
+	var errorMutex sync.Mutex
 
 	// Health check goroutine
 	stopChan := make(chan struct{})
@@ -417,9 +415,11 @@ func ContinuousOperationTest(config ContinuousOperationConfig) (*TestResult, err
 
 		if err != nil {
 			atomic.AddInt64(&failureCount, 1)
+			errorMutex.Lock()
 			if len(result.ErrorDetails) < 100 {
 				result.ErrorDetails = append(result.ErrorDetails, err.Error())
 			}
+			errorMutex.Unlock()
 		} else {
 			atomic.AddInt64(&successCount, 1)
 		}

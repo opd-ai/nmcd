@@ -92,7 +92,7 @@ func main() {
 			if result.ThroughputRPS < 1000 {
 				fmt.Printf("⚠️  WARNING: Throughput %.2f req/s is below target 1000 req/s\n\n", result.ThroughputRPS)
 			}
-			if result.FailureCount > result.RequestCount/100 {
+			if result.RequestCount > 0 && result.FailureCount > result.RequestCount/100 {
 				fmt.Printf("⚠️  WARNING: Failure rate %.2f%% is above 1%% threshold\n\n",
 					float64(result.FailureCount)/float64(result.RequestCount)*100)
 			}
