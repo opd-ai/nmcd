@@ -122,20 +122,53 @@ func (bw *BatchWriter) Commit() error {
 	err := bw.ndb.db.Update(func(tx *bbolt.Tx) error {
 		// Write names
 		if len(bw.names) > 0 {
-			bucket := tx.Bucket(namesBucket)
+			namesBucket := tx.Bucket(namesBucket)
+			expirationBucket := tx.Bucket(expirationBucket)
+			
 			for name, record := range bw.names {
+				// Check if name already exists to update expiration index
+				existingData := namesBucket.Get([]byte(name))
+				if existingData != nil {
+					// Remove old expiration index entry
+					existingRecord, decodeErr := decodeNameRecord(existingData)
+					if decodeErr == nil {
+						oldExpirationKey := makeExpirationKey(existingRecord.ExpiresAt, name)
+						expirationBucket.Delete(oldExpirationKey)
+					}
+				}
+				
+				// Store name record
 				data := encodeNameRecord(record)
-				if err := bucket.Put([]byte(name), data); err != nil {
+				if err := namesBucket.Put([]byte(name), data); err != nil {
 					return fmt.Errorf("failed to put name %s: %w", name, err)
+				}
+				
+				// Add new expiration index entry
+				expirationKey := makeExpirationKey(record.ExpiresAt, name)
+				if err := expirationBucket.Put(expirationKey, []byte{1}); err != nil {
+					return fmt.Errorf("failed to update expiration index for %s: %w", name, err)
 				}
 			}
 		}
 
 		// Delete names
 		if len(bw.deletedNames) > 0 {
-			bucket := tx.Bucket(namesBucket)
+			namesBucket := tx.Bucket(namesBucket)
+			expirationBucket := tx.Bucket(expirationBucket)
+			
 			for name := range bw.deletedNames {
-				if err := bucket.Delete([]byte(name)); err != nil {
+				// Get existing record to remove from expiration index
+				existingData := namesBucket.Get([]byte(name))
+				if existingData != nil {
+					existingRecord, decodeErr := decodeNameRecord(existingData)
+					if decodeErr == nil {
+						expirationKey := makeExpirationKey(existingRecord.ExpiresAt, name)
+						expirationBucket.Delete(expirationKey)
+					}
+				}
+				
+				// Delete name record
+				if err := namesBucket.Delete([]byte(name)); err != nil {
 					return fmt.Errorf("failed to delete name %s: %w", name, err)
 				}
 			}
