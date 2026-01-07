@@ -10,14 +10,14 @@
 
 - **Total Packages:** 24 packages tested (10 example packages excluded)
 - **Packages Above 80% Threshold:** 8 of 13 critical packages (62%)
-- **Critical Packages Needing Improvement:** chain (62.4%), rpc (45.8%), network (43.5%)
+- **Critical Packages Needing Improvement:** chain (68.1%), rpc (45.8%), network (43.5%)
 
 ### Coverage by Package Category
 
 | Category | Package | Coverage | Status | Notes |
 |----------|---------|----------|--------|-------|
 | **Core** | bridge | 100.0% | ✅ | Perfect coverage |
-| **Core** | chain | 62.4% | ⚠️ | Below 80% - needs improvement |
+| **Core** | chain | 68.1% | ⚠️ | Below 80% - needs improvement |
 | **Core** | namedb | 87.3% | ✅ | Above threshold |
 | **Client** | client | 82.9% | ✅ | Above threshold |
 | **RPC** | rpc | 45.8% | ⚠️ | Below 80% - needs improvement |
@@ -37,38 +37,45 @@
 
 ## Critical Packages Analysis
 
-### 1. Chain Package (62.4% coverage)
+### 1. Chain Package (68.1% coverage)
 
 **Status:** ⚠️ **Needs Improvement**  
 **Target:** 80%  
-**Gap:** 17.6%
+**Gap:** 11.9%
 
 #### Uncovered Critical Functions (0% coverage):
 
-1. **NewBlockChain** (`blockchain.go:52`)
-   - Impact: High - Constructor for main blockchain type
-   - Reason: Only called in main binary and integration tests
-   - Action: Add unit tests for initialization edge cases
-
-2. **ProcessBlock** (`blockchain.go:228`)
+1. **ProcessBlock** (`blockchain.go:228`)
    - Impact: **CRITICAL** - Core block processing logic
    - Reason: Complex integration function
    - Action: Add comprehensive unit tests with mock dependencies
 
-3. **ValidateMempoolTransaction** (`blockchain.go:1774`)
+2. **ValidateMempoolTransaction** (`blockchain.go:1774`)
    - Impact: High - Transaction validation for mempool
    - Reason: Recently added, tests pending
    - Action: Add validation tests for all name operation types
 
-4. **GetName, ListNames, GetNameHistory** (`blockchain.go:1062-1077`)
-   - Impact: Medium - Query methods
-   - Reason: Thin wrappers around namedb calls
-   - Action: Add basic delegation tests
+#### Recently Covered Functions (tests added in this PR):
 
-5. **BestSnapshot, ChainParams, GetBlockByHash** (`blockchain.go:1564-1578`)
+1. **NewBlockChain** (`blockchain.go:52`)
+   - Impact: High - Constructor for main blockchain type
+   - Status: ✅ Covered by `blockchain_coverage_test.go`
+   - Coverage: Constructor initialization paths now tested
+
+2. **GetName, ListNames, GetNameHistory** (`blockchain.go:1062-1077`)
+   - Impact: Medium - Query methods
+   - Status: ✅ Covered by `blockchain_coverage_test.go`
+   - Coverage: Delegation to namedb verified
+
+3. **BestSnapshot, ChainParams, GetBlockByHash, GetBlockHeader** (`blockchain.go:1564-1578`)
    - Impact: Medium - State query methods
-   - Reason: Simple getters
-   - Action: Add basic getter tests
+   - Status: ✅ Covered by `blockchain_coverage_test.go`
+   - Coverage: Getter behavior verified
+
+4. **GetNameDB** (`blockchain.go:1740`)
+   - Impact: Low - Database accessor
+   - Status: ✅ Covered by `blockchain_coverage_test.go`
+   - Coverage: Accessor method verified
 
 #### Low Coverage Functions (<20%):
 
@@ -281,7 +288,7 @@
    - [ ] ProcessBlock (0%) - Core block processing
    - [ ] updateNameDatabase (16.9%) - Name state updates
    - [ ] ValidateMempoolTransaction (0%) - Mempool validation
-   - **Expected Impact:** chain 62.4% → 75%+
+   - **Expected Impact:** chain 68.1% → 75%+
 
 2. **RPC Package** - Add tests for:
    - [ ] nameShow (0%) - Name lookup
@@ -301,9 +308,11 @@
 **Timeline:** 1 day
 
 1. **Chain Package** - Add tests for:
-   - [ ] NewBlockChain (0%) - Constructor
-   - [ ] GetName, ListNames, GetNameHistory (0%) - Query methods
-   - [ ] BestSnapshot, ChainParams (0%) - Getters
+   - [x] NewBlockChain (0%) - Constructor ✅ **COMPLETED**
+   - [x] GetName, ListNames, GetNameHistory (0%) - Query methods ✅ **COMPLETED**
+   - [x] BestSnapshot, ChainParams (0%) - Getters ✅ **COMPLETED**
+   - [x] GetBlockByHash, GetBlockHeader (0%) - Block queries ✅ **COMPLETED**
+   - [x] GetNameDB (0%) - Database accessor ✅ **COMPLETED**
 
 2. **RPC Package** - Add tests for:
    - [ ] getInfo nil blockchain (25%) - Error paths
@@ -411,7 +420,7 @@ go tool cover -func=coverage.out > coverage_detailed.txt
 
 | Date | Overall | chain | rpc | network | namedb | Notes |
 |------|---------|-------|-----|---------|--------|-------|
-| 2026-01-07 | N/A | 62.4% | 45.8% | 43.5% | 87.3% | Initial analysis |
+| 2026-01-07 | N/A | 68.1% | 45.8% | 43.5% | 87.3% | Initial analysis with blockchain wrapper tests |
 
 **Target for Next Release (v1.0):**
 - chain: 80%+
@@ -430,7 +439,7 @@ nmcd has **strong coverage in core packages** (bridge, config, namedb, client, m
 3. **Recent additions** (ValidateMempoolTransaction, health endpoints)
 
 With focused effort on Priority 1 and 2 items (~2-3 days), we can achieve:
-- **chain: 75%+** (from 62.4%)
+- **chain: 75%+** (from 68.1%)
 - **rpc: 65%+** (from 45.8%)
 - **network: 60%+** (from 43.5%)
 

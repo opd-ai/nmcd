@@ -143,8 +143,9 @@ header, err := bc.GetBlockHeader(&genesisHash)
 if err != nil {
 t.Fatalf("Failed to get genesis header: %v", err)
 }
+// Verify header has valid version (genesis block should have version > 0)
 if header.Version == 0 {
-t.Error("Expected non-nil header")
+t.Error("Expected header with version > 0")
 }
 
 // Test getting non-existent block header
