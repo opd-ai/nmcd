@@ -63,13 +63,13 @@ type Metrics struct {
 	totalBlockTime      time.Duration // Total time spent processing blocks (internal)
 
 	// Database metrics
-	NameDBSizeBytes     uint64            // Size of name database in bytes
-	NameDBReadLatency   time.Duration     // Average namedb read latency
-	NameDBWriteLatency  time.Duration     // Average namedb write latency
-	totalDBReadTime     time.Duration     // Total time spent on DB reads (internal)
-	totalDBWriteTime    time.Duration     // Total time spent on DB writes (internal)
-	dbReadCount         uint64            // Number of DB reads (internal)
-	dbWriteCount        uint64            // Number of DB writes (internal)
+	NameDBSizeBytes    uint64        // Size of name database in bytes
+	NameDBReadLatency  time.Duration // Average namedb read latency
+	NameDBWriteLatency time.Duration // Average namedb write latency
+	totalDBReadTime    time.Duration // Total time spent on DB reads (internal)
+	totalDBWriteTime   time.Duration // Total time spent on DB writes (internal)
+	dbReadCount        uint64        // Number of DB reads (internal)
+	dbWriteCount       uint64        // Number of DB writes (internal)
 
 	// RPC metrics (per-method tracking)
 	rpcRequests  map[string]uint64        // RPC requests by method
@@ -287,7 +287,6 @@ func (m *Metrics) RecordDatabaseError() {
 	defer m.mu.Unlock()
 	m.DatabaseErrors++
 }
-
 
 // Snapshot returns a snapshot of current metrics
 // This creates a copy to avoid holding the lock during serialization

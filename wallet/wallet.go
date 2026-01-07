@@ -369,10 +369,10 @@ func (w *Wallet) Lock() error {
 			}
 		}
 	}
-	
+
 	// Clear the map and password
 	w.keys = make(map[string]*KeyPair)
-	
+
 	// Zero password bytes (convert string to byte slice and zero it)
 	// Note: This is best-effort as Go strings are immutable
 	if w.unlockPassword != "" {
@@ -382,7 +382,7 @@ func (w *Wallet) Lock() error {
 		}
 		w.unlockPassword = ""
 	}
-	
+
 	w.locked = true
 
 	return nil

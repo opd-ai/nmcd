@@ -335,11 +335,11 @@ func getServerMemory(client *RPCClient, ctx context.Context) (uint64, error) {
 
 // ContinuousOperationConfig contains configuration for continuous operation testing
 type ContinuousOperationConfig struct {
-	RPCURL       string
-	RPCUser      string
-	RPCPassword  string
-	Duration     time.Duration
-	NameCount    int           // Number of names to process
+	RPCURL        string
+	RPCUser       string
+	RPCPassword   string
+	Duration      time.Duration
+	NameCount     int           // Number of names to process
 	CheckInterval time.Duration // How often to check daemon health
 }
 

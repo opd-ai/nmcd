@@ -30,13 +30,13 @@ func TestDefaultConfig(t *testing.T) {
 
 func TestLogLevels(t *testing.T) {
 	tests := []struct {
-		name           string
-		level          LogLevel
-		expectedSlog   slog.Level
-		logDebug       bool
-		logInfo        bool
-		logWarn        bool
-		logError       bool
+		name         string
+		level        LogLevel
+		expectedSlog slog.Level
+		logDebug     bool
+		logInfo      bool
+		logWarn      bool
+		logError     bool
 	}{
 		{
 			name:         "DEBUG level",

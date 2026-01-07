@@ -10,13 +10,13 @@ import (
 
 // goRuntimeStats holds cached Go runtime statistics
 type goRuntimeStats struct {
-	mu               sync.RWMutex
-	goroutines       int
-	allocBytes       uint64
-	heapAllocBytes   uint64
-	heapIdleBytes    uint64
-	heapInuseBytes   uint64
-	lastUpdate       time.Time
+	mu             sync.RWMutex
+	goroutines     int
+	allocBytes     uint64
+	heapAllocBytes uint64
+	heapIdleBytes  uint64
+	heapInuseBytes uint64
+	lastUpdate     time.Time
 }
 
 var cachedGoStats = &goRuntimeStats{}
@@ -24,7 +24,7 @@ var cachedGoStats = &goRuntimeStats{}
 func init() {
 	// Update stats immediately on startup
 	updateGoRuntimeStats()
-	
+
 	// Start background goroutine to update Go runtime stats every 30 seconds
 	// This avoids stop-the-world pauses during Prometheus scrapes
 	go func() {
@@ -39,10 +39,10 @@ func init() {
 func updateGoRuntimeStats() {
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
-	
+
 	cachedGoStats.mu.Lock()
 	defer cachedGoStats.mu.Unlock()
-	
+
 	cachedGoStats.goroutines = runtime.NumGoroutine()
 	cachedGoStats.allocBytes = memStats.Alloc
 	cachedGoStats.heapAllocBytes = memStats.HeapAlloc
@@ -97,19 +97,18 @@ type PrometheusCollector struct {
 	uptimeDesc *prometheus.Desc
 
 	// New metrics
-	namedbSizeBytesDesc       *prometheus.Desc
-	namedbReadLatencyDesc     *prometheus.Desc
-	namedbWriteLatencyDesc    *prometheus.Desc
-	errorsTotalDesc           *prometheus.Desc
-	rpcRequestsTotalDesc      *prometheus.Desc
-	rpcDurationSecondsDesc    *prometheus.Desc
-	goGoroutinesDesc          *prometheus.Desc
-	goMemstatAllocBytesDesc   *prometheus.Desc
-	goMemstatHeapAllocDesc    *prometheus.Desc
-	goMemstatHeapIdleDesc     *prometheus.Desc
-	goMemstatHeapInuseDesc    *prometheus.Desc
+	namedbSizeBytesDesc     *prometheus.Desc
+	namedbReadLatencyDesc   *prometheus.Desc
+	namedbWriteLatencyDesc  *prometheus.Desc
+	errorsTotalDesc         *prometheus.Desc
+	rpcRequestsTotalDesc    *prometheus.Desc
+	rpcDurationSecondsDesc  *prometheus.Desc
+	goGoroutinesDesc        *prometheus.Desc
+	goMemstatAllocBytesDesc *prometheus.Desc
+	goMemstatHeapAllocDesc  *prometheus.Desc
+	goMemstatHeapIdleDesc   *prometheus.Desc
+	goMemstatHeapInuseDesc  *prometheus.Desc
 }
-
 
 // NewPrometheusCollector creates a new Prometheus collector for nmcd metrics
 func NewPrometheusCollector(m *Metrics) *PrometheusCollector {
@@ -358,7 +357,6 @@ func NewPrometheusCollector(m *Metrics) *PrometheusCollector {
 	}
 }
 
-
 // Describe implements prometheus.Collector
 func (c *PrometheusCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.blocksProcessedDesc
@@ -496,4 +494,3 @@ func (c *PrometheusCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(c.goMemstatHeapInuseDesc, prometheus.GaugeValue, float64(cachedGoStats.heapInuseBytes))
 	cachedGoStats.mu.RUnlock()
 }
-

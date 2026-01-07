@@ -210,7 +210,7 @@ func TestSyncBlocks(t *testing.T) {
 // TestGetMempoolMethod tests the GetMempool accessor
 func TestGetMempoolMethod(t *testing.T) {
 	pm := &PeerManager{
-		logger:     logging.GetDefault().WithComponent("test"),
+		logger:  logging.GetDefault().WithComponent("test"),
 		peers:   make(map[string]*peer.Peer),
 		mempool: NewMempool(),
 		quit:    make(chan struct{}),

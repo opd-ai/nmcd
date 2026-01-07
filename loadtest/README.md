@@ -52,16 +52,16 @@ cd loadtest/cmd
 go build -o loadtest
 
 # Run all tests with default settings (60 seconds)
-./loadtest
+./loadtest-tool
 
 # Run RPC load test with 500 concurrent clients for 5 minutes
-./loadtest -test rpc -concurrency 500 -duration 5m
+./loadtest-tool -test rpc -concurrency 500 -duration 5m
 
 # Run memory leak detection for 24 hours
-./loadtest -test memory -duration 24h
+./loadtest-tool -test memory -duration 24h
 
 # Run continuous operation test for 72 hours with 100k operations
-./loadtest -test continuous -namecount 100000 -duration 72h
+./loadtest-tool -test continuous -namecount 100000 -duration 72h
 ```
 
 ## Test Types
@@ -83,7 +83,7 @@ Validates RPC server performance under concurrent load.
 
 **Example:**
 ```bash
-./loadtest -test rpc -concurrency 500 -duration 5m -ratelimit 1000
+./loadtest-tool -test rpc -concurrency 500 -duration 5m -ratelimit 1000
 ```
 
 ### 2. Memory Leak Detection
@@ -102,7 +102,7 @@ Monitors memory usage over time to detect leaks.
 
 **Example:**
 ```bash
-./loadtest -test memory -duration 24h
+./loadtest-tool -test memory -duration 24h
 ```
 
 ### 3. Continuous Operation Test
@@ -123,7 +123,7 @@ Validates daemon stability during extended runtime.
 
 **Example:**
 ```bash
-./loadtest -test continuous -duration 72h -namecount 100000
+./loadtest-tool -test continuous -duration 72h -namecount 100000
 ```
 
 ### 4. Connection Exhaustion Test
@@ -170,7 +170,7 @@ nmcd -datadir /tmp/testdata &
 PID=$!
 
 # Generate some load
-./loadtest -duration 30s &
+./loadtest-tool -duration 30s &
 
 # Wait a bit, then kill -9
 sleep 15
@@ -249,7 +249,7 @@ jobs:
         run: |
           cd loadtest/cmd
           go build
-          ./loadtest -duration 5m -test all
+          ./loadtest-tool -duration 5m -test all
 ```
 
 ## Interpreting Results
