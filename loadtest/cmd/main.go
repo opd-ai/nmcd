@@ -39,6 +39,8 @@ import (
 	"github.com/opd-ai/nmcd/loadtest"
 )
 
+const version = "0.1.0"
+
 func main() {
 	// Parse command-line flags
 	rpcURL := flag.String("rpcurl", "http://localhost:8336", "RPC endpoint URL")
@@ -49,10 +51,16 @@ func main() {
 	rateLimit := flag.Int("ratelimit", 0, "Requests per second limit (0 = unlimited)")
 	testType := flag.String("test", "all", "Test to run: rpc, memory, continuous, all")
 	nameCount := flag.Int("namecount", 0, "Number of names to process (continuous test only)")
+	showVersion := flag.Bool("version", false, "Show version information")
 
 	flag.Parse()
 
-	fmt.Println("=== nmcd Load & Stress Testing ===")
+	if *showVersion {
+		fmt.Printf("nmcd loadtest version %s\n", version)
+		os.Exit(0)
+	}
+
+	fmt.Printf("=== nmcd Load & Stress Testing v%s ===\n", version)
 	fmt.Printf("RPC URL:      %s\n", *rpcURL)
 	fmt.Printf("Duration:     %v\n", *duration)
 	fmt.Printf("Concurrency:  %d\n", *concurrency)

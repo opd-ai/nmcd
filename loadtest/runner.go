@@ -146,16 +146,20 @@ func RPCLoadTest(config LoadTestConfig) (*TestResult, error) {
 	var wg sync.WaitGroup
 	latencies := make([]time.Duration, 0, 10000)
 	var latencyMutex sync.Mutex
+	var errorMutex sync.Mutex
 
-	// Rate limiter (if needed)
-	var ticker *time.Ticker
+	// Rate limiter (if needed) - create per-worker tickers
+	var tickers []*time.Ticker
 	if config.RateLimit > 0 {
 		requestsPerWorker := config.RateLimit / config.Concurrency
 		if requestsPerWorker < 1 {
 			requestsPerWorker = 1
 		}
-		ticker = time.NewTicker(time.Second / time.Duration(requestsPerWorker))
-		defer ticker.Stop()
+		for i := 0; i < config.Concurrency; i++ {
+			ticker := time.NewTicker(time.Second / time.Duration(requestsPerWorker))
+			tickers = append(tickers, ticker)
+			defer ticker.Stop()
+		}
 	}
 
 	start := time.Now()
@@ -170,13 +174,19 @@ func RPCLoadTest(config LoadTestConfig) (*TestResult, error) {
 			methods := []string{"getinfo", "getblockcount", "getbestblockhash"}
 			methodIdx := 0
 
+			// Get this worker's ticker if rate limiting is enabled
+			var myTicker *time.Ticker
+			if len(tickers) > 0 {
+				myTicker = tickers[workerID]
+			}
+
 			for {
 				select {
 				case <-stopChan:
 					return
 				default:
-					if ticker != nil {
-						<-ticker.C
+					if myTicker != nil {
+						<-myTicker.C
 					}
 
 					reqStart := time.Now()
@@ -190,11 +200,11 @@ func RPCLoadTest(config LoadTestConfig) (*TestResult, error) {
 
 					if err != nil {
 						atomic.AddInt64(&failureCount, 1)
-						latencyMutex.Lock()
+						errorMutex.Lock()
 						if len(result.ErrorDetails) < 100 {
 							result.ErrorDetails = append(result.ErrorDetails, err.Error())
 						}
-						latencyMutex.Unlock()
+						errorMutex.Unlock()
 					} else {
 						atomic.AddInt64(&successCount, 1)
 						latencyMutex.Lock()
@@ -229,10 +239,23 @@ func RPCLoadTest(config LoadTestConfig) (*TestResult, error) {
 		}
 		result.AvgLatency = total / time.Duration(len(latencies))
 
-		// Calculate percentiles (simple sort would be better for production)
+		// Calculate percentiles - need to sort first
 		if len(latencies) >= 20 {
-			result.P95Latency = latencies[int(float64(len(latencies))*0.95)]
-			result.P99Latency = latencies[int(float64(len(latencies))*0.99)]
+			// Sort latencies for accurate percentile calculation
+			sortedLatencies := make([]time.Duration, len(latencies))
+			copy(sortedLatencies, latencies)
+			
+			// Simple bubble sort for small arrays, or use sort.Slice for production
+			for i := 0; i < len(sortedLatencies); i++ {
+				for j := i + 1; j < len(sortedLatencies); j++ {
+					if sortedLatencies[i] > sortedLatencies[j] {
+						sortedLatencies[i], sortedLatencies[j] = sortedLatencies[j], sortedLatencies[i]
+					}
+				}
+			}
+			
+			result.P95Latency = sortedLatencies[int(float64(len(sortedLatencies))*0.95)]
+			result.P99Latency = sortedLatencies[int(float64(len(sortedLatencies))*0.99)]
 		}
 	}
 

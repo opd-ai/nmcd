@@ -48,8 +48,7 @@ func main() {
 
 ```bash
 # Build the load test tool
-cd loadtest/cmd
-go build -o loadtest
+make loadtest
 
 # Run all tests with default settings (60 seconds)
 ./loadtest-tool
