@@ -88,8 +88,9 @@ type UTXO struct {
 
 // NameDatabase manages name operations with bbolt storage
 type NameDatabase struct {
-	db *bbolt.DB
-	mu sync.RWMutex
+	db    *bbolt.DB
+	mu    sync.RWMutex
+	cache *lruCache // LRU cache for name lookups (10,000 entries)
 }
 
 // NewNameDatabase creates a new name database
@@ -113,7 +114,10 @@ func NewNameDatabase(dbPath string) (*NameDatabase, error) {
 		return nil, err
 	}
 
-	return &NameDatabase{db: db}, nil
+	return &NameDatabase{
+		db:    db,
+		cache: newLRUCache(10000), // 10,000 entry LRU cache as per PLAN.md
+	}, nil
 }
 
 // Close closes the database
@@ -128,15 +132,27 @@ func (ndb *NameDatabase) PutName(name string, record *NameRecord) error {
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
 
-	return ndb.db.Update(func(tx *bbolt.Tx) error {
+	err := ndb.db.Update(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket(namesBucket)
 		data := encodeNameRecord(record)
 		return bucket.Put([]byte(name), data)
 	})
+	
+	if err == nil {
+		// Update cache with new value
+		ndb.cache.Put(name, record)
+	}
+	
+	return err
 }
 
 // GetName retrieves a name record
 func (ndb *NameDatabase) GetName(name string) (*NameRecord, error) {
+	// Check cache first (with RLock for cache read)
+	if cached, ok := ndb.cache.Get(name); ok {
+		return cached, nil
+	}
+
 	ndb.mu.RLock()
 	defer ndb.mu.RUnlock()
 
@@ -155,6 +171,12 @@ func (ndb *NameDatabase) GetName(name string) (*NameRecord, error) {
 		record.Name = name
 		return nil
 	})
+	
+	// Cache the result if found
+	if err == nil && record != nil {
+		ndb.cache.Put(name, record)
+	}
+	
 	return record, err
 }
 
@@ -163,10 +185,17 @@ func (ndb *NameDatabase) DeleteName(name string) error {
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
 
-	return ndb.db.Update(func(tx *bbolt.Tx) error {
+	err := ndb.db.Update(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket(namesBucket)
 		return bucket.Delete([]byte(name))
 	})
+	
+	if err == nil {
+		// Invalidate cache entry
+		ndb.cache.Delete(name)
+	}
+	
+	return err
 }
 
 // DeleteHistory removes all history entries for a name.
