@@ -31,11 +31,11 @@ func FuzzParseNameScript(f *testing.F) {
 	// Valid NAME_FIRSTUPDATE: OP_NAME_FIRSTUPDATE <name> <rand> <value> OP_2DROP OP_2DROP <P2PKH>
 	nameFirstUpdateScript := make([]byte, 0, 100)
 	nameFirstUpdateScript = append(nameFirstUpdateScript, opNameFirstUpdate) // 0xd1
-	nameFirstUpdateScript = append(nameFirstUpdateScript, 0x07)              // Push 7 bytes (name)
+	nameFirstUpdateScript = append(nameFirstUpdateScript, 0x06)              // Push 6 bytes (name)
 	nameFirstUpdateScript = append(nameFirstUpdateScript, []byte("d/test")...)
 	nameFirstUpdateScript = append(nameFirstUpdateScript, 0x10)              // Push 16 bytes (rand)
 	nameFirstUpdateScript = append(nameFirstUpdateScript, make([]byte, 16)...)
-	nameFirstUpdateScript = append(nameFirstUpdateScript, 0x0a)              // Push 10 bytes (value)
+	nameFirstUpdateScript = append(nameFirstUpdateScript, 0x10)              // Push 16 bytes (value)
 	nameFirstUpdateScript = append(nameFirstUpdateScript, []byte(`{"ip":"1.2.3.4"}`)...)
 	nameFirstUpdateScript = append(nameFirstUpdateScript, op2Drop) // OP_2DROP
 	nameFirstUpdateScript = append(nameFirstUpdateScript, op2Drop) // OP_2DROP
@@ -45,9 +45,9 @@ func FuzzParseNameScript(f *testing.F) {
 	// Valid NAME_UPDATE: OP_NAME_UPDATE <name> <value> OP_2DROP OP_DROP <P2PKH>
 	nameUpdateScript := make([]byte, 0, 80)
 	nameUpdateScript = append(nameUpdateScript, opNameUpdate) // 0xd2
-	nameUpdateScript = append(nameUpdateScript, 0x07)         // Push 7 bytes (name)
+	nameUpdateScript = append(nameUpdateScript, 0x06)         // Push 6 bytes (name)
 	nameUpdateScript = append(nameUpdateScript, []byte("d/test")...)
-	nameUpdateScript = append(nameUpdateScript, 0x0a)         // Push 10 bytes (value)
+	nameUpdateScript = append(nameUpdateScript, 0x10)         // Push 16 bytes (value)
 	nameUpdateScript = append(nameUpdateScript, []byte(`{"ip":"5.6.7.8"}`)...)
 	nameUpdateScript = append(nameUpdateScript, op2Drop) // OP_2DROP
 	nameUpdateScript = append(nameUpdateScript, opDrop)  // OP_DROP
@@ -131,7 +131,7 @@ func FuzzParseNameScript(f *testing.F) {
 func FuzzReadPushData(f *testing.F) {
 	// Seed with valid push data patterns
 	f.Add([]byte{0x01, 0xff}, 0)                    // Push 1 byte
-	f.Add([]byte{0x4b, 0xff}, 0)                    // Push 75 bytes (max OP_PUSHDATA)
+	f.Add([]byte{0x4b, 0xff}, 0)                    // Truncated 75-byte push (tests max OP_PUSHDATA length with insufficient data)
 	f.Add([]byte{0x4c, 0x01, 0xff}, 0)              // OP_PUSHDATA1
 	f.Add([]byte{0x4d, 0x01, 0x00, 0xff}, 0)        // OP_PUSHDATA2
 	f.Add([]byte{0x4e, 0x01, 0x00, 0x00, 0x00, 0xff}, 0) // OP_PUSHDATA4
