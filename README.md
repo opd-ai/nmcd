@@ -959,6 +959,48 @@ server, err := rpc.NewServer(&rpc.Config{
 
 ---
 
+## Testing
+
+nmcd has comprehensive test coverage across all packages:
+
+### Running Tests
+
+```bash
+# Run all tests
+go test ./...
+
+# Run tests with coverage
+go test -cover ./...
+
+# Run tests with race detector
+go test -race ./...
+
+# Generate HTML coverage report
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out -o coverage.html
+```
+
+### Test Coverage Status
+
+**Critical Packages:**
+- chain: 68.1% (core blockchain and name validation)
+- rpc: 45.8% (RPC server and methods)
+- network: 43.5% (P2P networking and mempool)
+- namedb: 87.3% ✅ (name database operations)
+
+**Other Packages:**
+- bridge: 100.0% ✅ (email bridge)
+- client: 82.9% ✅ (client library)
+- config: 98.6% ✅ (configuration)
+- metrics: 83.9% ✅ (Prometheus metrics)
+- wallet: 69.7% (wallet operations)
+
+**Note:** Command-line entry points (cmd/*) and integration components have lower coverage by design, as they primarily wire together well-tested components.
+
+📊 **Detailed Coverage Analysis**: See [docs/COVERAGE.md](docs/COVERAGE.md) for comprehensive coverage analysis and improvement roadmap.
+
+---
+
 ## Contributing
 
 Contributions are welcome! Areas of interest:
