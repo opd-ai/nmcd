@@ -31,7 +31,7 @@ func TestIntegration_RegTestScenario(t *testing.T) {
 
 	// Simulate name registration scenario using namedb directly
 	// (This tests the core name database functionality used by the blockchain)
-	
+
 	// Step 1: NAME_NEW commitment at block 100
 	nameNewHeight := int32(100)
 	commitHash := []byte("test_commit_hash_1234567890123456") // 32 bytes

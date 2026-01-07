@@ -33,7 +33,7 @@ func setupTestLogger() {
 // setupTestServer creates a test server with default configuration
 func setupTestServer(t *testing.T) *Server {
 	setupTestLogger()
-	
+
 	cfg := &Config{
 		ListenAddr: "127.0.0.1:0",
 	}

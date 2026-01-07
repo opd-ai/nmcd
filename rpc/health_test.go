@@ -16,50 +16,50 @@ import (
 // This is needed because the Server struct uses concrete types
 func createTestBlockchain(t *testing.T) *chain.BlockChain {
 	t.Helper()
-	
+
 	// Create temporary directory for test database
 	tmpDir := t.TempDir()
-	
+
 	cfg := &chain.Config{
 		ChainParams: &config.NamecoinRegTestParams,
 		NameDBPath:  tmpDir + "/names.db",
 		DataDir:     tmpDir,
 	}
-	
+
 	bc, err := chain.NewBlockChain(cfg, nil)
 	if err != nil {
 		t.Fatalf("Failed to create test blockchain: %v", err)
 	}
-	
+
 	// Register cleanup
 	t.Cleanup(func() {
 		bc.Close()
 	})
-	
+
 	return bc
 }
 
 // createTestPeerManager creates a real peer manager instance for testing
 func createTestPeerManager(t *testing.T, bc *chain.BlockChain) *network.PeerManager {
 	t.Helper()
-	
+
 	cfg := &network.Config{
 		ChainParams: &config.NamecoinRegTestParams,
 		Blockchain:  bc,
 		ListenAddrs: []string{}, // Don't listen on any ports for tests
 		MaxPeers:    10,
 	}
-	
+
 	pm, err := network.NewPeerManager(cfg)
 	if err != nil {
 		t.Fatalf("Failed to create test peer manager: %v", err)
 	}
-	
+
 	// Register cleanup
 	t.Cleanup(func() {
 		pm.Stop()
 	})
-	
+
 	return pm
 }
 
@@ -98,7 +98,7 @@ func TestHandleHealth_Healthy(t *testing.T) {
 	// Create a server with initialized blockchain
 	bc := createTestBlockchain(t)
 	pm := createTestPeerManager(t, bc)
-	
+
 	s := &Server{
 		blockchain:     bc,
 		peerMgr:        pm,
@@ -207,10 +207,10 @@ func TestHandleReady_Ready(t *testing.T) {
 	// A fresh blockchain with no peers is considered "ready" (not syncing)
 	bc := createTestBlockchain(t)
 	pm := createTestPeerManager(t, bc)
-	
+
 	// Give it a moment to initialize
 	time.Sleep(100 * time.Millisecond)
-	
+
 	s := &Server{
 		blockchain:     bc,
 		peerMgr:        pm,

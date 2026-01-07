@@ -9,6 +9,7 @@
 *.dylib
 /nmcd
 /permamail
+/loadtest-tool
 
 # Example binaries (built from examples/)
 /simple_resolve

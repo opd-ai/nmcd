@@ -112,7 +112,7 @@ func Init(cfg *Config) (*Logger, error) {
 		// File output
 		// Note: Log rotation can be enabled in a future enhancement using external tools
 		// or a third-party library. For now, we use simple file appending.
-		
+
 		// Create log directory if it doesn't exist
 		logDir := filepath.Dir(cfg.Output)
 		if err := os.MkdirAll(logDir, 0755); err != nil {
@@ -257,10 +257,10 @@ type componentHandler struct {
 func (h *componentHandler) Handle(ctx context.Context, r slog.Record) error {
 	// Create a copy of the record to avoid modifying the original
 	rec := slog.NewRecord(r.Time, r.Level, r.Message, r.PC)
-	
+
 	// Add component field
 	rec.AddAttrs(slog.String("component", h.component))
-	
+
 	// Add original attributes
 	r.Attrs(func(a slog.Attr) bool {
 		rec.AddAttrs(a)

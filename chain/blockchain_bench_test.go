@@ -122,10 +122,10 @@ func BenchmarkBuildNameScript(b *testing.B) {
 // Target: < 5μs per encode
 func BenchmarkPushData(b *testing.B) {
 	data := [][]byte{
-		[]byte("short"),                                  // <= 75 bytes
-		make([]byte, 100),                               // 76-255 bytes
-		make([]byte, 300),                               // 256+ bytes
-		[]byte(`{"ip":"1.2.3.4","ns":["ns1","ns2"]}`),  // Typical value
+		[]byte("short"),   // <= 75 bytes
+		make([]byte, 100), // 76-255 bytes
+		make([]byte, 300), // 256+ bytes
+		[]byte(`{"ip":"1.2.3.4","ns":["ns1","ns2"]}`), // Typical value
 	}
 
 	for i, d := range data {
@@ -151,4 +151,3 @@ func BenchmarkMemoryUsage(b *testing.B) {
 		_, _, _, _ = parseNameScript(script)
 	}
 }
-

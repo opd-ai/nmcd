@@ -65,10 +65,10 @@ func TestEncryptWalletWeakPassword(t *testing.T) {
 
 	// Try to encrypt with weak passwords
 	weakPasswords := []string{
-		"short",     // Too short
-		"password",  // Only lowercase
-		"PASSWORD",  // Only uppercase
-		"12345678",  // Only digits
+		"short",    // Too short
+		"password", // Only lowercase
+		"PASSWORD", // Only uppercase
+		"12345678", // Only digits
 	}
 
 	for _, pass := range weakPasswords {

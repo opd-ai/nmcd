@@ -157,10 +157,10 @@ func (s *Server) Stop() error {
 	if s.rateLimiter != nil {
 		s.rateLimiter.stop()
 	}
-	
+
 	// Close the HTTP server
 	serverErr := s.server.Close()
-	
+
 	// Close the listener to release the port binding
 	// This is especially important for tests that create servers without starting them
 	if s.listener != nil {
@@ -168,7 +168,7 @@ func (s *Server) Stop() error {
 			serverErr = err
 		}
 	}
-	
+
 	return serverErr
 }
 

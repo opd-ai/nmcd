@@ -21,7 +21,7 @@ import (
 func FuzzNameRecordSerialization(f *testing.F) {
 	// Seed corpus with valid name records
 	validHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
-	
+
 	f.Add("d/test", `{"ip":"1.2.3.4"}`, int32(100), int32(36100), "N12345678901234567890")
 	f.Add("id/alice", `{"email":"alice@example.com"}`, int32(1000), int32(37000), "Nabcdefghijklmnopqrstu")
 	f.Add("p/personal", ``, int32(0), int32(36000), "N00000000000000000000")
@@ -111,7 +111,7 @@ func FuzzNameRecordJSON(f *testing.F) {
 		// This simulates what the name database does when storing d/ and id/ namespace values
 		var v interface{}
 		err := json.Unmarshal([]byte(value), &v)
-		
+
 		if err != nil {
 			// Invalid JSON is expected for random input
 			return
@@ -233,13 +233,13 @@ func FuzzNameField(f *testing.F) {
 // Run with: go test -fuzz=FuzzAddressField -fuzztime=1m
 func FuzzAddressField(f *testing.F) {
 	// Seed with various address patterns
-	f.Add("N12345678901234567890")          // Valid Namecoin address format
-	f.Add("NabcdefghijklmnopqrstuvwxyzABC") // Long address
-	f.Add("N")                              // Short address
-	f.Add("")                               // Empty address
+	f.Add("N12345678901234567890")              // Valid Namecoin address format
+	f.Add("NabcdefghijklmnopqrstuvwxyzABC")     // Long address
+	f.Add("N")                                  // Short address
+	f.Add("")                                   // Empty address
 	f.Add("1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2") // Bitcoin-format address
-	f.Add("abc")                            // Invalid format
-	f.Add("N!@#$%^&*()")                    // Special characters
+	f.Add("abc")                                // Invalid format
+	f.Add("N!@#$%^&*()")                        // Special characters
 
 	f.Fuzz(func(t *testing.T, address string) {
 		// Create a name record with fuzzed address
