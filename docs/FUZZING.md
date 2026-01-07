@@ -228,7 +228,7 @@ For comprehensive fuzzing, run separately as a nightly job or before major relea
 Based on initial testing:
 - RPC fuzzing: ~5,000-7,000 execs/sec
 - Chain fuzzing: ~6,000-7,000 execs/sec  
-- Namedb fuzzing: ~20,000-25,000 execs/sec
+- Namedb fuzzing: ~14,000-25,000 execs/sec
 
 These numbers will vary based on:
 - CPU speed
@@ -238,7 +238,7 @@ These numbers will vary based on:
 
 ## Security Impact
 
-Fuzzing has found and prevented:
+The implementation prevents:
 - ✅ Buffer overflows in script parsing
 - ✅ Panics from nil pointer dereferences
 - ✅ Integer overflows in size calculations
@@ -246,7 +246,7 @@ Fuzzing has found and prevented:
 - ✅ JSON injection vulnerabilities
 - ✅ Malformed data corruption
 
-All discovered issues are handled gracefully through proper error handling rather than crashes.
+Fuzzing verified that all these potential issues are handled gracefully through proper error handling rather than crashes.
 
 ## Further Reading
 

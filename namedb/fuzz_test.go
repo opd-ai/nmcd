@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 )
@@ -78,10 +79,9 @@ func FuzzNameRecordSerialization(f *testing.F) {
 			t.Errorf("txHash mismatch: got %s, want %s", decoded.TxHash.String(), record.TxHash.String())
 		}
 
-		// Verify timestamp is approximately preserved (within 1 second due to JSON precision)
-		timeDiff := decoded.UpdatedAt.Sub(record.UpdatedAt)
-		if timeDiff < -time.Second || timeDiff > time.Second {
-			t.Errorf("updatedAt differs by %v (outside ±1s tolerance)", timeDiff)
+		// Verify timestamp is preserved at second precision (stored as Unix seconds)
+		if decoded.UpdatedAt.Unix() != record.UpdatedAt.Unix() {
+			t.Errorf("updatedAt mismatch: got %v, want %v", decoded.UpdatedAt, record.UpdatedAt)
 		}
 	})
 }
@@ -189,7 +189,7 @@ func FuzzNameField(f *testing.F) {
 
 		// Verify name is valid UTF-8
 		// Invalid UTF-8 sequences should be handled gracefully
-		if !validUTF8(name) {
+		if !utf8.ValidString(name) {
 			// Invalid UTF-8 is expected for random input
 			return
 		}
@@ -223,28 +223,6 @@ func FuzzNameField(f *testing.F) {
 			t.Errorf("value not preserved: got %q, want %q", decoded.Value, record.Value)
 		}
 	})
-}
-
-// validUTF8 checks if a string contains valid UTF-8
-func validUTF8(s string) bool {
-	// Try to iterate over runes - invalid UTF-8 will cause issues
-	for _, r := range s {
-		if r == '\uFFFD' {
-			// Replacement character indicates invalid UTF-8
-			// But we need to check if it's actually in the string
-			hasReplacement := false
-			for i := 0; i < len(s); i++ {
-				if s[i] == 0xEF && i+2 < len(s) && s[i+1] == 0xBF && s[i+2] == 0xBD {
-					hasReplacement = true
-					break
-				}
-			}
-			if !hasReplacement {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 // FuzzAddressField fuzzes address field handling to ensure:

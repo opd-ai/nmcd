@@ -117,10 +117,10 @@ Created comprehensive documentation in `docs/FUZZING.md`:
 ## Files Modified
 
 ### New Files (5)
-1. `rpc/fuzz_test.go` (219 lines) - 5 RPC fuzz tests
-2. `chain/fuzz_test.go` (299 lines) - 3 chain fuzz tests
-3. `namedb/fuzz_test.go` (324 lines) - 5 namedb fuzz tests
-4. `docs/FUZZING.md` (334 lines) - Complete fuzzing guide
+1. `rpc/fuzz_test.go` (248 lines) - 5 RPC fuzz tests
+2. `chain/fuzz_test.go` (269 lines) - 3 chain fuzz tests
+3. `namedb/fuzz_test.go` (345 lines) - 5 namedb fuzz tests
+4. `docs/FUZZING.md` (255 lines) - Complete fuzzing guide
 5. `FUZZING_SUMMARY.md` (this file)
 
 ### Modified Files (1)
