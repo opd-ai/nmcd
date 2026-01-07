@@ -33,7 +33,7 @@ The integration test suite provides comprehensive end-to-end testing for nmcd's 
 
 **Assertions:**
 - NAME_NEW commitment stored and retrieved correctly
-- NAME_FIRSTUPDATE enforces timing constraints (12-36000 blocks)
+- NAME_FIRSTUPDATE accepts registration at valid height (after 12-block delay)
 - NAME_UPDATE extends expiration properly
 - Expired names detected and removable
 
@@ -43,18 +43,17 @@ The integration test suite provides comprehensive end-to-end testing for nmcd's 
 
 ### 2. TestIntegration_TransactionRelay
 
-**Purpose:** Validates transaction relay infrastructure via embedded client.
+**Purpose:** Validates embedded client initialization and basic RPC wiring on regtest network.
 
 **Workflow:**
 1. Creates embedded client with regtest network
 2. Verifies client initialization (mode, network name)
-3. Checks initial name list is empty
-4. Confirms mempool validation is active
+3. Checks initial name list is empty via `ListNames`
 
 **Assertions:**
 - Embedded client initializes correctly
-- Mempool component is operational
-- Name resolution works for empty state
+- Basic RPC calls (`GetInfo`, `ListNames`) succeed without errors
+- `ListNames` returns an empty result on a fresh node
 
 **Runtime:** ~20ms
 
@@ -75,7 +74,7 @@ The integration test suite provides comprehensive end-to-end testing for nmcd's 
 - Each node maintains independent database
 - Same name data produces identical state across nodes
 - TxHash verification ensures data integrity
-- No state corruption during concurrent operations
+- No state corruption across independent node databases after sequential updates
 
 **Runtime:** ~10ms
 
@@ -103,21 +102,6 @@ The integration test suite provides comprehensive end-to-end testing for nmcd's 
 - Fork resolution produces consistent state
 
 **Runtime:** ~5ms
-
----
-
-### 5. TestIntegration_FullEndToEnd
-
-**Purpose:** Orchestrates all integration scenarios as subtests.
-
-**Workflow:**
-- Runs each scenario as a subtest
-- Provides organized test execution and reporting
-- Enables parallel execution when safe
-
-**Status:** All subtests are covered by dedicated test functions (marked as skipped to avoid duplication).
-
-**Runtime:** <1ms
 
 ---
 
@@ -193,7 +177,7 @@ go tool cover -html=integration.cover -o integration_coverage.html
 
 | Metric | Target | Actual | Status |
 |--------|--------|--------|--------|
-| Test Count | 5+ scenarios | 5 tests | ✅ |
+| Test Count | 4+ scenarios | 4 tests | ✅ |
 | Pass Rate | 100% | 100% | ✅ |
 | Flakiness | <1% | 0% | ✅ |
 | Runtime | <1s total | ~50ms | ✅ |

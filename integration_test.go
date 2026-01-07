@@ -52,7 +52,10 @@ func TestIntegration_RegTestScenario(t *testing.T) {
 	firstUpdateHeight := int32(113)
 	testName := "d/regtest-integration"
 	testValue := `{"ip":"192.168.1.1"}`
-	txHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000042")
+	txHash, err := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000042")
+	if err != nil {
+		t.Fatalf("invalid test tx hash: %v", err)
+	}
 
 	record := &namedb.NameRecord{
 		Name:          testName,
@@ -90,7 +93,10 @@ func TestIntegration_RegTestScenario(t *testing.T) {
 	// Step 3: NAME_UPDATE at block 1000
 	updateHeight := int32(1000)
 	updatedValue := `{"ip":"192.168.1.2","ns":["ns1.example.com"]}`
-	updateTxHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000043")
+	updateTxHash, err := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000043")
+	if err != nil {
+		t.Fatalf("invalid test update tx hash: %v", err)
+	}
 
 	updatedRecord := &namedb.NameRecord{
 		Name:          testName,
@@ -238,7 +244,10 @@ func TestIntegration_MultiNodeSync(t *testing.T) {
 	// Add the same name to all nodes (simulating sync)
 	testName := "d/multinode-test"
 	testValue := `{"ip":"172.16.0.1"}`
-	txHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000200")
+	txHash, err := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000200")
+	if err != nil {
+		t.Fatalf("failed to parse tx hash for test: %v", err)
+	}
 
 	for i, node := range nodes {
 		record := &namedb.NameRecord{
@@ -312,8 +321,14 @@ func TestIntegration_NetworkPartitionRecovery(t *testing.T) {
 	testName2 := "d/partition-node2"
 	testValue1 := `{"ip":"10.1.1.1"}`
 	testValue2 := `{"ip":"10.2.2.2"}`
-	txHash1, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000301")
-	txHash2, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000302")
+	txHash1, err := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000301")
+	if err != nil {
+		t.Fatalf("invalid test tx hash 1: %v", err)
+	}
+	txHash2, err := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000302")
+	if err != nil {
+		t.Fatalf("invalid test tx hash 2: %v", err)
+	}
 
 	// Node 1 receives testName1
 	record1 := &namedb.NameRecord{
@@ -397,38 +412,4 @@ func (n *testNode) Close() {
 	if n.ndb != nil {
 		n.ndb.Close()
 	}
-}
-
-// TestIntegration_FullEndToEnd combines all integration scenarios in sequence
-func TestIntegration_FullEndToEnd(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
-	}
-
-	ctx := context.Background()
-	_ = ctx // Context reserved for future async operations
-
-	// This test orchestrates all integration scenarios
-	// Run as subtests for better organization and parallel execution
-	t.Run("RegTestScenario", func(t *testing.T) {
-		// Already tested above, but included for completeness
-		t.Skip("Covered by TestIntegration_RegTestScenario")
-	})
-
-	t.Run("TransactionRelay", func(t *testing.T) {
-		// Already tested above
-		t.Skip("Covered by TestIntegration_TransactionRelay")
-	})
-
-	t.Run("MultiNodeSync", func(t *testing.T) {
-		// Already tested above
-		t.Skip("Covered by TestIntegration_MultiNodeSync")
-	})
-
-	t.Run("NetworkPartition", func(t *testing.T) {
-		// Already tested above
-		t.Skip("Covered by TestIntegration_NetworkPartitionRecovery")
-	})
-
-	t.Logf("✅ Full end-to-end integration test suite completed")
 }
