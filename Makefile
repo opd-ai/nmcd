@@ -1,11 +1,14 @@
-.PHONY: build clean test fmt vet
+.PHONY: build clean test fmt vet loadtest
 
 build:
 	go build -v -o nmcd ./cmd/nmcd
 	go build -v -o permamail ./cmd/permamail
 
+loadtest:
+	go build -v -o loadtest ./loadtest/cmd
+
 clean:
-	rm -f nmcd permamail
+	rm -f nmcd permamail loadtest
 
 test:
 	go test -v ./...
