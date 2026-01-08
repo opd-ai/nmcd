@@ -28,9 +28,10 @@ import (
 	"github.com/opd-ai/nmcd/mail"
 )
 
-const (
-	version = "0.1.0"
-	usage   = `permamail - Decentralized email forwarding via Namecoin
+// version is set via ldflags during build
+var version = "0.1.0"
+
+var usage = `permamail - Decentralized email forwarding via Namecoin
 
 Usage:
   permamail <command> [options]
@@ -66,12 +67,11 @@ Examples:
   permamail lookup alice
 
   # Start SMTP relay server
-  permamail serve --upstream smtp.sendgrid.net --upstreamport 587 \\
+  permamail serve --upstream smtp.sendgrid.net --upstreamport 587 \
                   --smtpuser apikey --smtppass <api-key>
 
 Version: ` + version + `
 `
-)
 
 // CLI holds command-line configuration
 type CLI struct {

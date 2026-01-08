@@ -1059,14 +1059,19 @@ nmcd provides automated binary releases for multiple platforms. Releases are tri
    # Pull latest version
    docker pull ghcr.io/opd-ai/nmcd:latest
    
-   # Run nmcd in Docker
-   docker run -p 8336:8336 -v nmcd-data:/data ghcr.io/opd-ai/nmcd:latest
+   # Run nmcd in Docker, exposing RPC only on localhost
+   docker run -p 127.0.0.1:8336:8336 -v nmcd-data:/data ghcr.io/opd-ai/nmcd:latest
    
    # Pull specific version
-   docker pull ghcr.io/opd-ai/nmcd:v1.0.0
+   docker pull ghcr.io/opd-ai/nmcd:1.0.0
    ```
    
    Docker images are optimized with multi-stage builds and compressed to <100MB.
+   
+   > **Security note:** The JSON-RPC interface is sensitive. Before exposing port `8336` beyond localhost
+   > (for example by using `-p 8336:8336` or binding to a non-loopback address), configure strong
+   > RPC credentials via `-rpcuser` and `-rpcpassword` (or enforce equivalent network access controls
+   > such as a firewall, VPN, or TLS-terminating reverse proxy) to prevent unauthorized access.
 
 **Verifying Downloads:**
 

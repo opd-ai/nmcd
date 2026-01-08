@@ -33,7 +33,7 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
 FROM --platform=$TARGETPLATFORM alpine:latest
 
 # Install runtime dependencies
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata wget
 
 # Create non-root user
 RUN addgroup -S nmcd && adduser -S nmcd -G nmcd
@@ -72,4 +72,4 @@ VOLUME ["/data"]
 
 # Default command
 ENTRYPOINT ["/usr/local/bin/nmcd"]
-CMD ["-datadir=/data", "-rpcaddr=0.0.0.0:8336"]
+CMD ["-datadir=/data", "-rpcaddr=127.0.0.1:8336"]
