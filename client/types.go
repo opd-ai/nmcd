@@ -74,8 +74,11 @@ import (
 // This interface is part of the stable v1.0.0+ API contract. Changes to this interface
 // will only occur in MAJOR version releases. Specifically:
 //
-//   - Method signatures will not change in MINOR or PATCH releases
-//   - New methods may be added in MAJOR releases only
+//   - Method signatures on this interface will not change or be removed in MINOR or PATCH releases
+//   - New methods will not be added to this interface in MINOR or PATCH releases; adding a method
+//     to NameClient requires a MAJOR release
+//   - New standalone exported functions, types, or helper interfaces in this package may be added
+//     in MINOR releases, provided they do not break existing code
 //   - Behavior changes that break existing usage patterns require a MAJOR release
 //
 // # Context Support

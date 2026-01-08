@@ -140,13 +140,14 @@ Breaking changes that trigger a MAJOR version bump:
 
 Non-breaking changes that can be included in MINOR or PATCH releases:
 
-1. **Adding new methods** to interfaces (with default implementations where possible)
+1. **Adding new standalone functions or types** (without changing existing interfaces)
 2. **Adding new optional fields** to struct types
-3. **Adding new functions** or types
-4. **Adding new error types** (without removing existing ones)
-5. **Performance improvements** that don't change behavior
-6. **Bug fixes** that restore documented behavior
-7. **Internal implementation changes** that don't affect public API
+3. **Adding new error types** (without removing existing ones)
+4. **Performance improvements** that don't change behavior
+5. **Bug fixes** that restore documented behavior
+6. **Internal implementation changes** that don't affect public API
+
+Note: Adding methods to existing interfaces is a breaking change in Go and requires a MAJOR version bump.
 
 ### Deprecation Policy
 
@@ -238,7 +239,7 @@ No migration required for client package users. The v0.1.0 API is forward-compat
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for:
+Future CONTRIBUTING.md will document:
 - How to report bugs
 - How to propose features
 - Pull request process
