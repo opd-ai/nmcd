@@ -103,7 +103,9 @@ When run as a standalone daemon, nmcd provides:
 
 ## Documentation
 
-- **[Quick Start Guide](#quick-start-library-usage)**: Installation and setup
+- **[Installation Guide](docs/INSTALLATION.md)**: Platform-specific installation instructions
+- **[Operations Guide](docs/OPERATIONS.md)**: Configuration, monitoring, backup, and troubleshooting
+- **[Quick Start Guide](#quick-start-library-usage)**: Library usage and setup
 - **[API Reference](docs/API.md)**: Complete API documentation with examples
 - **[CHANGELOG](CHANGELOG.md)**: Version history and API stability policy
 - **[Embedding Guide](docs/EMBEDDING.md)**: Integration patterns for applications
