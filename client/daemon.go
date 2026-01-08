@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/opd-ai/nmcd/internal/logging"
 )
 
 // DaemonClient provides a Namecoin client that connects to an external daemon
@@ -21,6 +23,7 @@ type DaemonClient struct {
 	httpClient *http.Client
 	baseURL    string
 	auth       *basicAuth
+	logger     *logging.Logger
 
 	// retryConfig configures retry behavior for transient failures
 	retryConfig RetryConfig
@@ -143,6 +146,15 @@ func NewDaemonClient(cfg *Config) (*DaemonClient, error) {
 			password: cfg.RPCPassword,
 		}
 	}
+
+	// Initialize logger (use provided or default)
+	var logger *logging.Logger
+	if cfg.Logger != nil {
+		logger = cfg.Logger
+	} else {
+		logger = logging.GetDefault()
+	}
+	client.logger = logger.WithComponent("daemon-client")
 
 	return client, nil
 }
