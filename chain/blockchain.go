@@ -988,7 +988,7 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 					TxHash:        *txHash,
 					OutIndex:      uint32(outIdx),
 					Height:        height,
-					ExpiresAt:     height + config.NameExpirationBlocks,
+					ExpiresAt:     safeCalcExpiresAt(height),
 					Address:       address,
 					UpdatedAt:     blockTime,
 					NameNewHeight: nameNewHeight, // Store for accurate rollback
@@ -1024,7 +1024,7 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 					TxHash:        *txHash,
 					OutIndex:      uint32(outIdx),
 					Height:        height,
-					ExpiresAt:     height + config.NameExpirationBlocks,
+					ExpiresAt:     safeCalcExpiresAt(height),
 					Address:       address,
 					UpdatedAt:     blockTime,
 					NameNewHeight: nameNewHeight, // Preserve from previous record
