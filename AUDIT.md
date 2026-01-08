@@ -17,10 +17,10 @@
 - **CRITICAL BUG:** 0
 - **FUNCTIONAL MISMATCH:** 0 (all resolved)
 - **MISSING FEATURE:** 0 (all resolved)
-- **EDGE CASE BUG:** 1 (low severity, theoretical only - #9 remains)
+- **EDGE CASE BUG:** 0 (all resolved - #8 and #9 both fixed on 2026-01-08)
 - **PERFORMANCE ISSUE:** 0 (all resolved)
 
-**Total Issues:** 1 low-severity edge case bug (theoretical, no practical impact)
+**Total Issues:** 0 remaining issues
 
 **Key Findings:**
 - ✅ Core functionality (name operations, blockchain validation, RPC server) is correctly implemented and matches documentation
@@ -34,8 +34,9 @@
 - ✅ Context cancellation support in all client methods
 - ✅ Thread-safe operations with proper mutex protection
 - ✅ Integer overflow protection in block height calculations (Issue #8 resolved)
+- ✅ Rate limiter with bounded memory usage prevents DoS (Issue #9 resolved)
 
-**Recommendation:** ✅ nmcd is suitable for production use (with standard blockchain caveats). All previously identified issues have been resolved. The remaining 1 edge case bug (#9) is a theoretical concern with no practical impact on operations. The codebase demonstrates excellent quality, proper error handling, thread safety, and comprehensive test coverage.
+**Recommendation:** ✅ nmcd is suitable for production use (with standard blockchain caveats). **All previously identified issues have been resolved**, including the theoretical edge cases #8 and #9. The codebase demonstrates excellent quality, proper error handling, thread safety, comprehensive test coverage, and defensive programming against edge cases.
 
 ---
 
@@ -251,18 +252,37 @@ ExpiresAt: safeCalcExpiresAt(height),  // Was: height + config.NameExpirationBlo
 ### EDGE CASE BUG: Rate limiter cleanup may not handle rapid IP changes
 **File:** rpc/ratelimit.go
 **Severity:** Low
-**Description:** The RPC rate limiter tracks requests per IP and performs periodic cleanup of stale entries. However, in scenarios with rapid IP address changes (e.g., load balancer IP rotation, NAT rebinding), the cleanup mechanism may not immediately free memory, potentially allowing gradual memory accumulation.
+**Status:** ✅ RESOLVED (2026-01-08, commit 71b5d52)
+**Resolution Date:** 2026-01-08
+**Resolution:** Implemented bounded rate limiter with LRU (Least Recently Used) eviction. Added `maxSize` parameter (default: 10,000 IPs) to prevent unbounded memory growth. When the limit is reached, the least recently used IP bucket is automatically evicted to make room for new entries. Created comprehensive tests in rpc/ratelimit_overflow_test.go that demonstrate the issue and verify the fix. Added `newBoundedRateLimiter()` constructor for custom size limits.
+**Description:** The RPC rate limiter tracks requests per IP and performs periodic cleanup of stale entries. In scenarios with rapid IP address changes (e.g., 10,000+ unique IPs per minute), the cleanup mechanism (runs every 5 minutes, removes entries older than 10 minutes) could lag behind, allowing unbounded memory accumulation.
 **Expected Behavior:** Rate limiter should efficiently handle dynamic IP scenarios with bounded memory usage.
-**Actual Behavior:** While periodic cleanup exists, very rapid IP rotation could accumulate entries faster than cleanup runs, though this would require unusual network conditions.
-**Impact:** Very low. Only affects deployments with extremely high IP churn rates. Periodic cleanup (every minute) should handle normal scenarios. Worst case: gradual memory growth under adversarial conditions.
+**Actual Behavior:** ✅ FIXED - Rate limiter now enforces a maximum size (default: 10,000 IPs). When the limit is reached, the LRU eviction automatically removes the oldest bucket. Memory usage is bounded even under adversarial conditions with extreme IP churn.
+**Impact:** Very low practical impact. Fix prevents theoretical unbounded memory growth in extreme edge cases (10,000+ unique IPs per minute). All existing rate limiting functionality preserved.
 **Reproduction:**
-1. Send requests from 10,000+ unique IPs within 1 minute window
-2. Observe rate limiter map growth
-3. Wait for cleanup cycle to prune stale entries
+1. Run Test_bug_9_rate_limiter_rapid_ip_changes to see the issue demonstrated
+2. Create 10,000+ unique IP requests rapidly
+3. Without fix: all buckets remain in memory; With fix: capped at maxSize
+**Verification:**
+```bash
+cd /home/runner/work/nmcd/nmcd
+go test -v ./rpc -run Test_bug_9  # All tests pass
+```
 **Code Reference:**
 ```go
-// rpc/ratelimit.go
-// Periodic cleanup runs but could lag behind extreme IP churn
+// rpc/ratelimit.go (UPDATED)
+const DefaultMaxIPsInRateLimiter = 10000
+
+type rateLimiter struct {
+	buckets map[string]*bucket
+	maxSize int  // NEW: maximum number of IPs to track
+	// ...
+}
+
+// NEW: Evicts LRU bucket when maxSize is reached
+func (rl *rateLimiter) evictOldestBucket() {
+	// Find and remove least recently used bucket
+}
 ```
 
 ---
@@ -491,10 +511,12 @@ All 10 issues from previous audits have been successfully resolved:
 6. ✅ Mempool documentation updated (Issue #6)
 7. ✅ Block sync documented (Issue #7)
 8. ✅ Integer overflow protection implemented (Issue #8 - resolved 2026-01-08, commit fb84a75)
-9. ⚠️ Rate limiter optimization remains (Issue #9 - edge case only, no action needed)
+9. ✅ Rate limiter bounded size implemented (Issue #9 - resolved 2026-01-08, commit 71b5d52)
 10. ✅ AuxPow cache bounded with LRU (Issue #10)
 
 ### Remaining Low-Priority Items
+
+**All edge case bugs have been resolved!**
 
 **Issue #8 - Integer Overflow Future-Proofing:**
 - ✅ RESOLVED (2026-01-08, commit fb84a75)
@@ -503,9 +525,10 @@ All 10 issues from previous audits have been successfully resolved:
 - Comprehensive test coverage added in chain/overflow_test.go
 
 **Issue #9 - Rate Limiter Optimization:**
-- Only affects extreme edge cases (10,000+ unique IPs per minute)
-- Periodic cleanup handles normal scenarios
-- Recommendation: Monitor in production; optimize only if issues arise
+- ✅ RESOLVED (2026-01-08, commit 71b5d52)
+- Implemented LRU eviction with configurable maxSize (default: 10,000 IPs)
+- Prevents unbounded memory growth even under extreme IP churn
+- Comprehensive test coverage added in rpc/ratelimit_overflow_test.go
 
 ### Production Readiness Checklist
 
@@ -526,12 +549,11 @@ All 10 issues from previous audits have been successfully resolved:
 
 ## CONCLUSION
 
-nmcd is a **production-ready**, high-quality Namecoin library with comprehensive functionality. The comprehensive re-audit on 2026-01-08 verified that **all 10 previously identified issues have been resolved**. Issue #8 (integer overflow) was addressed on 2026-01-08 with overflow protection implementation.
+nmcd is a **production-ready**, high-quality Namecoin library with comprehensive functionality. The comprehensive re-audit on 2026-01-08 verified that **all 10 previously identified issues have been resolved**. Issues #8 (integer overflow) and #9 (rate limiter) were both addressed on 2026-01-08 with defensive programming implementations.
 
-### Audit Score: 99/100 ⭐⭐⭐⭐⭐
+### Audit Score: 100/100 ⭐⭐⭐⭐⭐
 
-**Deductions:**
-- -1 for rate limiter optimization opportunity (extreme edge case only)
+**Perfect Score Achieved!** All issues resolved, including theoretical edge cases.
 
 ### Key Achievements
 
@@ -558,6 +580,8 @@ nmcd is a **production-ready**, high-quality Namecoin library with comprehensive
 - ✅ Health and readiness endpoints for Kubernetes deployments
 - ✅ Bounded AuxPow cache with LRU eviction preventing memory growth
 - ✅ Custom logger configuration for production observability
+- ✅ Integer overflow protection in block height calculations (defensive programming)
+- ✅ Rate limiter with bounded memory usage (10,000 IP cap with LRU eviction)
 
 ### Production Deployment Readiness
 
