@@ -103,11 +103,31 @@ When run as a standalone daemon, nmcd provides:
 
 ## Documentation
 
+- **[Quick Start Guide](#quick-start-library-usage)**: Installation and setup
 - **[API Reference](docs/API.md)**: Complete API documentation with examples
+- **[CHANGELOG](CHANGELOG.md)**: Version history and API stability policy
 - **[Embedding Guide](docs/EMBEDDING.md)**: Integration patterns for applications
 - **[Examples Guide](docs/EXAMPLES.md)**: Detailed walkthroughs of example code
 - **[Mode Comparison](docs/MODES.md)**: Embedded vs daemon tradeoffs
 - **[Performance Guide](docs/PERFORMANCE.md)**: Benchmarks and optimization tips
+
+## API Stability
+
+Starting with v1.0.0, nmcd follows [Semantic Versioning](https://semver.org/) and provides strong backward compatibility guarantees:
+
+- **Stable API**: The `client` package interface is stable and will maintain backward compatibility
+- **Breaking changes**: Only in MAJOR version releases (e.g., v1.x → v2.0)
+- **New features**: Added in MINOR releases (e.g., v1.0 → v1.1) without breaking existing code
+- **Bug fixes**: In PATCH releases (e.g., v1.0.0 → v1.0.1)
+
+See [CHANGELOG.md](CHANGELOG.md) for:
+- Complete version history
+- Detailed semantic versioning policy
+- Deprecation process
+- Migration guides between versions
+
+**Current Status**: v0.1.0 (development) → Working towards v1.0.0 production release
+
 
 ## Mode Selection
 

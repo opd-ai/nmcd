@@ -1,3 +1,58 @@
+// Package client provides a high-level interface for interacting with the Namecoin network.
+//
+// This package offers both embedded (in-process) and daemon (RPC) client modes with
+// automatic mode detection. It is designed for applications that need to resolve,
+// register, or manage Namecoin names programmatically.
+//
+// # API Stability (v1.0.0+)
+//
+// Starting with v1.0.0, this package follows semantic versioning and provides
+// backward compatibility guarantees:
+//
+//   - All exported types, functions, and interfaces are stable
+//   - Breaking changes only in MAJOR version releases (e.g., v1.x → v2.0)
+//   - New features added in MINOR releases (e.g., v1.0 → v1.1)
+//   - Bug fixes in PATCH releases (e.g., v1.0.0 → v1.0.1)
+//
+// # Thread Safety
+//
+// All client implementations (EmbeddedClient, DaemonClient) are safe for concurrent
+// use by multiple goroutines. No external synchronization is required.
+//
+// # Basic Usage
+//
+// Auto-detection mode (recommended):
+//
+//	client, err := client.NewClient(nil)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	defer client.Close()
+//
+//	name, err := client.ResolveName(context.Background(), "d/example")
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	fmt.Printf("Value: %s\n", name.Value)
+//
+// Explicit embedded mode:
+//
+//	cfg := &client.Config{
+//	    Mode:    client.ModeEmbedded,
+//	    DataDir: "/path/to/data",
+//	    Network: "mainnet",
+//	}
+//	client, err := client.NewClient(cfg)
+//
+// Explicit daemon mode:
+//
+//	cfg := &client.Config{
+//	    Mode:        client.ModeDaemon,
+//	    RPCAddr:     "http://localhost:8336",
+//	    RPCUser:     "user",
+//	    RPCPassword: "pass",
+//	}
+//	client, err := client.NewClient(cfg)
 package client
 
 import (
@@ -10,7 +65,36 @@ import (
 // It provides methods for name resolution, registration, and management.
 // Implementations include EmbeddedClient (in-process) and DaemonClient (RPC).
 //
-// Thread-safety: All methods are safe for concurrent use.
+// # Thread Safety
+//
+// All methods are safe for concurrent use by multiple goroutines.
+//
+// # API Stability Guarantee (v1.0.0+)
+//
+// This interface is part of the stable v1.0.0+ API contract. Changes to this interface
+// will only occur in MAJOR version releases. Specifically:
+//
+//   - Method signatures on this interface will not change or be removed in MINOR or PATCH releases
+//   - New methods will not be added to this interface in MINOR or PATCH releases; adding a method
+//     to NameClient requires a MAJOR release
+//   - New standalone exported functions, types, or helper interfaces in this package may be added
+//     in MINOR releases, provided they do not break existing code
+//   - Behavior changes that break existing usage patterns require a MAJOR release
+//
+// # Context Support
+//
+// All methods that accept a context.Context parameter support:
+//   - Cancellation via ctx.Done()
+//   - Timeouts via context.WithTimeout/WithDeadline
+//   - Request-scoped values via context.WithValue
+//
+// Methods return context.Canceled or context.DeadlineExceeded when appropriate.
+//
+// # Error Handling
+//
+// Methods return well-defined errors (ErrNameNotFound, ErrNameExpired, etc.) that
+// can be checked with errors.Is(). Internal errors are wrapped with context using
+// fmt.Errorf("%w", err) to preserve error chains.
 type NameClient interface {
 	// ResolveName retrieves the current value and metadata for a name.
 	// Returns ErrNameNotFound if the name doesn't exist or has expired.
@@ -52,6 +136,12 @@ type NameClient interface {
 }
 
 // NameRecord represents a name registration with its current state.
+//
+// # API Stability (v1.0.0+)
+//
+// This type is part of the stable API. Fields may be added in MINOR releases
+// but existing fields will not be removed or have their types changed except
+// in MAJOR releases.
 type NameRecord struct {
 	Name      string    // Name identifier (e.g., "d/example")
 	Value     string    // Current value (typically JSON for d/ and id/ namespaces)
@@ -163,6 +253,28 @@ type NodeInfo struct {
 }
 
 // Config configures client behavior and mode selection.
+//
+// # API Stability (v1.0.0+)
+//
+// This type is part of the stable API. New optional fields may be added in MINOR
+// releases. Existing fields will maintain their semantics except in MAJOR releases.
+//
+// # Field Defaults
+//
+// Zero values for fields trigger default behavior:
+//   - Mode: ModeAuto (auto-detect daemon, fallback to embedded)
+//   - DataDir: ~/.nmcd
+//   - Network: "mainnet"
+//   - RPCAddr: http://localhost:8336
+//   - MaxPeers: 8
+//
+// # Network Configuration
+//
+// The Network field must match the network that the daemon is running on (for
+// daemon mode) or the network to use for embedded mode. Valid values:
+//   - "mainnet" (default)
+//   - "testnet"
+//   - "regtest"
 type Config struct {
 	// Mode explicitly sets the client mode.
 	// If ModeAuto (default), automatically detects daemon or uses embedded.
@@ -215,6 +327,26 @@ const (
 )
 
 // Errors returned by the client.
+//
+// # API Stability (v1.0.0+)
+//
+// These error variables are part of the stable API contract. They will not be
+// removed or have their values changed except in MAJOR releases. New error types
+// may be added in MINOR releases.
+//
+// # Error Checking
+//
+// Use errors.Is() to check for specific errors:
+//
+//	name, err := client.ResolveName(ctx, "d/example")
+//	if errors.Is(err, client.ErrNameNotFound) {
+//	    // Handle name not found
+//	}
+//
+// # Error Wrapping
+//
+// Client methods may wrap these errors with additional context using fmt.Errorf.
+// Always use errors.Is() instead of direct equality checks (==).
 var (
 	ErrNameNotFound      = errors.New("name not found")
 	ErrNameExpired       = errors.New("name has expired")
