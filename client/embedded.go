@@ -257,8 +257,15 @@ func (c *EmbeddedClient) ResolveName(ctx context.Context, name string) (*NameRec
 //
 // The registration process:
 // 1. Creates a NAME_NEW transaction with a commitment hash (prevents front-running)
-// 2. Waits for 12 block confirmations (Namecoin protocol requirement)
-// 3. Creates a NAME_FIRSTUPDATE transaction revealing the name and setting initial value
+// 2. Broadcasts the NAME_NEW transaction
+// 3. If WaitForConfirmation is true:
+//   - Waits for at least 12 block confirmations (minimum protocol requirement)
+//   - Automatically creates and broadcasts NAME_FIRSTUPDATE transaction
+//   - Returns the NAME_FIRSTUPDATE transaction hash
+//
+// 4. If WaitForConfirmation is false:
+//   - Returns immediately with NAME_NEW transaction hash
+//   - Caller must manually complete NAME_FIRSTUPDATE after 12 blocks
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout
@@ -273,8 +280,8 @@ func (c *EmbeddedClient) ResolveName(ctx context.Context, name string) (*NameRec
 // Example:
 //
 //	result, err := client.RegisterName(ctx, "d/example", `{"ip":"1.2.3.4"}`, &RegisterOpts{
-//	    WaitForConfirmation: true,
-//	    Confirmations:       6,
+//	    WaitForConfirmation: true,  // Automatic NAME_FIRSTUPDATE after 12 blocks
+//	    Confirmations:       12,    // Can request more confirmations if desired
 //	})
 func (c *EmbeddedClient) RegisterName(ctx context.Context, name, value string, opts *RegisterOpts) (*TxResult, error) {
 	// Check context
@@ -406,17 +413,6 @@ func (c *EmbeddedClient) RegisterName(ctx context.Context, name, value string, o
 		}
 	}
 
-	// TODO: Store pending registration for NAME_FIRSTUPDATE completion in Phase 3
-	// The following data should be persisted to enable NAME_FIRSTUPDATE after 12 blocks:
-	// - name: the name being registered
-	// - randUsed: hex-encoded random bytes used in NAME_NEW commitment
-	// - nameNewTxHash: transaction hash of NAME_NEW
-	// - ownerAddress: address that will own the name
-	// - value: initial value to set
-	// - blockHeight: height when NAME_NEW was broadcast (for 12-block wait)
-	// This will be implemented as part of pending registration tracking system.
-	_ = randUsed // Suppress unused variable warning until persistence is implemented
-
 	result := &TxResult{
 		TxHash:        nameNewTxHash.String(),
 		Name:          name,
@@ -431,22 +427,80 @@ func (c *EmbeddedClient) RegisterName(ctx context.Context, name, value string, o
 		return result, nil
 	}
 
-	// Wait for NAME_NEW confirmation
-	// Use default confirmations if not specified
+	// Wait for NAME_NEW confirmation (minimum 12 blocks as per protocol)
+	// The MinBlocksBeforeFirstUpdate (12) is the required delay before NAME_FIRSTUPDATE
 	confirmations := opts.Confirmations
-	if confirmations == 0 {
-		confirmations = 1
+	if confirmations < 12 {
+		confirmations = 12 // Protocol requires at least 12 blocks
 	}
 
 	if err := c.WaitForConfirmation(ctx, nameNewTxHash.String(), confirmations); err != nil {
 		return nil, fmt.Errorf("failed to wait for NAME_NEW confirmation: %w", err)
 	}
 
-	// Update result with confirmation status
-	result.Status = TxStatusConfirmed
-	result.Confirmations = confirmations
-	// TODO: Once NAME_FIRSTUPDATE is implemented, create and broadcast it here
-	// For now, we just wait for NAME_NEW confirmation
+	// After waiting for 12+ confirmations, automatically create and broadcast NAME_FIRSTUPDATE
+	// Get UTXOs including the NAME_NEW UTXO
+	utxosForFirstUpdate, err := c.chain.GetUTXOsForAddress(ownerAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get UTXOs for NAME_FIRSTUPDATE: %w", err)
+	}
+
+	// Find the NAME_NEW UTXO (always at output index 0)
+	var nameNewUtxoIndex int = -1
+	for i, utxo := range utxosForFirstUpdate {
+		if utxo.TxHash.String() == nameNewTxHash.String() && utxo.OutIndex == 0 {
+			nameNewUtxoIndex = i
+			break
+		}
+	}
+
+	if nameNewUtxoIndex == -1 {
+		return nil, fmt.Errorf("NAME_NEW UTXO not found for NAME_FIRSTUPDATE")
+	}
+
+	// Convert namedb UTXOs to wallet UTXOs for NAME_FIRSTUPDATE
+	walletUTXOsForFirstUpdate := make([]wallet.UTXO, len(utxosForFirstUpdate))
+	for i, utxo := range utxosForFirstUpdate {
+		walletUTXOsForFirstUpdate[i] = wallet.UTXO{
+			TxHash:   utxo.TxHash,
+			Vout:     utxo.OutIndex,
+			Value:    utxo.Value,
+			PkScript: utxo.PkScript,
+			Address:  utxo.Address,
+		}
+	}
+
+	// Convert randUsed bytes to hex string for NAME_FIRSTUPDATE
+	randUsedHex := fmt.Sprintf("%x", randUsed)
+
+	// Create NAME_FIRSTUPDATE transaction
+	nameFirstUpdateTx, err := c.wallet.CreateNameFirstUpdateTx(
+		name,
+		randUsedHex,
+		value,
+		walletUTXOsForFirstUpdate,
+		nameNewUtxoIndex,
+		opts.FeeRate,
+		ownerBtcAddr.Address,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create NAME_FIRSTUPDATE transaction: %w", err)
+	}
+
+	// Broadcast NAME_FIRSTUPDATE transaction
+	nameFirstUpdateTxHash := nameFirstUpdateTx.TxHash()
+	if c.peerMgr != nil {
+		if err := c.peerMgr.BroadcastTx(nameFirstUpdateTx); err != nil {
+			log.Printf("Warning: failed to broadcast NAME_FIRSTUPDATE transaction: %v", err)
+		}
+	}
+
+	// Update result with NAME_FIRSTUPDATE transaction info. At this point
+	// the transaction has only been broadcast and may still be in the mempool,
+	// so we report it as pending with zero confirmations.
+	result.TxHash = nameFirstUpdateTxHash.String()
+	result.Status = TxStatusPending
+	result.Confirmations = 0
 
 	return result, nil
 }

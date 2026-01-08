@@ -96,10 +96,23 @@ When run as a standalone daemon, nmcd provides:
 - **Pure Go**: Built entirely in Go using standard library and btcd
 - **NameDatabase**: bbolt-backed storage for name operations
 - **Blockchain Integration**: Embeds btcd's blockchain.BlockChain with name validation hooks
+- **Block Synchronization**: Automatic Initial Block Download (IBD) and ongoing sync with the network via headers-first protocol
 - **Network Layer**: Uses btcd/peer for P2P networking with interface-based connections (net.Conn)
+- **Transaction Mempool**: Validates and relays unconfirmed transactions with automatic expiration
 - **JSON-RPC Server**: Standard library net/http for RPC interface
 - **Thread-Safe**: Mutex protection for all shared state
-- **Minimal Custom Code**: ~3,500 lines of focused custom code
+- **Focused Implementation**: ~18,000 lines of production code (excluding tests)
+
+### Block Synchronization
+
+The daemon automatically synchronizes with the Namecoin network using a headers-first sync protocol:
+
+1. **Initial Block Download (IBD)**: Downloads block headers from peers, validates the chain, then fetches full blocks
+2. **Ongoing Sync**: Continuously monitors peers for new blocks and processes them as they arrive
+3. **Peer Selection**: Tracks peer reliability and latency to choose the best sync sources
+4. **Health Monitoring**: Use the `/ready` endpoint to check if sync is complete
+
+The embedded client mode does not perform automatic network sync - it only processes locally added blocks or blocks from an external source.
 
 ## Documentation
 
@@ -782,6 +795,17 @@ The implementation supports three name operations:
 3. **NAME_UPDATE**: Update existing name value
 
 Names expire after 36000 blocks (~250 days) and must be renewed.
+
+### Name Deletion
+
+Namecoin does not have a separate NAME_DELETE operation. To delete a name, use **NAME_UPDATE with an empty value**:
+
+```go
+// Delete a name by setting empty value
+result, err := nc.UpdateName(ctx, "d/mysite", "", nil)
+```
+
+This effectively removes the name's data while maintaining ownership on the blockchain. The name will still expire after 36,000 blocks unless renewed.
 
 ## Project Structure
 

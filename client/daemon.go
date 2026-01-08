@@ -353,14 +353,13 @@ func (c *DaemonClient) ResolveName(ctx context.Context, name string) (*NameRecor
 
 // RegisterName creates a new name registration with the given value.
 //
-// IMPORTANT: RegisterName is not yet supported in daemon mode because the nmcd RPC
-// server does not currently expose name_new and name_firstupdate RPC methods.
+// IMPORTANT: RegisterName is not fully implemented in daemon mode. While the nmcd RPC
+// server provides name_new and name_firstupdate methods, the complete two-phase
+// registration workflow (NAME_NEW → wait 12 blocks → NAME_FIRSTUPDATE) needs
+// integration work to track pending registrations and automate the second phase.
 //
-// TODO: Implement RegisterName when name_new and name_firstupdate RPC methods are added.
-// The two-phase registration process requires:
-// 1. name_new: Create commitment transaction
-// 2. Wait for 12 block confirmations
-// 3. name_firstupdate: Reveal name and set initial value
+// Current status: The underlying RPC methods exist (name_new and name_firstupdate),
+// but automatic completion of the two-phase process is not yet implemented.
 //
 // Workarounds:
 // - Use embedded mode (NewClient with ModeEmbedded) for name registration
@@ -375,7 +374,8 @@ func (c *DaemonClient) RegisterName(ctx context.Context, name, value string, opt
 		return nil, fmt.Errorf("%w: length %d (max 1023)", ErrInvalidValue, len(value))
 	}
 
-	// The daemon doesn't have name_new and name_firstupdate RPC methods yet.
+	// The daemon has name_new and name_firstupdate RPC methods, but automatic
+	// two-phase registration workflow integration is not yet complete.
 	return nil, fmt.Errorf("RegisterName via daemon mode is not yet supported: use embedded mode (ModeEmbedded) or call name_new/name_firstupdate RPC methods directly on Namecoin Core")
 }
 
