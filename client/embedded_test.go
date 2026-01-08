@@ -1813,9 +1813,6 @@ func TestEmbeddedClient_UpdateName_SameAddressTransferWarning(t *testing.T) {
 		t.Error("result TxHash is empty")
 	}
 
-	// Close logger to flush output
-	logger.Close()
-
 	// Read the log file and verify warning was logged
 	logData, err := os.ReadFile(logFile)
 	if err != nil {
