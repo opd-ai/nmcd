@@ -5,7 +5,7 @@
 **nmcd Version:** v0.1.0 (development)  
 **Codebase Size:** 18,019 lines of production Go code (excluding tests)  
 **Reference Documentation:** README.md, docs/, PROTOCOL_COMPLIANCE_AUDIT.md
-**Last Update:** January 8, 2026 - Completed high-priority (Issues #1, #2, #5) and medium-priority (Issues #6, #7) documentation fixes
+**Last Update:** January 8, 2026 - Completed all high-priority and medium-priority issues (Issues #1, #2, #3, #5, #6, #7)
 
 ---
 
@@ -20,7 +20,7 @@
 - **EDGE CASE BUG:** 2
 - **PERFORMANCE ISSUE:** 1
 
-**Total Issues:** 10 → 5 (5 resolved: 3 high-priority + 2 medium-priority)
+**Total Issues:** 10 → 4 (6 resolved: 3 high-priority + 3 medium-priority)
 
 **Key Findings:**
 - Core functionality (name operations, blockchain validation, RPC server) is correctly implemented and matches documentation
@@ -85,7 +85,9 @@ func (c *DaemonClient) RegisterName(ctx context.Context, name, value string, opt
 ### FUNCTIONAL MISMATCH: EmbeddedClient RegisterName has incomplete NAME_FIRSTUPDATE phase
 **File:** client/embedded.go:409, 448
 **Severity:** Medium
+**Status:** ✅ RESOLVED (2026-01-08)
 **Description:** The EmbeddedClient.RegisterName method contains TODO comments indicating the NAME_FIRSTUPDATE phase is not fully automated: "TODO: Store pending registration for NAME_FIRSTUPDATE completion in Phase 3" and "TODO: Once NAME_FIRSTUPDATE is implemented, create and broadcast it here". The method creates NAME_NEW but doesn't automatically complete with NAME_FIRSTUPDATE after the required 12-block waiting period.
+**Resolution:** Implemented automatic NAME_FIRSTUPDATE completion. When WaitForConfirmation is true, RegisterName now waits for at least 12 block confirmations, then automatically creates and broadcasts the NAME_FIRSTUPDATE transaction. The method returns the NAME_FIRSTUPDATE transaction hash upon completion.
 **Expected Behavior:** RegisterName should handle the full two-phase registration process automatically when opts.WaitForConfirmation is true.
 **Actual Behavior:** Only NAME_NEW phase is completed. NAME_FIRSTUPDATE must be manually initiated or is deferred to "Phase 3".
 **Impact:** Users expecting automatic two-phase registration will only get NAME_NEW. Requires manual follow-up to complete registration, reducing usability of the library API.
@@ -379,11 +381,9 @@ This audit followed a systematic dependency-based approach:
 3. ✅ **Document NAME_DELETE mechanism** (Issue #5) - COMPLETED: Added to README that deletion is via NAME_UPDATE with empty value
 
 ### Medium Priority (COMPLETED)
-4. ✅ **Update PROTOCOL_COMPLIANCE_AUDIT.md** (Issue #6) - COMPLETED: Verified mempool documentation is up-to-date (mempool implemented and documented)
-5. ✅ **Document block sync behavior** (Issue #7) - COMPLETED: Added Block Synchronization section to README with IBD and sync details
-
-### Medium Priority (Remaining)
-6. **Complete EmbeddedClient NAME_FIRSTUPDATE automation** (Issue #3) - Finish two-phase registration for better UX
+4. ✅ **Complete EmbeddedClient NAME_FIRSTUPDATE automation** (Issue #3) - COMPLETED: Implemented automatic two-phase registration when WaitForConfirmation is true
+5. ✅ **Update PROTOCOL_COMPLIANCE_AUDIT.md** (Issue #6) - COMPLETED: Verified mempool documentation is up-to-date (mempool implemented and documented)
+6. ✅ **Document block sync behavior** (Issue #7) - COMPLETED: Added Block Synchronization section to README with IBD and sync details
 
 ### Low Priority
 7. **Add custom logger support** (Issue #4) - Complete Phase 2 logger implementation
