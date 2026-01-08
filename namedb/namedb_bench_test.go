@@ -474,7 +474,11 @@ func BenchmarkConcurrentReadWrite(b *testing.B) {
 // BenchmarkEncodeNameRecord measures serialization performance with buffer pool.
 // This benchmark validates the memory optimization from using sync.Pool.
 func BenchmarkEncodeNameRecord(b *testing.B) {
-	txHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+	// Use a constant hash for benchmarking to avoid error handling overhead
+	txHash, err := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+	if err != nil {
+		b.Fatalf("Failed to create test hash: %v", err)
+	}
 	record := &NameRecord{
 		Name:          "d/benchmark",
 		Value:         `{"ip":"192.168.1.1","ns":["ns1.example.com","ns2.example.com"]}`,
@@ -497,7 +501,10 @@ func BenchmarkEncodeNameRecord(b *testing.B) {
 
 // BenchmarkDecodeNameRecord measures deserialization performance.
 func BenchmarkDecodeNameRecord(b *testing.B) {
-	txHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+	txHash, err := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+	if err != nil {
+		b.Fatalf("Failed to create test hash: %v", err)
+	}
 	record := &NameRecord{
 		Name:          "d/benchmark",
 		Value:         `{"ip":"192.168.1.1","ns":["ns1.example.com","ns2.example.com"]}`,

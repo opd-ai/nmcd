@@ -1,6 +1,7 @@
 package namedb
 
 import (
+	"fmt"
 	"runtime"
 	"testing"
 	"time"
@@ -72,7 +73,7 @@ func TestMemoryOptimization_BulkOperations(t *testing.T) {
 	for i := 0; i < numRecords; i++ {
 		txHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
 		record := &NameRecord{
-			Name:          "d/bulk" + string(rune(i)),
+			Name:          fmt.Sprintf("d/bulk%d", i),
 			Value:         `{"ip":"192.168.1.1"}`,
 			TxHash:        *txHash,
 			OutIndex:      uint32(i),
