@@ -38,7 +38,7 @@ type PeerScoreManager struct {
 	scores map[string]*PeerScore // keyed by peer address
 
 	// Configuration
-	maxResponseSamples int     // Maximum number of response time samples to keep (default: 10)
+	maxResponseSamples int           // Maximum number of response time samples to keep (default: 10)
 	scoreDecayInterval time.Duration // How often to decay scores for inactive peers (default: 1 hour)
 }
 
