@@ -115,7 +115,10 @@ func TestRateLimiter_Cleanup(t *testing.T) {
 
 	// Manually mark bucket as stale by setting lastUsed to 11 minutes ago
 	rl.mu.Lock()
-	rl.buckets[ip].lastUsed = time.Now().Add(-11 * time.Minute)
+	if elem, ok := rl.buckets[ip]; ok {
+		entry := elem.Value.(*bucketEntry)
+		entry.bucket.lastUsed = time.Now().Add(-11 * time.Minute)
+	}
 	rl.mu.Unlock()
 
 	// Manually trigger cleanup

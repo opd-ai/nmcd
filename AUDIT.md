@@ -17,10 +17,10 @@
 - **CRITICAL BUG:** 0
 - **FUNCTIONAL MISMATCH:** 0 (all resolved)
 - **MISSING FEATURE:** 0 (all resolved)
-- **EDGE CASE BUG:** 2 (low severity, theoretical only)
+- **EDGE CASE BUG:** 0 (all resolved - #8 and #9 both fixed on 2026-01-08)
 - **PERFORMANCE ISSUE:** 0 (all resolved)
 
-**Total Issues:** 2 low-severity edge case bugs (both theoretical, no practical impact)
+**Total Issues:** 0 remaining issues
 
 **Key Findings:**
 - ✅ Core functionality (name operations, blockchain validation, RPC server) is correctly implemented and matches documentation
@@ -33,8 +33,10 @@
 - ✅ Resource cleanup patterns properly implemented with defer
 - ✅ Context cancellation support in all client methods
 - ✅ Thread-safe operations with proper mutex protection
+- ✅ Integer overflow protection in block height calculations (Issue #8 resolved)
+- ✅ Rate limiter with bounded memory usage prevents DoS (Issue #9 resolved)
 
-**Recommendation:** ✅ nmcd is suitable for production use (with standard blockchain caveats). All previously identified issues have been resolved. The remaining 2 edge case bugs are theoretical concerns with no practical impact on operations. The codebase demonstrates excellent quality, proper error handling, thread safety, and comprehensive test coverage.
+**Recommendation:** ✅ nmcd is suitable for production use (with standard blockchain caveats). **All previously identified issues have been resolved**, including the theoretical edge cases #8 and #9. The codebase demonstrates excellent quality, proper error handling, thread safety, comprehensive test coverage, and defensive programming against edge cases.
 
 ---
 
@@ -213,24 +215,36 @@ The implementation supports three name operations:
 ---
 
 ### EDGE CASE BUG: Potential integer overflow in block height calculations
-**File:** config/subsidy.go:37-54, namedb/namedb.go
+**File:** config/subsidy.go:37-54, namedb/namedb.go, chain/blockchain.go:991,1027
 **Severity:** Low
-**Description:** The CalcBlockSubsidy function and various block height calculations use int32 for block heights. While Namecoin's maximum block height is well below 2^31-1 (2.1 billion), mixing int32 and int64 in calculations could lead to overflow issues in edge cases or far-future scenarios.
+**Status:** ✅ RESOLVED (2026-01-08, commit fb84a75)
+**Resolution Date:** 2026-01-08
+**Resolution:** Added overflow protection in chain/height_overflow.go with safeCalcExpiresAt() helper function. When height + NameExpirationBlocks would overflow int32, the function clamps to MaxInt32 instead of wrapping to negative. Updated chain/blockchain.go to use safeCalcExpiresAt() for all ExpiresAt calculations. Added comprehensive tests in chain/overflow_test.go that demonstrate the bug and verify the fix.
+**Description:** The CalcBlockSubsidy function and various block height calculations use int32 for block heights. The critical issue was in chain/blockchain.go where `ExpiresAt = height + config.NameExpirationBlocks` could overflow when height approaches MaxInt32 (2,147,483,647), causing negative expiration heights.
 **Expected Behavior:** Block height calculations should use consistent types and handle potential overflow gracefully.
-**Actual Behavior:** int32 is used for heights which is sufficient for Namecoin's ~21M block lifecycle, but lacks explicit overflow protection.
-**Impact:** Very low practical impact. Namecoin would need ~400 years at 10-minute blocks to approach int32 limits. However, lacks defensive programming for theoretical edge cases.
+**Actual Behavior:** ✅ FIXED - Now uses safeCalcExpiresAt() which clamps to MaxInt32 instead of overflowing to negative values. The fix prevents incorrect name expiration behavior in theoretical far-future scenarios.
+**Impact:** Very low practical impact. Namecoin would need ~400 years at 10-minute blocks to approach int32 limits. However, now includes defensive programming for theoretical edge cases.
 **Reproduction:**
-1. Examine config/subsidy.go:37 - uses int32 for height
-2. Calculate maximum blocks in int32: 2,147,483,647 blocks
-3. At 10 min/block: ~40,000 years of operation
+1. Examine chain/blockchain.go:991,1027 - used to do height + config.NameExpirationBlocks directly
+2. When height = MaxInt32 (2,147,483,647), adding 36,000 overflows to -2,147,447,649
+3. Run Test_bug_8_height_overflow_in_expiration_calculation to see the bug demonstrated
+**Verification:**
+```bash
+cd /home/runner/work/nmcd/nmcd
+go test -v ./chain -run Test_bug_8  # All tests pass
+```
 **Code Reference:**
 ```go
-// config/subsidy.go:37
-func CalcBlockSubsidy(height int32, chainParams *chaincfg.Params) int64 {
-	// Calculate the number of halvings that have occurred
-	halvings := int32(height) / chainParams.SubsidyReductionInterval
-	// ...
+// chain/height_overflow.go:16-23 (NEW)
+func safeCalcExpiresAt(height int32) int32 {
+	if height > int32(math.MaxInt32)-config.NameExpirationBlocks {
+		return int32(math.MaxInt32)  // Clamp instead of overflow
+	}
+	return height + config.NameExpirationBlocks
 }
+
+// chain/blockchain.go:991,1027 (UPDATED)
+ExpiresAt: safeCalcExpiresAt(height),  // Was: height + config.NameExpirationBlocks
 ```
 
 ---
@@ -238,18 +252,37 @@ func CalcBlockSubsidy(height int32, chainParams *chaincfg.Params) int64 {
 ### EDGE CASE BUG: Rate limiter cleanup may not handle rapid IP changes
 **File:** rpc/ratelimit.go
 **Severity:** Low
-**Description:** The RPC rate limiter tracks requests per IP and performs periodic cleanup of stale entries. However, in scenarios with rapid IP address changes (e.g., load balancer IP rotation, NAT rebinding), the cleanup mechanism may not immediately free memory, potentially allowing gradual memory accumulation.
+**Status:** ✅ RESOLVED (2026-01-08, commit 71b5d52)
+**Resolution Date:** 2026-01-08
+**Resolution:** Implemented bounded rate limiter with LRU (Least Recently Used) eviction. Added `maxSize` parameter (default: 10,000 IPs) to prevent unbounded memory growth. When the limit is reached, the least recently used IP bucket is automatically evicted to make room for new entries. Created comprehensive tests in rpc/ratelimit_overflow_test.go that demonstrate the issue and verify the fix. Added `newBoundedRateLimiter()` constructor for custom size limits.
+**Description:** The RPC rate limiter tracks requests per IP and performs periodic cleanup of stale entries. In scenarios with rapid IP address changes (e.g., 10,000+ unique IPs per minute), the cleanup mechanism (runs every 5 minutes, removes entries older than 10 minutes) could lag behind, allowing unbounded memory accumulation.
 **Expected Behavior:** Rate limiter should efficiently handle dynamic IP scenarios with bounded memory usage.
-**Actual Behavior:** While periodic cleanup exists, very rapid IP rotation could accumulate entries faster than cleanup runs, though this would require unusual network conditions.
-**Impact:** Very low. Only affects deployments with extremely high IP churn rates. Periodic cleanup (every minute) should handle normal scenarios. Worst case: gradual memory growth under adversarial conditions.
+**Actual Behavior:** ✅ FIXED - Rate limiter now enforces a maximum size (default: 10,000 IPs). When the limit is reached, the LRU eviction automatically removes the oldest bucket. Memory usage is bounded even under adversarial conditions with extreme IP churn.
+**Impact:** Very low practical impact. Fix prevents theoretical unbounded memory growth in extreme edge cases (10,000+ unique IPs per minute). All existing rate limiting functionality preserved.
 **Reproduction:**
-1. Send requests from 10,000+ unique IPs within 1 minute window
-2. Observe rate limiter map growth
-3. Wait for cleanup cycle to prune stale entries
+1. Run Test_bug_9_rate_limiter_rapid_ip_changes to see the issue demonstrated
+2. Create 10,000+ unique IP requests rapidly
+3. Without fix: all buckets remain in memory; With fix: capped at maxSize
+**Verification:**
+```bash
+cd /home/runner/work/nmcd/nmcd
+go test -v ./rpc -run Test_bug_9  # All tests pass
+```
 **Code Reference:**
 ```go
-// rpc/ratelimit.go
-// Periodic cleanup runs but could lag behind extreme IP churn
+// rpc/ratelimit.go (UPDATED)
+const DefaultMaxIPsInRateLimiter = 10000
+
+type rateLimiter struct {
+	buckets map[string]*bucket
+	maxSize int  // NEW: maximum number of IPs to track
+	// ...
+}
+
+// NEW: Evicts LRU bucket when maxSize is reached
+func (rl *rateLimiter) evictOldestBucket() {
+	// Find and remove least recently used bucket
+}
 ```
 
 ---
@@ -477,22 +510,25 @@ All 10 issues from previous audits have been successfully resolved:
 5. ✅ NAME_DELETE documented (Issue #5)
 6. ✅ Mempool documentation updated (Issue #6)
 7. ✅ Block sync documented (Issue #7)
-8. ⚠️ Integer overflow consideration remains (Issue #8 - theoretical only, no action needed)
-9. ⚠️ Rate limiter optimization remains (Issue #9 - edge case only, no action needed)
+8. ✅ Integer overflow protection implemented (Issue #8 - resolved 2026-01-08, commit fb84a75)
+9. ✅ Rate limiter bounded size implemented (Issue #9 - resolved 2026-01-08, commit 71b5d52)
 10. ✅ AuxPow cache bounded with LRU (Issue #10)
 
 ### Remaining Low-Priority Items
 
+**All edge case bugs have been resolved!**
+
 **Issue #8 - Integer Overflow Future-Proofing:**
-- Theoretical concern only
-- Namecoin would require ~400 years to approach int32 limits
-- Current implementation is safe for all practical scenarios
-- Recommendation: No action needed unless building for extreme longevity (1000+ years)
+- ✅ RESOLVED (2026-01-08, commit fb84a75)
+- Added safeCalcExpiresAt() helper with overflow clamping to MaxInt32
+- Prevents negative expiration heights in theoretical far-future scenarios
+- Comprehensive test coverage added in chain/overflow_test.go
 
 **Issue #9 - Rate Limiter Optimization:**
-- Only affects extreme edge cases (10,000+ unique IPs per minute)
-- Periodic cleanup handles normal scenarios
-- Recommendation: Monitor in production; optimize only if issues arise
+- ✅ RESOLVED (2026-01-08, commit 71b5d52)
+- Implemented LRU eviction with configurable maxSize (default: 10,000 IPs)
+- Prevents unbounded memory growth even under extreme IP churn
+- Comprehensive test coverage added in rpc/ratelimit_overflow_test.go
 
 ### Production Readiness Checklist
 
@@ -513,13 +549,11 @@ All 10 issues from previous audits have been successfully resolved:
 
 ## CONCLUSION
 
-nmcd is a **production-ready**, high-quality Namecoin library with comprehensive functionality. The comprehensive re-audit on 2026-01-08 verified that **all 10 previously identified issues have been resolved or are theoretical edge cases with no practical impact**.
+nmcd is a **production-ready**, high-quality Namecoin library with comprehensive functionality. The comprehensive re-audit on 2026-01-08 verified that **all 10 previously identified issues have been resolved**. Issues #8 (integer overflow) and #9 (rate limiter) were both addressed on 2026-01-08 with defensive programming implementations.
 
-### Audit Score: 98/100 ⭐⭐⭐⭐⭐
+### Audit Score: 100/100 ⭐⭐⭐⭐⭐
 
-**Deductions:**
-- -1 for theoretical int32 overflow (400+ year concern)
-- -1 for rate limiter optimization opportunity (extreme edge case)
+**Perfect Score Achieved!** All issues resolved, including theoretical edge cases.
 
 ### Key Achievements
 
@@ -546,6 +580,8 @@ nmcd is a **production-ready**, high-quality Namecoin library with comprehensive
 - ✅ Health and readiness endpoints for Kubernetes deployments
 - ✅ Bounded AuxPow cache with LRU eviction preventing memory growth
 - ✅ Custom logger configuration for production observability
+- ✅ Integer overflow protection in block height calculations (defensive programming)
+- ✅ Rate limiter with bounded memory usage (10,000 IP cap with LRU eviction)
 
 ### Production Deployment Readiness
 
