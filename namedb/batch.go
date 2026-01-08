@@ -37,7 +37,7 @@ type utxoKey struct {
 // NewBatchWriter creates a new batch writer.
 // maxBatchSize: maximum number of operations before auto-commit (0 = no auto-commit)
 func (ndb *NameDatabase) NewBatchWriter(maxBatchSize int) *BatchWriter {
-	if maxBatchSize <= 0 {
+	if maxBatchSize < 0 {
 		maxBatchSize = 100 // Default as per PLAN.md (commit every 100 operations)
 	}
 	return &BatchWriter{
