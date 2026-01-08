@@ -128,21 +128,26 @@ func (psm *PeerScoreManager) GetScore(addr string) float64 {
 		return 50.0 // Neutral score for unknown peers
 	}
 
+	// First, check staleness under a read lock.
 	score.mu.RLock()
-	defer score.mu.RUnlock()
+	isStale := time.Since(score.scoreTime) > time.Minute
+	currentScore := score.score
+	score.mu.RUnlock()
 
-	// Recalculate if stale (>1 minute old)
-	if time.Since(score.scoreTime) > time.Minute {
-		score.mu.RUnlock()
-		score.mu.Lock()
-		score.calculateScore()
-		currentScore := score.score
-		score.mu.Unlock()
-		score.mu.RLock()
+	if !isStale {
 		return currentScore
 	}
 
-	return score.score
+	// Score is stale; acquire write lock to recalculate safely.
+	score.mu.Lock()
+	// Another goroutine might have already updated the score, so re-check.
+	if time.Since(score.scoreTime) > time.Minute {
+		score.calculateScore()
+	}
+	currentScore = score.score
+	score.mu.Unlock()
+
+	return currentScore
 }
 
 // GetBestPeers returns up to n peers with the highest scores

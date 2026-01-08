@@ -346,8 +346,8 @@ nmcd is a **library-first** Namecoin implementation built on btcd libraries, ena
   - ✅ Optimized message serialization: sync.Pool for buffers (**3.6x faster**, 21 ns vs 75 ns)
   - ✅ Documented compact block relay (BIP152) as future enhancement (see `docs/COMPACT_BLOCKS_FUTURE.md`)
   - ✅ Test: Buffer pool **3.6x faster** than allocation, **zero allocations** on reuse
-  - ✅ Comprehensive test coverage: 27 new tests (15 peer scoring, 12 buffer pool), all passing
-  - ✅ Benchmarks: GetScore ~200 ns/op, RecordBlock ~400 ns/op, GetBuffer 21 ns/op
+  - ✅ Comprehensive test coverage: 8 buffer pool and 13 peer scoring tests/benchmarks (21 total), all passing
+  - ✅ Benchmarks: GetScore 46.34 ns/op, RecordBlock 90.65 ns/op, GetBuffer 21 ns/op
   
 - [ ] **Memory Optimization** (1.5 days)
   - Files: `chain/blockchain.go`, `network/mempool.go`, `namedb/namedb.go`

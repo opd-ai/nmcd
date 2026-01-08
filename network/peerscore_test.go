@@ -1,6 +1,7 @@
 package network
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -280,6 +281,51 @@ func TestPeerScore_ResponseTimeSampleLimit(t *testing.T) {
 	// Should not exceed max
 	if len(score.lastResponseTimes) > 10 {
 		t.Errorf("lastResponseTimes length = %d, expected <= 10", len(score.lastResponseTimes))
+	}
+}
+
+func TestPeerScoreManager_Concurrent(t *testing.T) {
+	// Test concurrent access to PeerScoreManager to ensure thread-safety
+	psm := NewPeerScoreManager()
+	const numGoroutines = 100
+	const numOpsPerGoroutine = 100
+	done := make(chan bool, numGoroutines)
+
+	// Concurrent operations: GetScore, RecordBlockReceived, RecordTxReceived, RecordFailure
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			addr := fmt.Sprintf("peer-%d", id%10) // Use 10 different peers
+
+			for j := 0; j < numOpsPerGoroutine; j++ {
+				switch j % 5 {
+				case 0:
+					psm.RecordBlockReceived(addr, 100*time.Millisecond)
+				case 1:
+					psm.RecordTxReceived(addr, 50*time.Millisecond)
+				case 2:
+					psm.RecordFailure(addr)
+				case 3:
+					_ = psm.GetScore(addr)
+				case 4:
+					psm.RecordPeerSeen(addr)
+				}
+			}
+			done <- true
+		}(i)
+	}
+
+	// Wait for all goroutines
+	for i := 0; i < numGoroutines; i++ {
+		<-done
+	}
+
+	// Verify that peer scores exist and are reasonable
+	for i := 0; i < 10; i++ {
+		addr := fmt.Sprintf("peer-%d", i)
+		score := psm.GetScore(addr)
+		if score < 0 || score > 100 {
+			t.Errorf("Invalid score for %s: %f (expected 0-100)", addr, score)
+		}
 	}
 }
 

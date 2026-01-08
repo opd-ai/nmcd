@@ -117,7 +117,8 @@ func NewDaemonClient(cfg *Config) (*DaemonClient, error) {
 			MaxIdleConnsPerHost: 10,
 			// MaxConnsPerHost: Total connections per daemon (20 to prevent resource exhaustion)
 			MaxConnsPerHost: 20,
-			// WriteBufferSize/ReadBufferSize: Default 4KB is sufficient for JSON-RPC
+			// WriteBufferSize/ReadBufferSize: We intentionally rely on the default 4KB values
+			// provided by net/http for JSON-RPC payload sizes, so these fields are left unset.
 		},
 	}
 

@@ -97,14 +97,14 @@ BenchmarkPeerScoreManager_RecordBlock:   90.65 ns/op, 16 B/op
 
 ### Test Coverage
 
-- **Buffer Pool:** 12 comprehensive tests
+- **Buffer Pool:** 8 total (5 test functions + 3 benchmarks)
   - Basic get/put operations
   - Buffer reset verification
   - Large buffer handling (>64KB not pooled)
   - Concurrent access safety
   - Benchmark comparisons
 
-- **Peer Scoring:** 15 comprehensive tests
+- **Peer Scoring:** 13 total (11 test functions + 2 benchmarks)
   - Score creation and tracking
   - Block/transaction recording
   - Failure handling
@@ -115,10 +115,10 @@ BenchmarkPeerScoreManager_RecordBlock:   90.65 ns/op, 16 B/op
 
 ### Test Results
 
-All 27 new tests pass with 100% success rate:
+All 21 new tests pass with 100% success rate:
 ```
 TestBufferPool_*:              5/5 PASS
-TestPeerScoreManager_*:       12/12 PASS
+TestPeerScoreManager_*:       12/12 PASS (11 tests + 1 new concurrency test)
 BenchmarkBufferPool_*:         3/3 PASS
 BenchmarkPeerScoreManager_*:   2/2 PASS
 ```
