@@ -5,7 +5,7 @@
 **nmcd Version:** v0.1.0 (development)  
 **Codebase Size:** 18,019 lines of production Go code (excluding tests)  
 **Reference Documentation:** README.md, docs/, PROTOCOL_COMPLIANCE_AUDIT.md
-**Last Update:** January 8, 2026 - Completed high-priority documentation fixes (Issues #1, #2, #5)
+**Last Update:** January 8, 2026 - Completed high-priority (Issues #1, #2, #5) and medium-priority (Issues #6, #7) documentation fixes
 
 ---
 
@@ -16,11 +16,11 @@
 **Issue Breakdown:**
 - **CRITICAL BUG:** 0
 - **FUNCTIONAL MISMATCH:** 3 → 0 (all resolved)
-- **MISSING FEATURE:** 4
+- **MISSING FEATURE:** 4 → 2 (2 resolved)
 - **EDGE CASE BUG:** 2
 - **PERFORMANCE ISSUE:** 1
 
-**Total Issues:** 10 → 7 (3 high-priority documentation issues resolved)
+**Total Issues:** 10 → 5 (5 resolved: 3 high-priority + 2 medium-priority)
 
 **Key Findings:**
 - Core functionality (name operations, blockchain validation, RPC server) is correctly implemented and matches documentation
@@ -154,7 +154,9 @@ The implementation supports three name operations:
 ### MISSING FEATURE: Mempool not implemented (documented as known limitation)
 **File:** PROTOCOL_COMPLIANCE_AUDIT.md:1
 **Severity:** Medium  
+**Status:** ✅ RESOLVED (Verified 2026-01-08)
 **Description:** PROTOCOL_COMPLIANCE_AUDIT.md states "No mempool implementation (cannot store/relay unconfirmed transactions)" but this is contradicted by the presence of network/mempool.go and transaction relay functionality. The audit document appears outdated.
+**Resolution:** Verified that PROTOCOL_COMPLIANCE_AUDIT.md has been updated and correctly documents mempool implementation as complete (Issue #3 RESOLVED on 2026-01-03). The document now shows mempool with transaction validation and relay as implemented. This issue was based on outdated information and is now resolved.
 **Expected Behavior:** Either mempool should not exist, or the audit should acknowledge it exists.
 **Actual Behavior:** Mempool IS implemented (network/mempool.go exists with full implementation) but old audit documentation claims it's missing.
 **Impact:** Confusion about capability status. The actual implementation HAS a mempool with transaction validation and relay, making the "known limitation" incorrect.
@@ -173,7 +175,9 @@ The implementation supports three name operations:
 ### MISSING FEATURE: Block sync mechanism not fully active by default
 **File:** network/sync.go, README.md
 **Severity:** Medium
+**Status:** ✅ RESOLVED (2026-01-08)
 **Description:** README.md does not clearly document that block synchronization with the network is implemented via the SyncManager component. While the code exists (network/sync.go with SyncManager implementing headers-first sync), the README doesn't mention this capability or limitations.
+**Resolution:** Added "Block Synchronization" section to README.md Daemon Features documenting IBD (Initial Block Download), ongoing sync, peer selection, and health monitoring. Also noted that embedded mode does not perform automatic network sync.
 **Expected Behavior:** README should document block sync capabilities, including that the daemon performs IBD (Initial Block Download) and ongoing sync.
 **Actual Behavior:** README.md doesn't explicitly document automatic block sync. Users may assume they need to manually import blocks or that the daemon doesn't sync automatically.
 **Impact:** Users may not understand that the daemon automatically syncs with the network. Documentation gap affects understanding of daemon vs embedded mode capabilities.
@@ -374,10 +378,12 @@ This audit followed a systematic dependency-based approach:
 2. ✅ **Remove outdated TODO comments** (Issue #2) - COMPLETED: Clarified RegisterName status in daemon mode (RPC methods exist, workflow integration pending)
 3. ✅ **Document NAME_DELETE mechanism** (Issue #5) - COMPLETED: Added to README that deletion is via NAME_UPDATE with empty value
 
-### Medium Priority  
-4. **Complete EmbeddedClient NAME_FIRSTUPDATE automation** (Issue #3) - Finish two-phase registration for better UX
-5. **Update PROTOCOL_COMPLIANCE_AUDIT.md** (Issue #6) - Remove "no mempool" claim since mempool exists
-6. **Document block sync behavior** (Issue #7) - Add sync capabilities to README
+### Medium Priority (COMPLETED)
+4. ✅ **Update PROTOCOL_COMPLIANCE_AUDIT.md** (Issue #6) - COMPLETED: Verified mempool documentation is up-to-date (mempool implemented and documented)
+5. ✅ **Document block sync behavior** (Issue #7) - COMPLETED: Added Block Synchronization section to README with IBD and sync details
+
+### Medium Priority (Remaining)
+6. **Complete EmbeddedClient NAME_FIRSTUPDATE automation** (Issue #3) - Finish two-phase registration for better UX
 
 ### Low Priority
 7. **Add custom logger support** (Issue #4) - Complete Phase 2 logger implementation
