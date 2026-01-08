@@ -303,10 +303,10 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 // processRequest processes a JSON-RPC request
+// Note: We don't need to lock s.mu here because blockchain, peerMgr, and wallet
+// are set once during NewServer() and never modified. This allows parallel processing
+// of concurrent RPC requests, improving throughput significantly.
 func (s *Server) processRequest(req *Request) *Response {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	switch req.Method {
 	case "getinfo":
 		return s.getInfo(req)
@@ -2004,8 +2004,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	// No lock needed - blockchain, peerMgr are immutable after initialization
 
 	// Set Content-Type header before any writes
 	w.Header().Set("Content-Type", "application/json")
@@ -2048,8 +2047,7 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	// No lock needed - blockchain, peerMgr are immutable after initialization
 
 	// Set Content-Type header before any writes
 	w.Header().Set("Content-Type", "application/json")
