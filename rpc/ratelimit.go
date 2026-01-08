@@ -6,11 +6,19 @@ import (
 	"time"
 )
 
+const (
+	// DefaultMaxIPsInRateLimiter is the maximum number of IP addresses to track
+	// in the rate limiter. When this limit is reached, the oldest entries are evicted.
+	// This prevents unbounded memory growth with rapid IP rotation.
+	DefaultMaxIPsInRateLimiter = 10000
+)
+
 // rateLimiter implements per-IP rate limiting using token bucket algorithm
 type rateLimiter struct {
 	mu      sync.RWMutex
 	buckets map[string]*bucket
 	rate    int           // requests per minute
+	maxSize int           // maximum number of IPs to track (prevents unbounded growth)
 	cleanup *time.Ticker  // cleanup ticker
 	done    chan struct{} // cleanup stop signal
 }
@@ -23,10 +31,19 @@ type bucket struct {
 }
 
 // newRateLimiter creates a new rate limiter with the specified rate (requests per minute)
+// and a default maximum size to prevent unbounded memory growth.
 func newRateLimiter(rate int) *rateLimiter {
+	return newBoundedRateLimiter(rate, DefaultMaxIPsInRateLimiter)
+}
+
+// newBoundedRateLimiter creates a new rate limiter with the specified rate and maximum size.
+// When maxSize IPs are tracked and a new IP arrives, the least recently used IP is evicted.
+// This prevents unbounded memory growth in scenarios with rapid IP rotation.
+func newBoundedRateLimiter(rate int, maxSize int) *rateLimiter {
 	rl := &rateLimiter{
 		buckets: make(map[string]*bucket),
 		rate:    rate,
+		maxSize: maxSize,
 		cleanup: time.NewTicker(5 * time.Minute),
 		done:    make(chan struct{}),
 	}
@@ -47,6 +64,12 @@ func (rl *rateLimiter) allow(ip string) bool {
 	// Get or create bucket for this IP
 	b, exists := rl.buckets[ip]
 	if !exists {
+		// Before creating a new bucket, check if we're at capacity
+		if len(rl.buckets) >= rl.maxSize {
+			// Evict the least recently used IP to make room
+			rl.evictOldestBucket()
+		}
+		
 		b = &bucket{
 			tokens:     float64(rl.rate),
 			lastRefill: now,
@@ -76,6 +99,28 @@ func (rl *rateLimiter) allow(ip string) bool {
 	}
 
 	return false
+}
+
+// evictOldestBucket removes the least recently used bucket to make room for new entries.
+// This method must be called while holding rl.mu lock.
+func (rl *rateLimiter) evictOldestBucket() {
+	var oldestIP string
+	var oldestTime time.Time
+	
+	// Find the bucket with the oldest lastUsed time
+	first := true
+	for ip, b := range rl.buckets {
+		if first || b.lastUsed.Before(oldestTime) {
+			oldestIP = ip
+			oldestTime = b.lastUsed
+			first = false
+		}
+	}
+	
+	// Remove the oldest bucket if found
+	if oldestIP != "" {
+		delete(rl.buckets, oldestIP)
+	}
 }
 
 // cleanupLoop removes stale bucket entries
