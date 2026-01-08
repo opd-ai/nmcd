@@ -1,0 +1,283 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Trigger on semantic version tags (e.g., v1.0.0)
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build:
+    name: Build Binaries
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # Linux builds
+          - goos: linux
+            goarch: amd64
+            artifact_name: nmcd-linux-amd64
+          - goos: linux
+            goarch: arm64
+            artifact_name: nmcd-linux-arm64
+          # macOS builds
+          - goos: darwin
+            goarch: amd64
+            artifact_name: nmcd-darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            artifact_name: nmcd-darwin-arm64
+          # Windows build
+          - goos: windows
+            goarch: amd64
+            artifact_name: nmcd-windows-amd64.exe
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          go build -v -trimpath \
+            -ldflags="-s -w -X main.version=${{ steps.get_version.outputs.VERSION }}" \
+            -o ${{ matrix.artifact_name }} \
+            ./cmd/nmcd
+
+      - name: Generate SHA256 checksum
+        run: |
+          sha256sum ${{ matrix.artifact_name }} > ${{ matrix.artifact_name }}.sha256
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            ${{ matrix.artifact_name }}
+            ${{ matrix.artifact_name }}.sha256
+          retention-days: 5
+
+  permamail:
+    name: Build Permamail Binaries
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            artifact_name: permamail-linux-amd64
+          - goos: linux
+            goarch: arm64
+            artifact_name: permamail-linux-arm64
+          - goos: darwin
+            goarch: amd64
+            artifact_name: permamail-darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            artifact_name: permamail-darwin-arm64
+          - goos: windows
+            goarch: amd64
+            artifact_name: permamail-windows-amd64.exe
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          go build -v -trimpath \
+            -ldflags="-s -w -X main.version=${{ steps.get_version.outputs.VERSION }}" \
+            -o ${{ matrix.artifact_name }} \
+            ./cmd/permamail
+
+      - name: Generate SHA256 checksum
+        run: |
+          sha256sum ${{ matrix.artifact_name }} > ${{ matrix.artifact_name }}.sha256
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            ${{ matrix.artifact_name }}
+            ${{ matrix.artifact_name }}.sha256
+          retention-days: 5
+
+  release:
+    name: Create GitHub Release
+    needs: [build, permamail]
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release/
+          find artifacts/ -type f -exec cp {} release/ \;
+          cd release/
+          # Create combined checksums file
+          cat *.sha256 > checksums.txt
+          ls -lh
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          cat > release_notes.md << 'EOF'
+          ## nmcd ${{ steps.get_version.outputs.VERSION }}
+
+          Pure Go Namecoin implementation using btcd libraries.
+
+          ### Downloads
+
+          Download the binary for your platform below. All binaries are statically linked with no external dependencies.
+
+          **Linux:**
+          - `nmcd-linux-amd64` - 64-bit Intel/AMD
+          - `nmcd-linux-arm64` - 64-bit ARM (Raspberry Pi 3+, AWS Graviton, etc.)
+
+          **macOS:**
+          - `nmcd-darwin-amd64` - Intel Macs
+          - `nmcd-darwin-arm64` - Apple Silicon (M1/M2/M3)
+
+          **Windows:**
+          - `nmcd-windows-amd64.exe` - 64-bit
+
+          ### Verification
+
+          Verify your download with SHA256 checksums:
+          ```bash
+          # Linux/macOS
+          sha256sum -c nmcd-linux-amd64.sha256
+          
+          # Or check against checksums.txt
+          grep nmcd-linux-amd64 checksums.txt
+          ```
+
+          ### Docker
+
+          Multi-architecture Docker images are available:
+          ```bash
+          docker pull ghcr.io/opd-ai/nmcd:${{ steps.get_version.outputs.VERSION }}
+          docker pull ghcr.io/opd-ai/nmcd:latest
+          ```
+
+          ### Quick Start
+
+          ```bash
+          # Make binary executable (Linux/macOS)
+          chmod +x nmcd-linux-amd64
+          
+          # Run daemon
+          ./nmcd-linux-amd64 -network=mainnet
+          ```
+
+          See [README.md](https://github.com/opd-ai/nmcd#readme) for detailed documentation.
+
+          ### Changes
+
+          See [CHANGELOG.md](https://github.com/opd-ai/nmcd/blob/main/CHANGELOG.md) for detailed release notes.
+          EOF
+          cat release_notes.md
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: ${{ steps.get_version.outputs.VERSION }}
+          body_path: release_notes.md
+          files: release/*
+          draft: false
+          prerelease: ${{ contains(github.ref, 'rc') || contains(github.ref, 'beta') || contains(github.ref, 'alpha') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docker:
+    name: Build and Push Docker Images
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/opd-ai/nmcd
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ steps.get_version.outputs.VERSION }}
