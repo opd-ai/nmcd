@@ -88,8 +88,9 @@ type UTXO struct {
 
 // NameDatabase manages name operations with bbolt storage
 type NameDatabase struct {
-	db *bbolt.DB
-	mu sync.RWMutex
+	db    *bbolt.DB
+	mu    sync.RWMutex
+	cache *lruCache // LRU cache for name lookups (10,000 entries)
 }
 
 // NewNameDatabase creates a new name database
@@ -113,7 +114,10 @@ func NewNameDatabase(dbPath string) (*NameDatabase, error) {
 		return nil, err
 	}
 
-	return &NameDatabase{db: db}, nil
+	return &NameDatabase{
+		db:    db,
+		cache: newLRUCache(10000), // 10,000 entry LRU cache as per PLAN.md
+	}, nil
 }
 
 // Close closes the database
@@ -128,15 +132,60 @@ func (ndb *NameDatabase) PutName(name string, record *NameRecord) error {
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
 
-	return ndb.db.Update(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket(namesBucket)
+	err := ndb.db.Update(func(tx *bbolt.Tx) error {
+		namesBucket := tx.Bucket(namesBucket)
+		expirationBucket := tx.Bucket(expirationBucket)
+		
+		// Check if name already exists to update expiration index
+		existingData := namesBucket.Get([]byte(name))
+		if existingData != nil {
+			// Remove old expiration index entry
+			existingRecord, decodeErr := decodeNameRecord(existingData)
+			if decodeErr == nil {
+				oldExpirationKey := makeExpirationKey(existingRecord.ExpiresAt, name)
+				expirationBucket.Delete(oldExpirationKey)
+			}
+		}
+		
+		// Store name record
 		data := encodeNameRecord(record)
-		return bucket.Put([]byte(name), data)
+		if err := namesBucket.Put([]byte(name), data); err != nil {
+			return err
+		}
+		
+		// Add new expiration index entry
+		// Key format: height (4 bytes) + name
+		expirationKey := makeExpirationKey(record.ExpiresAt, name)
+		return expirationBucket.Put(expirationKey, []byte{1}) // Value doesn't matter
 	})
+	
+	if err == nil {
+		// Ensure Name field is set before caching
+		record.Name = name
+		// Update cache with new value
+		ndb.cache.Put(name, record)
+	}
+	
+	return err
+}
+
+// makeExpirationKey creates an expiration index key from height and name.
+// Format: height (4 bytes, big-endian) + name
+// Big-endian ensures proper sorting by height.
+func makeExpirationKey(height int32, name string) []byte {
+	key := make([]byte, 4+len(name))
+	binary.BigEndian.PutUint32(key[:4], uint32(height))
+	copy(key[4:], []byte(name))
+	return key
 }
 
 // GetName retrieves a name record
 func (ndb *NameDatabase) GetName(name string) (*NameRecord, error) {
+	// Check cache first (with RLock for cache read)
+	if cached, ok := ndb.cache.Get(name); ok {
+		return cached, nil
+	}
+
 	ndb.mu.RLock()
 	defer ndb.mu.RUnlock()
 
@@ -155,6 +204,12 @@ func (ndb *NameDatabase) GetName(name string) (*NameRecord, error) {
 		record.Name = name
 		return nil
 	})
+	
+	// Cache the result if found
+	if err == nil && record != nil {
+		ndb.cache.Put(name, record)
+	}
+	
 	return record, err
 }
 
@@ -163,10 +218,30 @@ func (ndb *NameDatabase) DeleteName(name string) error {
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
 
-	return ndb.db.Update(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket(namesBucket)
-		return bucket.Delete([]byte(name))
+	err := ndb.db.Update(func(tx *bbolt.Tx) error {
+		namesBucket := tx.Bucket(namesBucket)
+		expirationBucket := tx.Bucket(expirationBucket)
+		
+		// Get existing record to remove from expiration index
+		existingData := namesBucket.Get([]byte(name))
+		if existingData != nil {
+			existingRecord, decodeErr := decodeNameRecord(existingData)
+			if decodeErr == nil {
+				expirationKey := makeExpirationKey(existingRecord.ExpiresAt, name)
+				expirationBucket.Delete(expirationKey)
+			}
+		}
+		
+		// Delete name record
+		return namesBucket.Delete([]byte(name))
 	})
+	
+	if err == nil {
+		// Invalidate cache entry
+		ndb.cache.Delete(name)
+	}
+	
+	return err
 }
 
 // DeleteHistory removes all history entries for a name.
@@ -206,23 +281,40 @@ func (ndb *NameDatabase) DeleteHistory(name string) error {
 // GetExpiredNames returns names that have expired before the given height.
 // A name is considered valid through its ExpiresAt block and only expired after.
 // For example, a name with ExpiresAt=100 is valid at height 100 but expired at height 101.
+// This implementation uses an expiration index for O(k) performance where k is the number
+// of expired names, rather than O(n) where n is total names.
 func (ndb *NameDatabase) GetExpiredNames(height int32) ([]string, error) {
 	ndb.mu.RLock()
 	defer ndb.mu.RUnlock()
 
 	var expired []string
 	err := ndb.db.View(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket(namesBucket)
-		c := bucket.Cursor()
-		for k, v := c.First(); k != nil; k, v = c.Next() {
-			record, decodeErr := decodeNameRecord(v)
-			if decodeErr != nil {
-				return fmt.Errorf("failed to decode name %s: %w", string(k), decodeErr)
+		expirationBucket := tx.Bucket(expirationBucket)
+		
+		// Use cursor to scan expiration index up to the given height
+		c := expirationBucket.Cursor()
+		
+		// Seek to the beginning and iterate until we reach entries beyond height
+		for k, _ := c.First(); k != nil; k, _ = c.Next() {
+			if len(k) < 4 {
+				continue // Invalid key, skip
 			}
-			if record.ExpiresAt < height {
-				expired = append(expired, string(k))
+			
+			// Extract height from key (first 4 bytes, big-endian)
+			expiresAt := int32(binary.BigEndian.Uint32(k[:4]))
+			
+			// Names expire AFTER their ExpiresAt height
+			// So ExpiresAt < height means expired at the given height
+			if expiresAt < height {
+				// Extract name from key (remaining bytes)
+				name := string(k[4:])
+				expired = append(expired, name)
+			} else {
+				// Since keys are sorted by height, we can stop here
+				break
 			}
 		}
+		
 		return nil
 	})
 	return expired, err
