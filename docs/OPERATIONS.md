@@ -58,7 +58,7 @@ logformat = "json"  # Options: text, json
 # For systemd services
 sudo mkdir -p /etc/nmcd
 sudo nano /etc/nmcd/nmcd.conf
-sudo chmod 644 /etc/nmcd/nmcd.conf
+sudo chmod 600 /etc/nmcd/nmcd.conf
 ```
 
 ### Environment Variables
@@ -322,12 +322,15 @@ curl http://localhost:9090/metrics
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `nmcd_blocks_total` | Counter | Total blocks processed |
-| `nmcd_block_height` | Gauge | Current block height |
+| `nmcd_blocks_processed_total` | Counter | Total blocks processed |
+| `nmcd_last_block_height` | Gauge | Current block height |
 | `nmcd_peers_connected` | Gauge | Number of connected peers |
-| `nmcd_names_total` | Gauge | Total registered names |
-| `nmcd_transactions_total` | Counter | Total transactions processed |
-| `nmcd_mempool_size` | Gauge | Current mempool size |
+| `nmcd_name_operations_total` | Counter | Total name operations processed |
+| `nmcd_name_new_total` | Counter | Total `NAME_NEW` operations processed |
+| `nmcd_name_firstupdate_total` | Counter | Total `NAME_FIRSTUPDATE` operations processed |
+| `nmcd_name_update_total` | Counter | Total `NAME_UPDATE` operations processed |
+| `nmcd_txs_processed_total` | Counter | Total transactions processed |
+| `nmcd_txs_in_mempool` | Gauge | Current mempool size |
 | `nmcd_namedb_size_bytes` | Gauge | Name database size |
 | `nmcd_rpc_requests_total{method}` | Counter | RPC requests by method |
 | `nmcd_rpc_duration_seconds{method}` | Histogram | RPC request duration |
@@ -358,7 +361,7 @@ sudo systemctl reload prometheus
 
 **Block Height Over Time:**
 ```promql
-nmcd_block_height
+nmcd_last_block_height
 ```
 
 **Peer Count:**
@@ -477,7 +480,7 @@ groups:
 
       # Sync stalled
       - alert: NmcdSyncStalled
-        expr: rate(nmcd_blocks_total[30m]) == 0
+        expr: rate(nmcd_blocks_processed_total[30m]) == 0
         for: 1h
         labels:
           severity: warning
