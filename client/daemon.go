@@ -102,14 +102,22 @@ func NewDaemonClient(cfg *Config) (*DaemonClient, error) {
 		cfg.RPCAddr = "http://localhost:8336"
 	}
 
-	// Create HTTP client with reasonable timeouts
+	// Create HTTP client with optimized connection pooling for production use.
+	// Connection pooling reduces latency and resource usage by reusing TCP connections.
 	httpClient := &http.Client{
 		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
-			MaxIdleConns:        10,
-			IdleConnTimeout:     90 * time.Second,
-			DisableCompression:  true,
-			MaxIdleConnsPerHost: 2,
+			// MaxIdleConns: Total idle connections across all hosts (100 for high-throughput)
+			MaxIdleConns: 100,
+			// IdleConnTimeout: How long idle connections stay open (90s balances reuse vs resources)
+			IdleConnTimeout: 90 * time.Second,
+			// DisableCompression: Disabled for RPC (JSON is already compact, compression adds CPU overhead)
+			DisableCompression: true,
+			// MaxIdleConnsPerHost: Idle connections per daemon (10 for concurrent requests, was 2)
+			MaxIdleConnsPerHost: 10,
+			// MaxConnsPerHost: Total connections per daemon (20 to prevent resource exhaustion)
+			MaxConnsPerHost: 20,
+			// WriteBufferSize/ReadBufferSize: Default 4KB is sufficient for JSON-RPC
 		},
 	}
 
