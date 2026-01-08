@@ -99,7 +99,7 @@ When run as a standalone daemon, nmcd provides:
 - **Network Layer**: Uses btcd/peer for P2P networking with interface-based connections (net.Conn)
 - **JSON-RPC Server**: Standard library net/http for RPC interface
 - **Thread-Safe**: Mutex protection for all shared state
-- **Minimal Custom Code**: ~3,500 lines of focused custom code
+- **Focused Implementation**: ~18,000 lines of production code (excluding tests)
 
 ## Documentation
 
@@ -782,6 +782,17 @@ The implementation supports three name operations:
 3. **NAME_UPDATE**: Update existing name value
 
 Names expire after 36000 blocks (~250 days) and must be renewed.
+
+### Name Deletion
+
+Namecoin does not have a separate NAME_DELETE operation. To delete a name, use **NAME_UPDATE with an empty value**:
+
+```go
+// Delete a name by setting empty value
+result, err := nc.UpdateName(ctx, "d/mysite", "", nil)
+```
+
+This effectively removes the name's data while maintaining ownership on the blockchain. The name will still expire after 36,000 blocks unless renewed.
 
 ## Project Structure
 
