@@ -542,8 +542,60 @@ type Config struct {
     MaxPeers       int        // Max peer connections (default: 8)
     BootstrapPeers []string   // Initial peers (default: DNS seeds)
     DisableWallet  bool       // Disable wallet functionality
+    Logger         *logging.Logger // Custom logger for client operations (default: uses internal/logging default logger)
 }
 ```
+
+### Custom Logger Configuration
+
+The client package supports custom logging via the `Logger` field in the configuration. This allows applications to control log output format, destination, and verbosity level.
+
+**Example: File Logging with JSON Format**
+
+```go
+import (
+    "github.com/opd-ai/nmcd/client"
+    "github.com/opd-ai/nmcd/internal/logging"
+)
+
+// Create custom logger
+loggerCfg := &logging.Config{
+    Level:     logging.LevelDebug,  // DEBUG, INFO, WARN, ERROR
+    Format:    "json",               // "json" or "text"
+    Output:    "/var/log/nmcd/client.log", // File path, "stdout", or "stderr"
+    Component: "my-app",
+}
+
+logger, err := logging.Init(loggerCfg)
+if err != nil {
+    log.Fatal(err)
+}
+defer logger.Close()
+
+// Use logger with client
+cfg := &client.Config{
+    Mode:   client.ModeEmbedded,
+    Logger: logger,
+}
+
+client, err := client.NewClient(cfg)
+if err != nil {
+    log.Fatal(err)
+}
+defer client.Close()
+```
+
+**Available Log Levels:**
+- `logging.LevelDebug` - Detailed debug information
+- `logging.LevelInfo` - General informational messages
+- `logging.LevelWarn` - Warning messages (e.g., broadcast failures)
+- `logging.LevelError` - Error messages
+
+**Output Formats:**
+- `"json"` - Structured JSON logging (recommended for production)
+- `"text"` - Human-readable text format (useful for development)
+
+**Note:** If `Logger` is nil, the client uses the default logger from the `internal/logging` package with INFO level and text format to stdout.
 
 ## Thread Safety
 

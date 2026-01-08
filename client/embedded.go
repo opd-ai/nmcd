@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -15,6 +14,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/opd-ai/nmcd/chain"
 	"github.com/opd-ai/nmcd/config"
+	"github.com/opd-ai/nmcd/internal/logging"
 	"github.com/opd-ai/nmcd/namedb"
 	"github.com/opd-ai/nmcd/network"
 	"github.com/opd-ai/nmcd/wallet"
@@ -32,6 +32,7 @@ type EmbeddedClient struct {
 	peerMgr *network.PeerManager
 	network string
 	dataDir string
+	logger  *logging.Logger
 
 	// mu protects client state during initialization and shutdown
 	mu sync.RWMutex
@@ -157,6 +158,15 @@ func NewEmbeddedClient(cfg *Config) (*EmbeddedClient, error) {
 		return nil, fmt.Errorf("failed to create peer manager: %w", err)
 	}
 
+	// Initialize logger (use provided or default)
+	var logger *logging.Logger
+	if cfg.Logger != nil {
+		logger = cfg.Logger
+	} else {
+		logger = logging.GetDefault()
+	}
+	logger = logger.WithComponent("embedded-client")
+
 	client := &EmbeddedClient{
 		chain:   bc,
 		nameDB:  nameDB,
@@ -164,6 +174,7 @@ func NewEmbeddedClient(cfg *Config) (*EmbeddedClient, error) {
 		peerMgr: peerMgr,
 		network: cfg.Network,
 		dataDir: cfg.DataDir,
+		logger:  logger,
 		stopCh:  make(chan struct{}),
 		closed:  false,
 	}
@@ -409,7 +420,10 @@ func (c *EmbeddedClient) RegisterName(ctx context.Context, name, value string, o
 		if err := c.peerMgr.BroadcastTx(nameNewTx); err != nil {
 			// Log warning but don't fail - transaction is still valid locally
 			// In offline mode or with no peers, transaction can be broadcast later
-			log.Printf("Warning: failed to broadcast NAME_NEW transaction: %v", err)
+			c.logger.Warn("failed to broadcast NAME_NEW transaction",
+				"error", err,
+				"tx_hash", nameNewTxHash.String(),
+				"name", name)
 		}
 	}
 
@@ -491,7 +505,10 @@ func (c *EmbeddedClient) RegisterName(ctx context.Context, name, value string, o
 	nameFirstUpdateTxHash := nameFirstUpdateTx.TxHash()
 	if c.peerMgr != nil {
 		if err := c.peerMgr.BroadcastTx(nameFirstUpdateTx); err != nil {
-			log.Printf("Warning: failed to broadcast NAME_FIRSTUPDATE transaction: %v", err)
+			c.logger.Warn("failed to broadcast NAME_FIRSTUPDATE transaction",
+				"error", err,
+				"tx_hash", nameFirstUpdateTxHash.String(),
+				"name", name)
 		}
 	}
 
@@ -642,7 +659,9 @@ func (c *EmbeddedClient) UpdateName(ctx context.Context, name, value string, opt
 			return nil, fmt.Errorf("name transfers (TransferTo) require network integration (coming in future phase)")
 		}
 		// Transferring to same address is redundant but allowed
-		log.Printf("Warning: TransferTo address matches current owner (%s) - transfer is redundant and will be ignored", opts.TransferTo)
+		c.logger.Warn("TransferTo address matches current owner - transfer is redundant and will be ignored",
+			"address", opts.TransferTo,
+			"name", name)
 		destAddr = nil
 	}
 
@@ -665,7 +684,10 @@ func (c *EmbeddedClient) UpdateName(ctx context.Context, name, value string, opt
 		if err := c.peerMgr.BroadcastTx(updateTx); err != nil {
 			// Log warning but don't fail - transaction is still valid locally
 			// In offline mode or with no peers, transaction can be broadcast later
-			log.Printf("Warning: failed to broadcast NAME_UPDATE transaction: %v", err)
+			c.logger.Warn("failed to broadcast NAME_UPDATE transaction",
+				"error", err,
+				"tx_hash", updateTxHash.String(),
+				"name", name)
 		}
 	}
 

@@ -1,11 +1,9 @@
 package client
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +12,7 @@ import (
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
+	"github.com/opd-ai/nmcd/internal/logging"
 	"github.com/opd-ai/nmcd/namedb"
 )
 
@@ -1720,11 +1719,26 @@ func TestEmbeddedClient_UpdateName_SameAddressTransferWarning(t *testing.T) {
 	// Create temporary directory for test
 	tmpDir := t.TempDir()
 
-	// Initialize client with wallet
+	// Create a custom logger that writes to a file so we can check output
+	logFile := filepath.Join(tmpDir, "test.log")
+	loggerCfg := &logging.Config{
+		Level:     logging.LevelWarn,
+		Format:    "text",
+		Output:    logFile,
+		Component: "test",
+	}
+	logger, err := logging.Init(loggerCfg)
+	if err != nil {
+		t.Fatalf("Failed to initialize logger: %v", err)
+	}
+	defer logger.Close()
+
+	// Initialize client with wallet and custom logger
 	cfg := &Config{
 		DataDir:       tmpDir,
 		Network:       "regtest",
 		DisableWallet: false,
+		Logger:        logger,
 	}
 	client, err := NewEmbeddedClient(cfg)
 	if err != nil {
@@ -1780,12 +1794,6 @@ func TestEmbeddedClient_UpdateName_SameAddressTransferWarning(t *testing.T) {
 		t.Fatalf("failed to add name UTXO: %v", err)
 	}
 
-	// Capture log output
-	var logBuf bytes.Buffer
-	oldOutput := log.Writer()
-	log.SetOutput(&logBuf)
-	defer log.SetOutput(oldOutput)
-
 	// Call UpdateName with TransferTo set to same address as current owner
 	ctx := context.Background()
 	opts := &UpdateOpts{
@@ -1805,11 +1813,22 @@ func TestEmbeddedClient_UpdateName_SameAddressTransferWarning(t *testing.T) {
 		t.Error("result TxHash is empty")
 	}
 
-	// Verify warning was logged
-	logOutput := logBuf.String()
-	expectedWarning := fmt.Sprintf("Warning: TransferTo address matches current owner (%s) - transfer is redundant and will be ignored", ownerAddr)
-	if !strings.Contains(logOutput, expectedWarning) {
-		t.Errorf("expected warning log containing %q, got log output: %q", expectedWarning, logOutput)
+	// Close logger to flush output
+	logger.Close()
+
+	// Read the log file and verify warning was logged
+	logData, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("failed to read log file: %v", err)
+	}
+	logOutput := string(logData)
+
+	// Check for the warning message (new structured logging format)
+	if !strings.Contains(logOutput, "TransferTo address matches current owner") {
+		t.Errorf("expected warning log containing 'TransferTo address matches current owner', got log output: %q", logOutput)
+	}
+	if !strings.Contains(logOutput, ownerAddr) {
+		t.Errorf("expected warning log containing address %q, got log output: %q", ownerAddr, logOutput)
 	}
 }
 

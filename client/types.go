@@ -59,6 +59,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/opd-ai/nmcd/internal/logging"
 )
 
 // NameClient is the primary interface for interacting with the Namecoin network.
@@ -313,8 +315,20 @@ type Config struct {
 	DisableWallet bool
 
 	// Logger is a custom logger for client operations.
-	// If nil, uses default logger.
-	// Logger *log.Logger // TODO: Implement in Phase 2
+	// If nil, uses default logger from internal/logging package.
+	// This allows applications to customize logging behavior, output format,
+	// and destination for client operations.
+	//
+	// Example:
+	//   logger, _ := logging.Init(&logging.Config{
+	//       Level: logging.LevelDebug,
+	//       Format: "json",
+	//       Output: "/var/log/nmcd/client.log",
+	//   })
+	//   cfg := &client.Config{
+	//       Logger: logger,
+	//   }
+	Logger *logging.Logger
 }
 
 // ClientMode specifies the client operation mode.
