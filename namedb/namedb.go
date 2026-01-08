@@ -561,54 +561,57 @@ func (ndb *NameDatabase) RemoveLastHistoryEntry(name string) (*NameRecord, error
 
 // encodeNameRecord serializes a name record.
 // Encoding format (version 3): version + value + txhash + outindex + height + expiresAt + address + timestamp + namenewheight
+// Uses buffer pool to reduce allocations.
 func encodeNameRecord(record *NameRecord) []byte {
-	// Encoding format: version byte + value + txhash + outindex + height + expiresAt + address + timestamp + namenewheight
-	data := make([]byte, 0, 1+len(record.Value)+32+4+4+4+len(record.Address)+8+4)
+	// Get a buffer from the pool
+	buf := getBuffer()
+	defer putBuffer(buf)
+
+	// Pre-allocate a temporary 8-byte buffer for encoding integers
+	// This avoids multiple small allocations
+	tmp := make([]byte, 8)
 
 	// Version byte
-	data = append(data, byte(NameRecordVersion))
+	buf.WriteByte(byte(NameRecordVersion))
 
 	// Value length + value
-	valLen := make([]byte, 4)
-	binary.LittleEndian.PutUint32(valLen, uint32(len(record.Value)))
-	data = append(data, valLen...)
-	data = append(data, []byte(record.Value)...)
+	binary.LittleEndian.PutUint32(tmp[:4], uint32(len(record.Value)))
+	buf.Write(tmp[:4])
+	buf.WriteString(record.Value)
 
 	// TxHash
-	data = append(data, record.TxHash[:]...)
+	buf.Write(record.TxHash[:])
 
 	// OutIndex (new in v2)
-	outIndex := make([]byte, 4)
-	binary.LittleEndian.PutUint32(outIndex, record.OutIndex)
-	data = append(data, outIndex...)
+	binary.LittleEndian.PutUint32(tmp[:4], record.OutIndex)
+	buf.Write(tmp[:4])
 
 	// Height
-	height := make([]byte, 4)
-	binary.LittleEndian.PutUint32(height, uint32(record.Height))
-	data = append(data, height...)
+	binary.LittleEndian.PutUint32(tmp[:4], uint32(record.Height))
+	buf.Write(tmp[:4])
 
 	// ExpiresAt
-	expires := make([]byte, 4)
-	binary.LittleEndian.PutUint32(expires, uint32(record.ExpiresAt))
-	data = append(data, expires...)
+	binary.LittleEndian.PutUint32(tmp[:4], uint32(record.ExpiresAt))
+	buf.Write(tmp[:4])
 
 	// Address length + address
-	addrLen := make([]byte, 4)
-	binary.LittleEndian.PutUint32(addrLen, uint32(len(record.Address)))
-	data = append(data, addrLen...)
-	data = append(data, []byte(record.Address)...)
+	binary.LittleEndian.PutUint32(tmp[:4], uint32(len(record.Address)))
+	buf.Write(tmp[:4])
+	buf.WriteString(record.Address)
 
 	// Timestamp
-	ts := make([]byte, 8)
-	binary.LittleEndian.PutUint64(ts, uint64(record.UpdatedAt.Unix()))
-	data = append(data, ts...)
+	binary.LittleEndian.PutUint64(tmp[:8], uint64(record.UpdatedAt.Unix()))
+	buf.Write(tmp[:8])
 
 	// NameNewHeight (new in v3)
-	nameNewHeight := make([]byte, 4)
-	binary.LittleEndian.PutUint32(nameNewHeight, uint32(record.NameNewHeight))
-	data = append(data, nameNewHeight...)
+	binary.LittleEndian.PutUint32(tmp[:4], uint32(record.NameNewHeight))
+	buf.Write(tmp[:4])
 
-	return data
+	// Return a copy of the buffer's bytes
+	// We need to copy because the buffer will be returned to the pool
+	result := make([]byte, buf.Len())
+	copy(result, buf.Bytes())
+	return result
 }
 
 // decodeNameRecord deserializes a name record.
