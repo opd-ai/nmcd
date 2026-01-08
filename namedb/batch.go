@@ -11,15 +11,15 @@ import (
 // BatchWriter provides batched database write operations to reduce fsync overhead.
 // It accumulates write operations and commits them in a single transaction.
 type BatchWriter struct {
-	ndb           *NameDatabase
-	names         map[string]*NameRecord      // Names to put
-	deletedNames  map[string]struct{}         // Names to delete
-	history       map[chainhash.Hash]*NameRecord // History entries to add
-	nameNews      map[string]nameNewEntry     // NAME_NEW commitments to add
-	utxos         []*UTXO                     // UTXOs to add
-	deletedUTXOs  []utxoKey                   // UTXOs to delete
-	batchSize     int                         // Current batch size
-	maxBatchSize  int                         // Maximum batch size before auto-commit
+	ndb          *NameDatabase
+	names        map[string]*NameRecord         // Names to put
+	deletedNames map[string]struct{}            // Names to delete
+	history      map[chainhash.Hash]*NameRecord // History entries to add
+	nameNews     map[string]nameNewEntry        // NAME_NEW commitments to add
+	utxos        []*UTXO                        // UTXOs to add
+	deletedUTXOs []utxoKey                      // UTXOs to delete
+	batchSize    int                            // Current batch size
+	maxBatchSize int                            // Maximum batch size before auto-commit
 }
 
 // nameNewEntry represents a NAME_NEW commitment to be written
@@ -124,7 +124,7 @@ func (bw *BatchWriter) Commit() error {
 		if len(bw.names) > 0 {
 			namesBucket := tx.Bucket(namesBucket)
 			expirationBucket := tx.Bucket(expirationBucket)
-			
+
 			for name, record := range bw.names {
 				// Check if name already exists to update expiration index
 				existingData := namesBucket.Get([]byte(name))
@@ -136,13 +136,13 @@ func (bw *BatchWriter) Commit() error {
 						expirationBucket.Delete(oldExpirationKey)
 					}
 				}
-				
+
 				// Store name record
 				data := encodeNameRecord(record)
 				if err := namesBucket.Put([]byte(name), data); err != nil {
 					return fmt.Errorf("failed to put name %s: %w", name, err)
 				}
-				
+
 				// Add new expiration index entry
 				expirationKey := makeExpirationKey(record.ExpiresAt, name)
 				if err := expirationBucket.Put(expirationKey, []byte{1}); err != nil {
@@ -155,7 +155,7 @@ func (bw *BatchWriter) Commit() error {
 		if len(bw.deletedNames) > 0 {
 			namesBucket := tx.Bucket(namesBucket)
 			expirationBucket := tx.Bucket(expirationBucket)
-			
+
 			for name := range bw.deletedNames {
 				// Get existing record to remove from expiration index
 				existingData := namesBucket.Get([]byte(name))
@@ -166,7 +166,7 @@ func (bw *BatchWriter) Commit() error {
 						expirationBucket.Delete(expirationKey)
 					}
 				}
-				
+
 				// Delete name record
 				if err := namesBucket.Delete([]byte(name)); err != nil {
 					return fmt.Errorf("failed to delete name %s: %w", name, err)
@@ -178,7 +178,7 @@ func (bw *BatchWriter) Commit() error {
 		if len(bw.history) > 0 {
 			histBucket := tx.Bucket(historyBucket)
 			indexBucket := tx.Bucket(historyIndexBucket)
-			
+
 			for txHash, record := range bw.history {
 				// Store history record
 				data := encodeNameRecord(record)
@@ -212,7 +212,7 @@ func (bw *BatchWriter) Commit() error {
 		if len(bw.utxos) > 0 {
 			utxoBucket := tx.Bucket(utxoBucket)
 			utxoAddrBucket := tx.Bucket(utxoAddrBucket)
-			
+
 			for _, utxo := range bw.utxos {
 				// Encode UTXO
 				data, err := encodeUTXO(utxo)
@@ -241,7 +241,7 @@ func (bw *BatchWriter) Commit() error {
 		if len(bw.deletedUTXOs) > 0 {
 			utxoBucket := tx.Bucket(utxoBucket)
 			utxoAddrBucket := tx.Bucket(utxoAddrBucket)
-			
+
 			for _, uk := range bw.deletedUTXOs {
 				key := makeUTXOKey(&uk.txHash, uk.outIndex)
 

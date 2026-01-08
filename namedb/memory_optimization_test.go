@@ -73,14 +73,14 @@ func TestMemoryOptimization_BulkOperations(t *testing.T) {
 	for i := 0; i < numRecords; i++ {
 		txHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
 		record := &NameRecord{
-			Name:          fmt.Sprintf("d/bulk%d", i),
-			Value:         `{"ip":"192.168.1.1"}`,
-			TxHash:        *txHash,
-			OutIndex:      uint32(i),
-			Height:        int32(i),
-			ExpiresAt:     int32(36000 + i),
-			Address:       "NTestAddress",
-			UpdatedAt:     time.Now(),
+			Name:      fmt.Sprintf("d/bulk%d", i),
+			Value:     `{"ip":"192.168.1.1"}`,
+			TxHash:    *txHash,
+			OutIndex:  uint32(i),
+			Height:    int32(i),
+			ExpiresAt: int32(36000 + i),
+			Address:   "NTestAddress",
+			UpdatedAt: time.Now(),
 		}
 		if err := db.PutName(record.Name, record); err != nil {
 			t.Fatalf("PutName failed: %v", err)

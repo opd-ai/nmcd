@@ -225,7 +225,7 @@ func TestPeerScoreManager_RecordPeerSeen(t *testing.T) {
 
 	// Create score
 	score := psm.GetOrCreateScore(addr)
-	
+
 	// Wait a bit
 	time.Sleep(10 * time.Millisecond)
 

@@ -135,7 +135,7 @@ func (ndb *NameDatabase) PutName(name string, record *NameRecord) error {
 	err := ndb.db.Update(func(tx *bbolt.Tx) error {
 		namesBucket := tx.Bucket(namesBucket)
 		expirationBucket := tx.Bucket(expirationBucket)
-		
+
 		// Check if name already exists to update expiration index
 		existingData := namesBucket.Get([]byte(name))
 		if existingData != nil {
@@ -146,26 +146,26 @@ func (ndb *NameDatabase) PutName(name string, record *NameRecord) error {
 				expirationBucket.Delete(oldExpirationKey)
 			}
 		}
-		
+
 		// Store name record
 		data := encodeNameRecord(record)
 		if err := namesBucket.Put([]byte(name), data); err != nil {
 			return err
 		}
-		
+
 		// Add new expiration index entry
 		// Key format: height (4 bytes) + name
 		expirationKey := makeExpirationKey(record.ExpiresAt, name)
 		return expirationBucket.Put(expirationKey, []byte{1}) // Value doesn't matter
 	})
-	
+
 	if err == nil {
 		// Ensure Name field is set before caching
 		record.Name = name
 		// Update cache with new value
 		ndb.cache.Put(name, record)
 	}
-	
+
 	return err
 }
 
@@ -204,12 +204,12 @@ func (ndb *NameDatabase) GetName(name string) (*NameRecord, error) {
 		record.Name = name
 		return nil
 	})
-	
+
 	// Cache the result if found
 	if err == nil && record != nil {
 		ndb.cache.Put(name, record)
 	}
-	
+
 	return record, err
 }
 
@@ -221,7 +221,7 @@ func (ndb *NameDatabase) DeleteName(name string) error {
 	err := ndb.db.Update(func(tx *bbolt.Tx) error {
 		namesBucket := tx.Bucket(namesBucket)
 		expirationBucket := tx.Bucket(expirationBucket)
-		
+
 		// Get existing record to remove from expiration index
 		existingData := namesBucket.Get([]byte(name))
 		if existingData != nil {
@@ -231,16 +231,16 @@ func (ndb *NameDatabase) DeleteName(name string) error {
 				expirationBucket.Delete(expirationKey)
 			}
 		}
-		
+
 		// Delete name record
 		return namesBucket.Delete([]byte(name))
 	})
-	
+
 	if err == nil {
 		// Invalidate cache entry
 		ndb.cache.Delete(name)
 	}
-	
+
 	return err
 }
 
@@ -290,19 +290,19 @@ func (ndb *NameDatabase) GetExpiredNames(height int32) ([]string, error) {
 	var expired []string
 	err := ndb.db.View(func(tx *bbolt.Tx) error {
 		expirationBucket := tx.Bucket(expirationBucket)
-		
+
 		// Use cursor to scan expiration index up to the given height
 		c := expirationBucket.Cursor()
-		
+
 		// Seek to the beginning and iterate until we reach entries beyond height
 		for k, _ := c.First(); k != nil; k, _ = c.Next() {
 			if len(k) < 4 {
 				continue // Invalid key, skip
 			}
-			
+
 			// Extract height from key (first 4 bytes, big-endian)
 			expiresAt := int32(binary.BigEndian.Uint32(k[:4]))
-			
+
 			// Names expire AFTER their ExpiresAt height
 			// So ExpiresAt < height means expired at the given height
 			if expiresAt < height {
@@ -314,7 +314,7 @@ func (ndb *NameDatabase) GetExpiredNames(height int32) ([]string, error) {
 				break
 			}
 		}
-		
+
 		return nil
 	})
 	return expired, err

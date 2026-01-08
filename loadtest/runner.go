@@ -245,12 +245,12 @@ func RPCLoadTest(config LoadTestConfig) (*TestResult, error) {
 			// Sort latencies for accurate percentile calculation using sort.Slice
 			sortedLatencies := make([]time.Duration, len(latencies))
 			copy(sortedLatencies, latencies)
-			
+
 			// Use standard library sort for O(n log n) performance
 			sort.Slice(sortedLatencies, func(i, j int) bool {
 				return sortedLatencies[i] < sortedLatencies[j]
 			})
-			
+
 			result.P95Latency = sortedLatencies[int(float64(len(sortedLatencies))*0.95)]
 			result.P99Latency = sortedLatencies[int(float64(len(sortedLatencies))*0.99)]
 		}
