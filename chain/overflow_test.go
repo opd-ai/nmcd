@@ -11,26 +11,27 @@ import (
 // bug documented in AUDIT.md Issue #8. When a very large block height (close to max int32)
 // is used to calculate ExpiresAt, adding NameExpirationBlocks causes int32 overflow.
 //
-// This test first demonstrates the raw overflow bug, then verifies the fix using safeCalcExpiresAt.
+// This test first demonstrates the overflow condition using int64 to avoid undefined
+// behavior, then verifies the fix using safeCalcExpiresAt.
 func Test_bug_8_height_overflow_in_expiration_calculation(t *testing.T) {
-	// PART 1: Demonstrate the raw overflow bug (without fix)
-	t.Run("raw_overflow_bug", func(t *testing.T) {
+	// PART 1: Demonstrate the overflow *condition* (without actually overflowing int32)
+	t.Run("overflow_condition", func(t *testing.T) {
 		// Test case 1: Height at max int32
 		height := int32(math.MaxInt32)
-		rawExpiresAt := height + config.NameExpirationBlocks
-		
-		// This demonstrates the bug: overflow causes negative value
-		if rawExpiresAt >= 0 {
-			t.Errorf("Expected overflow to cause negative value, but got positive: %d", rawExpiresAt)
+
+		// Perform the calculation in int64 to detect that it would overflow int32.
+		overflowSum := int64(height) + int64(config.NameExpirationBlocks)
+		if overflowSum <= int64(math.MaxInt32) {
+			t.Errorf("Expected height + NameExpirationBlocks to exceed MaxInt32 (overflow condition), got %d", overflowSum)
 		}
-		
-		// Test case 2: Height that would cause overflow
+
+		// Test case 2: Minimal height that would cause overflow when adding NameExpirationBlocks
 		height2 := int32(math.MaxInt32) - config.NameExpirationBlocks + 1
-		rawExpiresAt2 := height2 + config.NameExpirationBlocks
-		
-		// Verify overflow occurs (result wraps around to negative or less than input)
-		if rawExpiresAt2 >= height2 {
-			t.Errorf("Expected overflow/wrap-around, but got valid result: %d >= %d", rawExpiresAt2, height2)
+		overflowSum2 := int64(height2) + int64(config.NameExpirationBlocks)
+
+		// Verify that this boundary height also exceeds MaxInt32 when adding NameExpirationBlocks.
+		if overflowSum2 <= int64(math.MaxInt32) {
+			t.Errorf("Expected boundary height to overflow when adding NameExpirationBlocks, got %d", overflowSum2)
 		}
 	})
 	
@@ -78,45 +79,5 @@ func Test_bug_8_height_overflow_in_expiration_calculation(t *testing.T) {
 			t.Errorf("Normal height calculation incorrect: got %d, want %d", normalExpiresAt, expectedNormalExpiresAt)
 		}
 	})
-}
-
-// Test_bug_8_validateHeightForNameOp tests the validation function
-func Test_bug_8_validateHeightForNameOp(t *testing.T) {
-	tests := []struct {
-		name      string
-		height    int32
-		wantError bool
-	}{
-		{
-			name:      "normal_height",
-			height:    100000,
-			wantError: false,
-		},
-		{
-			name:      "max_safe_height",
-			height:    math.MaxInt32 - config.NameExpirationBlocks,
-			wantError: false,
-		},
-		{
-			name:      "one_above_max_safe",
-			height:    math.MaxInt32 - config.NameExpirationBlocks + 1,
-			wantError: true,
-		},
-		{
-			name:      "max_int32",
-			height:    math.MaxInt32,
-			wantError: true,
-		},
-	}
-	
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateHeightForNameOp(tt.height)
-			if (err != nil) != tt.wantError {
-				t.Errorf("validateHeightForNameOp(height=%d) error = %v, wantError %v",
-					tt.height, err, tt.wantError)
-			}
-		})
-	}
 }
 

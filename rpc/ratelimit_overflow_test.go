@@ -10,11 +10,12 @@ import (
 // unique IPs per minute), the cleanup mechanism may not keep pace, allowing unbounded
 // memory growth.
 //
-// This test shows that WITHOUT a fix, all 10,000 buckets would remain in memory.
-// WITH the fix (bounded rate limiter), the number of buckets is capped.
+// The first subtest simulates effectively unbounded growth by using a very large
+// maxSize so that all 10,000 buckets remain in memory, while the second subtest
+// uses a smaller maxSize to show that the number of buckets is capped.
 func Test_bug_9_rate_limiter_rapid_ip_changes(t *testing.T) {
-	t.Run("unbounded_growth_scenario", func(t *testing.T) {
-		// Create rate limiter with very high maxSize to simulate unbounded behavior
+	t.Run("large_capacity_scenario", func(t *testing.T) {
+		// Create rate limiter with very high maxSize to allow all buckets
 		rl := newBoundedRateLimiter(100, 100000)
 		defer rl.stop()
 
@@ -30,12 +31,12 @@ func Test_bug_9_rate_limiter_rapid_ip_changes(t *testing.T) {
 		bucketCount := len(rl.buckets)
 		rl.mu.RUnlock()
 
-		// Without a size limit, all 10,000 buckets remain in memory
+		// With large capacity, all 10,000 buckets remain in memory
 		if bucketCount != numIPs {
 			t.Errorf("Expected %d buckets, got %d", numIPs, bucketCount)
 		}
 
-		t.Logf("Unbounded scenario: %d buckets in memory", bucketCount)
+		t.Logf("Large capacity scenario: %d buckets in memory", bucketCount)
 	})
 
 	t.Run("bounded_growth_with_fix", func(t *testing.T) {

@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"container/list"
 	"net"
 	"sync"
 	"time"
@@ -14,13 +15,21 @@ const (
 )
 
 // rateLimiter implements per-IP rate limiting using token bucket algorithm
+// with LRU eviction for bounded memory usage.
 type rateLimiter struct {
 	mu      sync.RWMutex
-	buckets map[string]*bucket
-	rate    int           // requests per minute
-	maxSize int           // maximum number of IPs to track (prevents unbounded growth)
-	cleanup *time.Ticker  // cleanup ticker
-	done    chan struct{} // cleanup stop signal
+	buckets map[string]*list.Element // IP -> list element containing bucket
+	rate    int                      // requests per minute
+	maxSize int                      // maximum number of IPs to track (prevents unbounded growth)
+	lruList *list.List               // doubly linked list for LRU ordering
+	cleanup *time.Ticker             // cleanup ticker
+	done    chan struct{}            // cleanup stop signal
+}
+
+// bucketEntry wraps a bucket with its IP for LRU cache
+type bucketEntry struct {
+	ip     string
+	bucket *bucket
 }
 
 // bucket represents a token bucket for a single IP
@@ -39,11 +48,13 @@ func newRateLimiter(rate int) *rateLimiter {
 // newBoundedRateLimiter creates a new rate limiter with the specified rate and maximum size.
 // When maxSize IPs are tracked and a new IP arrives, the least recently used IP is evicted.
 // This prevents unbounded memory growth in scenarios with rapid IP rotation.
+// Uses container/list for O(1) LRU eviction.
 func newBoundedRateLimiter(rate int, maxSize int) *rateLimiter {
 	rl := &rateLimiter{
-		buckets: make(map[string]*bucket),
+		buckets: make(map[string]*list.Element),
 		rate:    rate,
 		maxSize: maxSize,
+		lruList: list.New(),
 		cleanup: time.NewTicker(5 * time.Minute),
 		done:    make(chan struct{}),
 	}
@@ -62,12 +73,14 @@ func (rl *rateLimiter) allow(ip string) bool {
 	now := time.Now()
 
 	// Get or create bucket for this IP
-	b, exists := rl.buckets[ip]
+	elem, exists := rl.buckets[ip]
+	var b *bucket
+	
 	if !exists {
 		// Before creating a new bucket, check if we're at capacity
 		if len(rl.buckets) >= rl.maxSize {
-			// Evict the least recently used IP to make room
-			rl.evictOldestBucket()
+			// Evict the least recently used IP to make room (O(1) operation)
+			rl.evictOldestBucketLocked()
 		}
 		
 		b = &bucket{
@@ -75,7 +88,16 @@ func (rl *rateLimiter) allow(ip string) bool {
 			lastRefill: now,
 			lastUsed:   now,
 		}
-		rl.buckets[ip] = b
+		
+		// Add to LRU list (most recently used = front)
+		entry := &bucketEntry{ip: ip, bucket: b}
+		elem = rl.lruList.PushFront(entry)
+		rl.buckets[ip] = elem
+	} else {
+		// Move to front (most recently used)
+		rl.lruList.MoveToFront(elem)
+		entry := elem.Value.(*bucketEntry)
+		b = entry.bucket
 	}
 
 	// Refill tokens based on elapsed time
@@ -101,25 +123,16 @@ func (rl *rateLimiter) allow(ip string) bool {
 	return false
 }
 
-// evictOldestBucket removes the least recently used bucket to make room for new entries.
-// This method must be called while holding rl.mu lock.
-func (rl *rateLimiter) evictOldestBucket() {
-	var oldestIP string
-	var oldestTime time.Time
-	
-	// Find the bucket with the oldest lastUsed time
-	first := true
-	for ip, b := range rl.buckets {
-		if first || b.lastUsed.Before(oldestTime) {
-			oldestIP = ip
-			oldestTime = b.lastUsed
-			first = false
-		}
-	}
-	
-	// Remove the oldest bucket if found
-	if oldestIP != "" {
-		delete(rl.buckets, oldestIP)
+// evictOldestBucketLocked removes the least recently used bucket to make room for new entries.
+// This is an O(1) operation using the LRU list.
+// IMPORTANT: This method must be called while holding rl.mu lock (called from allow()).
+func (rl *rateLimiter) evictOldestBucketLocked() {
+	// The back of the list is the least recently used
+	elem := rl.lruList.Back()
+	if elem != nil {
+		entry := elem.Value.(*bucketEntry)
+		delete(rl.buckets, entry.ip)
+		rl.lruList.Remove(elem)
 	}
 }
 
@@ -130,10 +143,17 @@ func (rl *rateLimiter) cleanupLoop() {
 		case <-rl.cleanup.C:
 			rl.mu.Lock()
 			now := time.Now()
-			for ip, b := range rl.buckets {
+			
+			// Iterate through list and remove stale entries
+			var next *list.Element
+			for elem := rl.lruList.Front(); elem != nil; elem = next {
+				next = elem.Next()
+				entry := elem.Value.(*bucketEntry)
+				
 				// Remove buckets that haven't been used in 10 minutes
-				if now.Sub(b.lastUsed) > 10*time.Minute {
-					delete(rl.buckets, ip)
+				if now.Sub(entry.bucket.lastUsed) > 10*time.Minute {
+					delete(rl.buckets, entry.ip)
+					rl.lruList.Remove(elem)
 				}
 			}
 			rl.mu.Unlock()
@@ -149,10 +169,17 @@ func (rl *rateLimiter) triggerCleanup() {
 	defer rl.mu.Unlock()
 
 	now := time.Now()
-	for ip, b := range rl.buckets {
+	
+	// Iterate through list and remove stale entries
+	var next *list.Element
+	for elem := rl.lruList.Front(); elem != nil; elem = next {
+		next = elem.Next()
+		entry := elem.Value.(*bucketEntry)
+		
 		// Remove buckets that haven't been used in 10 minutes
-		if now.Sub(b.lastUsed) > 10*time.Minute {
-			delete(rl.buckets, ip)
+		if now.Sub(entry.bucket.lastUsed) > 10*time.Minute {
+			delete(rl.buckets, entry.ip)
+			rl.lruList.Remove(elem)
 		}
 	}
 }

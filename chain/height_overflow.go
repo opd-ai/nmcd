@@ -1,7 +1,6 @@
 package chain
 
 import (
-	"fmt"
 	"math"
 
 	"github.com/opd-ai/nmcd/config"
@@ -23,19 +22,4 @@ func safeCalcExpiresAt(height int32) int32 {
 		return int32(math.MaxInt32)
 	}
 	return height + config.NameExpirationBlocks
-}
-
-// validateHeightForNameOp validates that a block height is safe for name operations.
-// Returns an error if the height would cause overflow in expiration calculations.
-// This is a defensive check for theoretical edge cases.
-func validateHeightForNameOp(height int32) error {
-	// Heights above this threshold would cause overflow in expiration calculation
-	maxSafeHeight := int32(math.MaxInt32) - config.NameExpirationBlocks
-	
-	if height > maxSafeHeight {
-		return fmt.Errorf("block height %d too large for name operations (max safe height: %d)", 
-			height, maxSafeHeight)
-	}
-	
-	return nil
 }
