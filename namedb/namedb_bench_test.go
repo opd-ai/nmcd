@@ -470,3 +470,56 @@ func BenchmarkConcurrentReadWrite(b *testing.B) {
 		}
 	})
 }
+
+// BenchmarkEncodeNameRecord measures serialization performance with buffer pool.
+// This benchmark validates the memory optimization from using sync.Pool.
+func BenchmarkEncodeNameRecord(b *testing.B) {
+	txHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+	record := &NameRecord{
+		Name:          "d/benchmark",
+		Value:         `{"ip":"192.168.1.1","ns":["ns1.example.com","ns2.example.com"]}`,
+		TxHash:        *txHash,
+		OutIndex:      0,
+		Height:        100000,
+		ExpiresAt:     136000,
+		Address:       "NTestBenchmarkAddress123",
+		UpdatedAt:     time.Now(),
+		NameNewHeight: 99988,
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		data := encodeNameRecord(record)
+		_ = data
+	}
+}
+
+// BenchmarkDecodeNameRecord measures deserialization performance.
+func BenchmarkDecodeNameRecord(b *testing.B) {
+	txHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+	record := &NameRecord{
+		Name:          "d/benchmark",
+		Value:         `{"ip":"192.168.1.1","ns":["ns1.example.com","ns2.example.com"]}`,
+		TxHash:        *txHash,
+		OutIndex:      0,
+		Height:        100000,
+		ExpiresAt:     136000,
+		Address:       "NTestBenchmarkAddress123",
+		UpdatedAt:     time.Now(),
+		NameNewHeight: 99988,
+	}
+
+	// Encode once
+	data := encodeNameRecord(record)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		decoded, err := decodeNameRecord(data)
+		if err != nil {
+			b.Fatalf("decodeNameRecord failed: %v", err)
+		}
+		_ = decoded
+	}
+}
