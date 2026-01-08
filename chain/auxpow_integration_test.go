@@ -22,7 +22,7 @@ func TestAuxPowIntegration(t *testing.T) {
 	bc := &BlockChain{
 		nameDB:      ndb,
 		chainParams: chainParams,
-		auxPowCache: make(map[chainhash.Hash]*AuxPow),
+		auxPowCache: newAuxPowLRUCache(DefaultAuxPowCacheSize),
 	}
 
 	// Test Case 1: Pre-AuxPow block (height < 19,200) - should not require AuxPow
@@ -66,9 +66,7 @@ func TestAuxPowIntegration(t *testing.T) {
 		block, auxPow := createTestAuxPowBlock(t, 19200)
 
 		// Cache the AuxPow as if it came from the network
-		bc.auxPowMu.Lock()
-		bc.auxPowCache[*block.Hash()] = auxPow
-		bc.auxPowMu.Unlock()
+		bc.auxPowCache.Put(block.Hash(), auxPow)
 
 		err := bc.validateAuxPow(block)
 		if err != nil {
@@ -76,9 +74,7 @@ func TestAuxPowIntegration(t *testing.T) {
 		}
 
 		// Verify cache was cleared after validation
-		bc.auxPowMu.RLock()
-		_, exists := bc.auxPowCache[*block.Hash()]
-		bc.auxPowMu.RUnlock()
+		_, exists := bc.auxPowCache.Get(block.Hash())
 		if exists {
 			t.Error("AuxPow cache should be cleared after validation")
 		}
@@ -93,9 +89,7 @@ func TestAuxPowIntegration(t *testing.T) {
 		// Set it to something other than NamecoinChainID (1)
 		auxPow.ParentBlock.Nonce = (2 << 16) // Chain ID = 2
 
-		bc.auxPowMu.Lock()
-		bc.auxPowCache[*block.Hash()] = auxPow
-		bc.auxPowMu.Unlock()
+		bc.auxPowCache.Put(block.Hash(), auxPow)
 
 		err := bc.validateAuxPow(block)
 		if err == nil {
@@ -111,9 +105,7 @@ func TestAuxPowIntegration(t *testing.T) {
 		// (doesn't meet difficulty target)
 		auxPow.ParentBlock.Nonce = 0
 
-		bc.auxPowMu.Lock()
-		bc.auxPowCache[*block.Hash()] = auxPow
-		bc.auxPowMu.Unlock()
+		bc.auxPowCache.Put(block.Hash(), auxPow)
 
 		err := bc.validateAuxPow(block)
 		if err == nil {
@@ -130,7 +122,7 @@ func TestSetBlockAuxPowFromBytes(t *testing.T) {
 	bc := &BlockChain{
 		nameDB:      ndb,
 		chainParams: &config.NamecoinMainNetParams,
-		auxPowCache: make(map[chainhash.Hash]*AuxPow),
+		auxPowCache: newAuxPowLRUCache(DefaultAuxPowCacheSize),
 	}
 
 	// Test Case 1: Block without AuxPow bit - should not cache anything
@@ -147,9 +139,7 @@ func TestSetBlockAuxPowFromBytes(t *testing.T) {
 		}
 
 		// Verify nothing was cached
-		bc.auxPowMu.RLock()
-		_, exists := bc.auxPowCache[*block.Hash()]
-		bc.auxPowMu.RUnlock()
+		_, exists := bc.auxPowCache.Get(block.Hash())
 		if exists {
 			t.Error("AuxPow should not be cached for block without AuxPow bit")
 		}
@@ -176,9 +166,7 @@ func TestSetBlockAuxPowFromBytes(t *testing.T) {
 		}
 
 		// Verify AuxPow was cached
-		bc.auxPowMu.RLock()
-		cachedAuxPow, exists := bc.auxPowCache[*block.Hash()]
-		bc.auxPowMu.RUnlock()
+		cachedAuxPow, exists := bc.auxPowCache.Get(block.Hash())
 
 		if !exists {
 			t.Fatal("AuxPow should be cached")
