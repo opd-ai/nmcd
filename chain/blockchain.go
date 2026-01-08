@@ -30,12 +30,15 @@ type BlockChain struct {
 	chainParams *chaincfg.Params
 	mu          sync.RWMutex
 
-	// auxPowCache stores AuxPow data temporarily keyed by block hash
+	// auxPowCache stores AuxPow data temporarily keyed by block hash.
 	// This is needed because btcd's blockchain package works with btcutil.Block
 	// which doesn't have AuxPow fields, but we need to validate AuxPow.
 	// The cache is populated when blocks arrive from the network and cleared after validation.
-	auxPowCache map[chainhash.Hash]*AuxPow
-	auxPowMu    sync.RWMutex
+	//
+	// The LRU cache ensures bounded memory usage (max DefaultAuxPowCacheSize entries)
+	// to prevent unbounded growth under adversarial conditions (e.g., many blocks
+	// with AuxPow arriving simultaneously with delayed validation).
+	auxPowCache *auxPowLRUCache
 }
 
 // Config holds blockchain configuration
@@ -95,7 +98,7 @@ func NewBlockChain(cfg *Config, indexManager blockchain.IndexManager) (*BlockCha
 		nameDB:      nameDB,
 		blockDB:     blockDB,
 		chainParams: cfg.ChainParams,
-		auxPowCache: make(map[chainhash.Hash]*AuxPow),
+		auxPowCache: newAuxPowLRUCache(DefaultAuxPowCacheSize),
 	}
 
 	// Create blockchain config
@@ -200,9 +203,7 @@ func (bc *BlockChain) SetBlockAuxPowFromBytes(blockHash *chainhash.Hash, seriali
 
 	// Cache the AuxPow for validation
 	if block.AuxPow() != nil {
-		bc.auxPowMu.Lock()
-		bc.auxPowCache[*blockHash] = block.AuxPow()
-		bc.auxPowMu.Unlock()
+		bc.auxPowCache.Put(blockHash, block.AuxPow())
 	}
 
 	return nil
@@ -211,17 +212,14 @@ func (bc *BlockChain) SetBlockAuxPowFromBytes(blockHash *chainhash.Hash, seriali
 // getBlockAuxPow retrieves cached AuxPow data for a block.
 // Returns nil if no AuxPow is cached for this block.
 func (bc *BlockChain) getBlockAuxPow(blockHash *chainhash.Hash) *AuxPow {
-	bc.auxPowMu.RLock()
-	defer bc.auxPowMu.RUnlock()
-	return bc.auxPowCache[*blockHash]
+	auxPow, _ := bc.auxPowCache.Get(blockHash)
+	return auxPow
 }
 
 // clearBlockAuxPow removes AuxPow data from the cache after validation.
 // This prevents unbounded memory growth.
 func (bc *BlockChain) clearBlockAuxPow(blockHash *chainhash.Hash) {
-	bc.auxPowMu.Lock()
-	defer bc.auxPowMu.Unlock()
-	delete(bc.auxPowCache, *blockHash)
+	bc.auxPowCache.Delete(blockHash)
 }
 
 // ProcessBlock processes a block and validates name operations
