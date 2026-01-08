@@ -1,0 +1,43 @@
+# Git files
+.git
+.gitignore
+.github
+
+# Build artifacts
+nmcd
+permamail
+loadtest-tool
+*.exe
+
+# Test data
+testdata/blocks/*.json
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# IDE and editor files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test coverage
+*.out
+*.test
+coverage.html
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Local data directories
+data/
+.nmcd/

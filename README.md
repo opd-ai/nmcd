@@ -1021,6 +1021,71 @@ go tool cover -html=coverage.out -o coverage.html
 
 ---
 
+## Building and Releases
+
+### Building from Source
+
+To build nmcd from source, you need Go 1.24 or later:
+
+```bash
+# Clone the repository
+git clone https://github.com/opd-ai/nmcd
+cd nmcd
+
+# Build the binary
+make build
+
+# Or build with custom version
+go build -ldflags="-X main.version=1.0.0" ./cmd/nmcd
+```
+
+### Official Releases
+
+nmcd provides automated binary releases for multiple platforms. Releases are triggered when a version tag is pushed:
+
+**Supported Platforms:**
+- Linux: amd64, arm64
+- macOS: amd64 (Intel), arm64 (Apple Silicon)
+- Windows: amd64
+
+**Download Options:**
+
+1. **Pre-built Binaries**: Download from [GitHub Releases](https://github.com/opd-ai/nmcd/releases)
+   - All binaries include SHA256 checksums for verification
+   - Extract and run directly (no installation required)
+
+2. **Docker Images**: Multi-architecture images available on GitHub Container Registry
+   ```bash
+   # Pull latest version
+   docker pull ghcr.io/opd-ai/nmcd:latest
+   
+   # Run nmcd in Docker, exposing RPC only on localhost
+   docker run -p 127.0.0.1:8336:8336 -v nmcd-data:/data ghcr.io/opd-ai/nmcd:latest
+   
+   # Pull specific version
+   docker pull ghcr.io/opd-ai/nmcd:1.0.0
+   ```
+   
+   Docker images are optimized with multi-stage builds and compressed to <100MB.
+   
+   > **Security note:** The JSON-RPC interface is sensitive. Before exposing port `8336` beyond localhost
+   > (for example by using `-p 8336:8336` or binding to a non-loopback address), configure strong
+   > RPC credentials via `-rpcuser` and `-rpcpassword` (or enforce equivalent network access controls
+   > such as a firewall, VPN, or TLS-terminating reverse proxy) to prevent unauthorized access.
+
+**Verifying Downloads:**
+
+```bash
+# Verify SHA256 checksum (Linux/macOS)
+sha256sum -c nmcd-linux-amd64.sha256
+
+# Or manually compare
+sha256sum nmcd-linux-amd64
+cat nmcd-linux-amd64.sha256
+```
+
+---
+
 ## Contributing
 
 Contributions are welcome! Areas of interest:

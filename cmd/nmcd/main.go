@@ -13,6 +13,9 @@ import (
 	"github.com/opd-ai/nmcd/internal/server"
 )
 
+// version is set via ldflags during build
+var version = "0.1.0"
+
 func main() {
 	// Parse command line flags
 	cfg := parseFlags()
@@ -36,7 +39,7 @@ func main() {
 	logging.SetDefault(logger)
 
 	logger.Info("nmcd starting",
-		"version", "0.1.0",
+		"version", version,
 		"network", cfg.Network,
 		"data_dir", cfg.DataDir,
 	)
@@ -199,6 +202,6 @@ func parseFlags() *config.Config {
 func init() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 	fmt.Println("nmcd - Pure Go Namecoin using btcd")
-	fmt.Println("Version 0.1.0")
+	fmt.Printf("Version %s\n", version)
 	fmt.Println()
 }
