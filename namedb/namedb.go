@@ -160,6 +160,8 @@ func (ndb *NameDatabase) PutName(name string, record *NameRecord) error {
 	})
 	
 	if err == nil {
+		// Ensure Name field is set before caching
+		record.Name = name
 		// Update cache with new value
 		ndb.cache.Put(name, record)
 	}

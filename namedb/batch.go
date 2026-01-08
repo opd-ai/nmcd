@@ -275,6 +275,8 @@ func (bw *BatchWriter) Commit() error {
 
 	// Update cache for committed names
 	for name, record := range bw.names {
+		// Ensure Name field is set before caching
+		record.Name = name
 		bw.ndb.cache.Put(name, record)
 	}
 	for name := range bw.deletedNames {
