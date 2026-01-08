@@ -305,28 +305,28 @@ This section documents systematic verification performed during the comprehensiv
 | metrics | 83.9% | 83.9% | ✅ Perfect match |
 | wallet | 69.7% | 69.7% | ✅ Perfect match |
 
-**Documentation Files (README:118-128):**
-- ✅ docs/INSTALLATION.md exists
-- ✅ docs/OPERATIONS.md exists
-- ✅ docs/API.md exists
-- ✅ docs/CHANGELOG.md exists (root)
-- ✅ docs/EMBEDDING.md exists
-- ✅ docs/EXAMPLES.md exists
-- ✅ docs/MODES.md exists
-- ✅ docs/PERFORMANCE.md exists
-- ✅ docs/COVERAGE.md exists
+**Documentation Files (README:118-128, 1046):**
+- ✅ docs/INSTALLATION.md exists (README:118)
+- ✅ docs/OPERATIONS.md exists (README:119)
+- ✅ docs/API.md exists (README:122)
+- ✅ docs/CHANGELOG.md exists (README:123, root)
+- ✅ docs/EMBEDDING.md exists (README:124)
+- ✅ docs/EXAMPLES.md exists (README:125)
+- ✅ docs/MODES.md exists (README:126)
+- ✅ docs/PERFORMANCE.md exists (README:127)
+- ✅ docs/COVERAGE.md exists (README:1046)
 
-**Example Programs (README:714-726):**
-- ✅ examples/simple_resolve/ exists
-- ✅ examples/embedded_client/ exists
-- ✅ examples/register_name/ exists
-- ✅ examples/update_name/ exists
-- ✅ examples/list_names/ exists
-- ✅ examples/namedb/ exists
-- ✅ examples/bridge_adapter/ exists
-- ✅ examples/mail_router/ exists
-- ✅ examples/smtp_relay/ exists
-- ✅ examples/prometheus_exporter/ exists
+**Example Programs (README:714-726, 851-853, 948):**
+- ✅ examples/simple_resolve/ exists (README:714)
+- ✅ examples/embedded_client/ exists (README:715)
+- ✅ examples/register_name/ exists (README:716)
+- ✅ examples/update_name/ exists (README:717)
+- ✅ examples/list_names/ exists (README:718)
+- ✅ examples/namedb/ exists (README:719)
+- ✅ examples/bridge_adapter/ exists (README:851)
+- ✅ examples/mail_router/ exists (README:852)
+- ✅ examples/smtp_relay/ exists (README:853, 948)
+- ⚠️ examples/prometheus_exporter/ exists but not documented in README
 
 **RPC Methods (README:362-467):**
 All documented RPC methods verified in rpc/server.go:
@@ -336,7 +336,7 @@ All documented RPC methods verified in rpc/server.go:
 - ✅ getnewaddress, listaddresses
 - ✅ encryptwallet, walletpassphrase, walletlock
 
-**Health Endpoints (README:527-585):**
+**Health Endpoints (README:523-585):**
 - ✅ /health endpoint exists (rpc/server.go:127, 1997)
 - ✅ /ready endpoint exists (rpc/server.go:128, 2040)
 
@@ -410,7 +410,7 @@ The following areas were audited and found to be correctly implemented:
   - docs/OPERATIONS.md ✓
   - docs/INSTALLATION.md ✓
   - docs/COVERAGE.md ✓
-- **Examples:** All 10 documented examples exist and are runnable
+- **Examples:** 9 documented examples exist and are runnable (prometheus_exporter exists but undocumented)
 
 ### ✅ Code Quality
 - **All Tests Passing:** Comprehensive test suite runs successfully
@@ -461,7 +461,7 @@ This audit followed a systematic dependency-based approach:
 **Files Examined:** 53 production .go files (18,019 lines)  
 **Test Files:** Verified all tests pass  
 **Documentation:** 14 markdown files reviewed  
-**Examples:** 10 example programs verified to exist
+**Examples:** 10 example programs exist (9 documented in README, 1 undocumented)
 
 ---
 
