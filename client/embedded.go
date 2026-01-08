@@ -445,10 +445,10 @@ func (c *EmbeddedClient) RegisterName(ctx context.Context, name, value string, o
 		return nil, fmt.Errorf("failed to get UTXOs for NAME_FIRSTUPDATE: %w", err)
 	}
 
-	// Find the NAME_NEW UTXO
+	// Find the NAME_NEW UTXO (always at output index 0)
 	var nameNewUtxoIndex int = -1
 	for i, utxo := range utxosForFirstUpdate {
-		if utxo.TxHash.String() == nameNewTxHash.String() {
+		if utxo.TxHash.String() == nameNewTxHash.String() && utxo.OutIndex == 0 {
 			nameNewUtxoIndex = i
 			break
 		}
@@ -495,10 +495,12 @@ func (c *EmbeddedClient) RegisterName(ctx context.Context, name, value string, o
 		}
 	}
 
-	// Update result with NAME_FIRSTUPDATE transaction info
+	// Update result with NAME_FIRSTUPDATE transaction info. At this point
+	// the transaction has only been broadcast and may still be in the mempool,
+	// so we report it as pending with zero confirmations.
 	result.TxHash = nameFirstUpdateTxHash.String()
-	result.Status = TxStatusConfirmed
-	result.Confirmations = confirmations
+	result.Status = TxStatusPending
+	result.Confirmations = 0
 
 	return result, nil
 }
