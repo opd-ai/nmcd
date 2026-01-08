@@ -1,17 +1,70 @@
 name: Release
 
 on:
+  schedule:
+    - cron: '0 0 * * *'  # Nightly at midnight UTC
   push:
     tags:
-      - 'v*.*.*'  # Trigger on semantic version tags (e.g., v1.0.0)
+      - 'v[0-9]+.[0-9]+.[0-9]+'  # Matches v1.2.3 pattern
 
 permissions:
   contents: write
   packages: write
 
 jobs:
+  prepare:
+    name: Prepare Release
+    runs-on: ubuntu-latest
+    outputs:
+      is_nightly: ${{ steps.check.outputs.is_nightly }}
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check release type
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "is_nightly=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_nightly=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ steps.check.outputs.is_nightly }}" = "true" ]; then
+            echo "version=nightly" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Delete existing nightly release
+        if: steps.check.outputs.is_nightly == 'true'
+        run: |
+          # Delete the release if it exists
+          gh release delete nightly --yes --cleanup-tag || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Create or update nightly tag
+        if: steps.check.outputs.is_nightly == 'true'
+        run: |
+          # Create/update the nightly tag to point to latest main
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f nightly
+          git push -f origin nightly
+        continue-on-error: true
+
   build:
     name: Build Binaries
+    needs: prepare
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -34,7 +87,7 @@ jobs:
           - goos: windows
             goarch: amd64
             artifact_name: nmcd-windows-amd64.exe
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -47,9 +100,9 @@ jobs:
           go-version: '1.24'
           cache: true
 
-      - name: Get version from tag
+      - name: Get version
         id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${{ needs.prepare.outputs.version }}" >> $GITHUB_OUTPUT
 
       - name: Build binary
         env:
@@ -77,6 +130,7 @@ jobs:
 
   permamail:
     name: Build Permamail Binaries
+    needs: prepare
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -96,7 +150,7 @@ jobs:
           - goos: windows
             goarch: amd64
             artifact_name: permamail-windows-amd64.exe
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -107,9 +161,9 @@ jobs:
           go-version: '1.24'
           cache: true
 
-      - name: Get version from tag
+      - name: Get version
         id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${{ needs.prepare.outputs.version }}" >> $GITHUB_OUTPUT
 
       - name: Build binary
         env:
@@ -137,9 +191,9 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [build, permamail]
+    needs: [prepare, build, permamail]
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -158,17 +212,33 @@ jobs:
           cat *.sha256 > checksums.txt
           ls -lh
 
-      - name: Get version from tag
+      - name: Get version
         id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        run: |
+          if [ "${{ needs.prepare.outputs.is_nightly }}" = "true" ]; then
+            echo "VERSION=nightly" >> $GITHUB_OUTPUT
+            echo "TAG=nightly" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+            echo "TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Generate release notes
         id: release_notes
         run: |
-          cat > release_notes.md << EOF
-          ## nmcd ${{ steps.get_version.outputs.VERSION }}
+          if [ "${{ needs.prepare.outputs.is_nightly }}" = "true" ]; then
+            cat > release_notes.md << 'EOF'
+          ## nmcd Nightly Build
 
-          Pure Go Namecoin implementation using btcd libraries.
+          **⚠️ This is an automated nightly build from the latest main branch.**
+
+          This build is updated daily and may contain unstable or experimental features.
+          For production use, please use a stable versioned release.
+
+          ### Build Information
+          - **Built from**: Latest main branch
+          - **Build date**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          - **Commit**: ${{ github.sha }}
 
           ### Downloads
 
@@ -191,17 +261,9 @@ jobs:
           ```bash
           # Linux/macOS
           sha256sum -c nmcd-linux-amd64.sha256
-          
+
           # Or check against checksums.txt
           grep nmcd-linux-amd64 checksums.txt
-          ```
-
-          ### Docker
-
-          Multi-architecture Docker images are available:
-          ```bash
-          docker pull ghcr.io/opd-ai/nmcd:${{ steps.get_version.outputs.VERSION }}
-          docker pull ghcr.io/opd-ai/nmcd:latest
           ```
 
           ### Quick Start
@@ -209,10 +271,62 @@ jobs:
           ```bash
           # Make binary executable (Linux/macOS)
           chmod +x nmcd-linux-amd64
-          
+
           # Run daemon
           ./nmcd-linux-amd64 -network=mainnet
           ```
+
+          See [README.md](https://github.com/opd-ai/nmcd#readme) for detailed documentation.
+          EOF
+          else
+            cat > release_notes.md << EOF
+          ## nmcd ${{ steps.get_version.outputs.VERSION }}
+
+          Pure Go Namecoin implementation using btcd libraries.
+
+          ### Downloads
+
+          Download the binary for your platform below. All binaries are statically linked with no external dependencies.
+
+          **Linux:**
+          - \`nmcd-linux-amd64\` - 64-bit Intel/AMD
+          - \`nmcd-linux-arm64\` - 64-bit ARM (Raspberry Pi 3+, AWS Graviton, etc.)
+
+          **macOS:**
+          - \`nmcd-darwin-amd64\` - Intel Macs
+          - \`nmcd-darwin-arm64\` - Apple Silicon (M1/M2/M3)
+
+          **Windows:**
+          - \`nmcd-windows-amd64.exe\` - 64-bit
+
+          ### Verification
+
+          Verify your download with SHA256 checksums:
+          \`\`\`bash
+          # Linux/macOS
+          sha256sum -c nmcd-linux-amd64.sha256
+
+          # Or check against checksums.txt
+          grep nmcd-linux-amd64 checksums.txt
+          \`\`\`
+
+          ### Docker
+
+          Multi-architecture Docker images are available:
+          \`\`\`bash
+          docker pull ghcr.io/opd-ai/nmcd:${{ steps.get_version.outputs.VERSION }}
+          docker pull ghcr.io/opd-ai/nmcd:latest
+          \`\`\`
+
+          ### Quick Start
+
+          \`\`\`bash
+          # Make binary executable (Linux/macOS)
+          chmod +x nmcd-linux-amd64
+
+          # Run daemon
+          ./nmcd-linux-amd64 -network=mainnet
+          \`\`\`
 
           See [README.md](https://github.com/opd-ai/nmcd#readme) for detailed documentation.
 
@@ -220,23 +334,26 @@ jobs:
 
           See [CHANGELOG.md](https://github.com/opd-ai/nmcd/blob/main/CHANGELOG.md) for detailed release notes.
           EOF
+          fi
           cat release_notes.md
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          name: ${{ steps.get_version.outputs.VERSION }}
+          name: ${{ needs.prepare.outputs.is_nightly == 'true' && 'Nightly Build' || steps.get_version.outputs.VERSION }}
+          tag_name: ${{ steps.get_version.outputs.TAG }}
           body_path: release_notes.md
           files: release/*
           draft: false
-          prerelease: ${{ contains(github.ref, 'rc') || contains(github.ref, 'beta') || contains(github.ref, 'alpha') }}
+          prerelease: ${{ needs.prepare.outputs.is_nightly == 'true' || contains(github.ref, 'rc') || contains(github.ref, 'beta') || contains(github.ref, 'alpha') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   docker:
     name: Build and Push Docker Images
+    needs: [prepare, release]
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -254,9 +371,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Get version from tag
+      - name: Get version
         id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${{ needs.prepare.outputs.version }}" >> $GITHUB_OUTPUT
 
       - name: Extract metadata
         id: meta
@@ -264,10 +381,11 @@ jobs:
         with:
           images: ghcr.io/opd-ai/nmcd
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=latest
+            type=semver,pattern={{version}},enable=${{ needs.prepare.outputs.is_nightly == 'false' }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ needs.prepare.outputs.is_nightly == 'false' }}
+            type=semver,pattern={{major}},enable=${{ needs.prepare.outputs.is_nightly == 'false' }}
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.is_nightly == 'false' }}
+            type=raw,value=nightly,enable=${{ needs.prepare.outputs.is_nightly == 'true' }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
