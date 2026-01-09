@@ -204,7 +204,7 @@ rate_limit = 1000
 
 ## Performance Targets
 
-Based on Phase 3 requirements from PLAN.md:
+Based on Phase 3 requirements from [PLAN.md](../docs/development/PLAN.md):
 
 | Metric | Target | Test |
 |--------|--------|------|
@@ -375,7 +375,7 @@ Create dashboards showing:
 
 ## References
 
-- [PLAN.md Phase 3: Testing & QA](../PLAN.md#phase-3-testing--quality-assurance-estimated-6-7-days)
+- [PLAN.md Phase 3: Testing & QA](../docs/development/PLAN.md#phase-3-testing--quality-assurance-estimated-6-7-days)
 - [Go Testing Best Practices](https://golang.org/doc/effective_go#testing)
 - [Prometheus Monitoring](https://prometheus.io/docs/introduction/overview/)
 
@@ -387,7 +387,7 @@ To add new load tests:
 2. Add corresponding test to `runner_test.go`
 3. Update CLI in `cmd/main.go` if needed
 4. Document in this README
-5. Update PLAN.md success criteria
+5. Update [PLAN.md](../docs/development/PLAN.md) success criteria if applicable
 
 ## License
 

@@ -1043,7 +1043,7 @@ go tool cover -html=coverage.out -o coverage.html
 
 **Note:** Command-line entry points (cmd/*) and integration components have lower coverage by design, as they primarily wire together well-tested components.
 
-📊 **Detailed Coverage Analysis**: See [docs/COVERAGE.md](docs/COVERAGE.md) for comprehensive coverage analysis and improvement roadmap.
+📊 **Detailed Coverage Analysis**: See [docs/development/COVERAGE.md](docs/development/COVERAGE.md) for comprehensive coverage analysis and improvement roadmap.
 
 ---
 

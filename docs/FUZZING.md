@@ -137,7 +137,7 @@ done
 
 ### Comprehensive Security Audit (1 million iterations per test)
 
-This is the standard mentioned in PLAN.md - run 1 million iterations per fuzz target.
+This is the standard mentioned in [PLAN.md](/docs/development/PLAN.md) - run 1 million iterations per fuzz target.
 
 ```bash
 #!/bin/bash
