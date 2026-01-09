@@ -112,7 +112,7 @@ The daemon automatically synchronizes with the Namecoin network using a headers-
 3. **Peer Selection**: Tracks peer reliability and latency to choose the best sync sources
 4. **Health Monitoring**: Use the `/ready` endpoint to check if sync is complete
 
-The embedded client mode does not perform automatic network sync - it only processes locally added blocks or blocks from an external source.
+The embedded client mode automatically connects to the network and syncs blocks when MaxPeers > 0 (default: 8). By default, it uses DNS seed discovery to find peers. To disable automatic network sync, set MaxPeers to 0 or provide custom BootstrapPeers.
 
 ## Documentation
 
@@ -175,6 +175,27 @@ nc, err := client.NewEmbeddedClient(&client.Config{
 })
 ```
 
+**Network Connectivity:**
+
+By default, embedded mode automatically connects to the Namecoin network using DNS seed discovery (MaxPeers defaults to 8). To customize network behavior:
+
+```go
+// Disable automatic network sync (offline mode)
+nc, err := client.NewEmbeddedClient(&client.Config{
+    Mode:     client.ModeEmbedded,
+    MaxPeers: 0,  // No peer connections
+})
+
+// Use custom bootstrap peers (skip DNS seeds)
+nc, err := client.NewEmbeddedClient(&client.Config{
+    Mode: client.ModeEmbedded,
+    BootstrapPeers: []string{
+        "peer1.example.com:8334",
+        "peer2.example.com:8334",
+    },
+})
+```
+
 **Use When:**
 - Embedding nmcd in your application
 - Running multiple isolated instances
@@ -186,6 +207,7 @@ nc, err := client.NewEmbeddedClient(&client.Config{
 - ✅ Full control over resources
 - ✅ Isolated data and state
 - ✅ Simpler deployment
+- ✅ Automatic network sync by default
 
 **Cons:**
 - ❌ Higher memory usage (~250MB UTXO cache)

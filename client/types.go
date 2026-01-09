@@ -307,7 +307,9 @@ type Config struct {
 	MaxPeers int
 
 	// BootstrapPeers are initial peers to connect to in embedded mode.
-	// If empty, uses DNS seed discovery.
+	// If empty and MaxPeers > 0, automatically uses DNS seed discovery to find peers.
+	// Set to an empty slice explicitly if you want to disable automatic peer discovery.
+	// Example custom peers: []string{"peer1.example.com:8334", "peer2.example.com:8334"}
 	BootstrapPeers []string
 
 	// DisableWallet disables wallet functionality.

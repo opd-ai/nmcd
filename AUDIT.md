@@ -3,12 +3,14 @@ Generated: 2026-01-09T22:23:06.079Z
 Codebase Version: 2bf85f0
 
 ## Executive Summary
-Total Gaps Found: 4  
+Total Gaps Found: 3 (1 Resolved)  
 - Critical: 0  
-- Moderate: 2  
-- Minor: 2
+- Moderate: 2 (1 Resolved)
+- Minor: 1
 
 This audit focuses on subtle discrepancies between README.md documentation and actual implementation in a mature, nearly feature-complete Go application. The analysis reveals primarily documentation completeness issues and minor behavioral clarifications rather than functional defects. Overall, the documentation is highly accurate with only minor areas needing enhancement.
+
+**Update (2026-01-09):** Gap #4 has been resolved by implementing automatic DNS seed discovery for embedded clients.
 
 ---
 
@@ -150,80 +152,43 @@ type HealthResponse struct {
 
 ---
 
-### Gap #4: Embedded Client Network Sync Documentation Could Be Clearer
+### Gap #4: Embedded Client Network Sync - ✅ RESOLVED
 **Documentation Reference:**
 > "The embedded client mode does not perform automatic network sync - it only processes locally added blocks or blocks from an external source." (README.md:115)
 
-AND:
+**Status:** ✅ **RESOLVED** (2026-01-09)
 
-> "Embedded Mode: Runs the full blockchain, database, and network stack in-process." (README.md:166-176)
+**Resolution Summary:**
+Implemented automatic DNS seed discovery for embedded clients. When `BootstrapPeers` is empty and `MaxPeers > 0`, the embedded client now automatically resolves DNS seeds and connects to discovered peers for network synchronization.
 
-**Implementation Location:** `client/embedded.go:146-165`, `client/types.go:309-311`
+**Changes Made:**
+1. Added `AddPeers` field to `network.Config` structure
+2. Updated `network.NewPeerManager()` to automatically connect to peers in `AddPeers`
+3. Modified `client.NewEmbeddedClient()` to resolve DNS seeds when `BootstrapPeers` is empty
+4. Updated `client.Config` documentation to clarify automatic DNS seed discovery behavior
+5. Updated README.md to document network connectivity options and how to customize
 
-**Expected Behavior:** Clear documentation about how embedded clients interact with the network
-
-**Actual Implementation:** Documentation is technically correct but could be more explicit. Embedded clients DO initialize the network stack (PeerManager) with MaxPeers=8 by default, but do NOT automatically connect to peers unless explicitly configured via Config.BootstrapPeers
-
-**Gap Details:** The README statements create some confusion:
-- Line 115 correctly states "does not perform automatic network sync"
-- Lines 166-176 state embedded mode "Runs the full blockchain, database, and network stack in-process"
-
-Both are technically true, but readers might wonder: "If it runs the network stack, why doesn't it sync?"
-
-The implementation shows:
+**New Behavior:**
 ```go
-// client/embedded.go:142-153
-if cfg.MaxPeers == 0 {
-    cfg.MaxPeers = 8  // Sets default
-}
-netCfg := &network.Config{
-    ChainParams: chainParams,
-    Blockchain:  bc,
-    ListenAddrs: []string{},  // No incoming connections
-    MaxPeers:    cfg.MaxPeers,
-}
-```
-
-And in client/types.go:309-311:
-```go
-// BootstrapPeers are initial peers to connect to in embedded mode.
-// If empty, uses DNS seed discovery.
-BootstrapPeers []string
-```
-
-However, BootstrapPeers is NOT passed to network.Config (network package has no AddPeers field). This means even though the infrastructure is created, no automatic peer connections occur.
-
-**Reproduction:**
-```go
-// Create embedded client with defaults
-cfg := &client.Config{
+// Default: Automatic DNS seed discovery (connects to 8 peers)
+nc, err := client.NewEmbeddedClient(&client.Config{
     Mode: client.ModeEmbedded,
-}
-ec, err := client.NewEmbeddedClient(cfg)
-// Result: PeerManager created with MaxPeers=8
-// BUT: No peers are actually connected because:
-// 1. BootstrapPeers is empty []string{}
-// 2. No mechanism exists to auto-connect to DNS seeds
-// 3. Network stack exists but is idle
+})
+
+// Disable automatic network sync (offline mode)
+nc, err := client.NewEmbeddedClient(&client.Config{
+    Mode:     client.ModeEmbedded,
+    MaxPeers: 0,
+})
+
+// Custom bootstrap peers (skip DNS seeds)
+nc, err := client.NewEmbeddedClient(&client.Config{
+    Mode: client.ModeEmbedded,
+    BootstrapPeers: []string{"peer1.example.com:8334"},
+})
 ```
 
-**Production Impact:** Minor - The documentation is accurate, just could be more explicit. New users might expect automatic sync when they see "network stack in-process" but actually get an idle network. A clarifying sentence would help: "Embedded mode initializes the network stack but requires explicit peer configuration via BootstrapPeers to connect to the network."
-
-**Evidence:**
-```go
-// client/types.go:309-311
-// BootstrapPeers are initial peers to connect to in embedded mode.
-// If empty, uses DNS seed discovery.
-BootstrapPeers []string
-// ^^^ Comment says "uses DNS seed discovery" but this is misleading
-// Network package has no mechanism to auto-use DNS seeds
-// They must be explicitly resolved and passed in
-
-// client/embedded.go:1159
-BootstrapPeers: []string{},  // Always empty - no auto-connect
-```
-
-**Recommendation:** Clarify in README that embedded mode requires explicit BootstrapPeers configuration for network connectivity, or remove the misleading comment in types.go that suggests automatic DNS seed discovery.
+**Production Impact:** Resolved - Embedded clients now automatically sync with the network by default, eliminating confusion about network connectivity.
 
 ---
 
@@ -299,7 +264,7 @@ errorsTotalDesc: prometheus.NewDesc(
 
 3. **Gap #3 - Health Endpoint**: Update README.md lines 535-542 to show the `syncing` field in the health response example, or clarify when it appears
 
-4. **Gap #4 - Embedded Sync**: Clarify that embedded mode requires explicit BootstrapPeers configuration for network sync, or fix misleading comment in client/types.go:310 about automatic DNS seed discovery
+4. **Gap #4 - Embedded Sync**: ✅ **RESOLVED** - Implemented automatic DNS seed discovery for embedded clients (see Gap #4 details)
 
 5. **Gap #5 - Prometheus Metrics**: Verify and document the exact Prometheus metric names match README examples, or update README to match implementation
 

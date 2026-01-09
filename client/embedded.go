@@ -143,6 +143,24 @@ func NewEmbeddedClient(cfg *Config) (*EmbeddedClient, error) {
 		cfg.MaxPeers = 8
 	}
 
+	// Resolve bootstrap peers for automatic network connectivity
+	// If BootstrapPeers is empty, use DNS seed discovery to find peers
+	bootstrapPeers := cfg.BootstrapPeers
+	if len(bootstrapPeers) == 0 && cfg.MaxPeers > 0 {
+		// Automatically discover peers via DNS seeds
+		dnsSeeds := config.DNSSeeds(cfg.Network)
+		defaultPort := config.DefaultPort(cfg.Network)
+		bootstrapPeers = network.ResolveSeedNodes(dnsSeeds, defaultPort)
+		
+		if len(bootstrapPeers) > 0 {
+			logger := logging.GetDefault()
+			logger.Info("resolved bootstrap peers from DNS seeds",
+				"count", len(bootstrapPeers),
+				"network", cfg.Network,
+			)
+		}
+	}
+
 	// Initialize peer manager for network connectivity
 	// ListenAddrs is empty for embedded clients (no incoming connections by default)
 	netCfg := &network.Config{
@@ -150,6 +168,7 @@ func NewEmbeddedClient(cfg *Config) (*EmbeddedClient, error) {
 		Blockchain:  bc,
 		ListenAddrs: []string{}, // Embedded clients don't listen for incoming connections
 		MaxPeers:    cfg.MaxPeers,
+		AddPeers:    bootstrapPeers,
 	}
 
 	peerMgr, err := network.NewPeerManager(netCfg)
