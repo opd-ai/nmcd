@@ -1,8 +1,8 @@
 # Namecoin Protocol Compliance Audit: nmcd
 
 **Audit Date:** January 3, 2026  
-**Last Updated:** January 4, 2026 (BIP9 marked as NOT APPLICABLE - no active deployments)  
-**Auditor:** GitHub Copilot Workspace  
+**Last Updated:** January 9, 2026 (Full re-audit with comprehensive verification)  
+**Auditor:** GitHub Copilot Agent  
 **nmcd Version:** v0.1.0 (development)  
 **Reference:** Namecoin Core (https://github.com/namecoin/namecoin-core)
 
@@ -13,6 +13,7 @@
 **Blockers for Production Use:** 1
 
 **Latest Updates:**
+- ✅ **2026-01-09: Full Protocol Re-Audit** - Comprehensive verification of all protocol constants, name operations, blockchain rules, data structures, and network protocol against Namecoin Core specifications
 - ✅ **2026-01-05: Name Registration RPC Methods** - Implemented name_new and name_firstupdate RPC methods for two-phase name registration
 - ✅ **2026-01-04: BIP9 Soft Fork Signaling - NOT APPLICABLE** - No active BIP9 deployments in Namecoin as of 2026; not needed
 - ✅ **2026-01-04: Transaction Fee Validation Enhanced** - Added graceful handling for historical blocks with missing UTXO data
@@ -80,9 +81,11 @@ nmcd implements approximately **70% of Namecoin protocol features** required for
 **Summary:** ✅ **20/20 constants correct (100%)**
 
 **Notes:**
-- The maximum value size was increased from 520 to 1023 bytes in Namecoin Core. nmcd correctly uses 1023 bytes.
-- All network identifiers (magic bytes, ports) match Namecoin Core exactly.
+- **Max Value Size:** nmcd uses 1023 bytes as the maximum value size. The original Namecoin protocol limit was 520 bytes (matching Bitcoin's MAX_SCRIPT_ELEMENT_SIZE), but later versions of Namecoin Core relaxed this to 1023 bytes. nmcd's implementation is compatible with current Namecoin Core behavior. Note: Some older documentation may reference the 520-byte limit.
+- All network identifiers (magic bytes, ports) match Namecoin Core exactly. Verified against `src/kernel/chainparams.cpp` in Namecoin Core (2026-01-09).
 - Protocol version 70015 matches Namecoin Core's current version for network compatibility.
+- **AuxPoW Chain ID:** Namecoin uses chain ID 1 (`NamecoinChainID = 1`), correctly implemented in `chain/auxpow.go:85`.
+- **Testnet4:** Namecoin Core supports Testnet4 with different magic bytes (`0x1c163f28`), which nmcd does not currently support. This is not a protocol compliance issue as Testnet3 is the primary testnet.
 
 ---
 
@@ -1034,8 +1037,8 @@ nmcd demonstrates a strong foundation with correct implementation of core Nameco
 ---
 
 **Audit Completed:** January 3, 2026  
-**Last Updated:** January 4, 2026 (BIP9 marked as NOT APPLICABLE)  
-**Next Review Recommended:** After AuxPoW validation testing is complete
+**Last Updated:** January 9, 2026 (Full re-audit with comprehensive verification)  
+**Next Review Recommended:** After AuxPoW validation testing is complete with real mainnet blocks
 
 ---
 
