@@ -89,7 +89,7 @@ This approach enhances testability and flexibility when working with different n
 
 ## Additional Context
 
-### Known Limitations (from AUDIT.md and PROTOCOL_COMPLIANCE_AUDIT.md)
+### Known Limitations (from docs/development/AUDIT.md and docs/development/PROTOCOL_COMPLIANCE_AUDIT.md)
 
 1. **Missing Features**: No mempool implementation (cannot store/relay unconfirmed transactions), no active block sync mechanism (relies on peer announcements), incomplete `name_update` RPC (creates transaction but doesn't broadcast - requires UTXO management).
 

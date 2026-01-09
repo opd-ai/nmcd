@@ -350,7 +350,7 @@ nmcd is a **library-first** Namecoin implementation built on btcd libraries, ena
   - ✅ Benchmarks: GetScore 46.34 ns/op, RecordBlock 90.65 ns/op, GetBuffer 21 ns/op
   
 - [x] **Memory Optimization** (1.5 days) **COMPLETED 2026-01-08**
-  - Files: `namedb/namedb.go`, `namedb/bufpool.go`, `namedb/memory_optimization_test.go`, `docs/MEMORY_OPTIMIZATION.md`
+  - Files: `namedb/namedb.go`, `namedb/bufpool.go`, `namedb/memory_optimization_test.go`, `docs/development/MEMORY_OPTIMIZATION.md`
   - ✅ Profiled memory usage with `go test -memprofile` and identified hot allocations
   - ✅ UTXO cache eviction policy already handled by btcd's blockchain (250 MB cache, LRU eviction)
   - ✅ Optimized name record serialization using buffer pool (eliminated 6+ intermediate allocations)

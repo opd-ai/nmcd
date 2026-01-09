@@ -304,7 +304,7 @@ go test -race -run TestIntegration_ .
 
 ## References
 
-- [PLAN.md](/PLAN.md) - Phase 3: Testing & QA
+- [PLAN.md](/docs/development/PLAN.md) - Phase 3: Testing & QA
 - [client/integration_test.go](/client/integration_test.go) - Client-level integration tests
 - [namedb/namedb_test.go](/namedb/namedb_test.go) - NameDB unit tests
 - [Go Testing Documentation](https://pkg.go.dev/testing)

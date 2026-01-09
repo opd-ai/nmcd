@@ -67,20 +67,20 @@ go test -bench=. -benchmem ./rpc
 - ✅ Script parsing: < 100µs (actual: 9-53 ns)
 - ✅ RPC throughput: > 1000 req/s (capable of ~850k req/s for reads)
 
-See PLAN.md Phase 3 for complete performance targets and success criteria.
+See [PLAN.md](/docs/development/PLAN.md) Phase 3 for complete performance targets and success criteria.
 
 ---
 
-## Relationship to PLAN.md (Phase 3)
+## Relationship to [PLAN.md](/docs/development/PLAN.md) (Phase 3)
 
-The benchmarks in this document correspond to the **Phase 3 performance goals** described in `PLAN.md`.
-Use `PLAN.md` as the source of truth for:
+The benchmarks in this document correspond to the **Phase 3 performance goals** described in [PLAN.md](/docs/development/PLAN.md).
+Use [PLAN.md](/docs/development/PLAN.md) as the source of truth for:
 
 - Target latency and throughput for core operations (name lookups, name writes, RPC calls)
 - Success criteria for each phase (baseline, optimization, and regression testing)
 - Non-goals and out-of-scope scenarios for the current release
 
-This PERFORMANCE document focuses on **measured behavior**, optimization guidance, and operational recommendations, while `PLAN.md` focuses on **roadmap and acceptance criteria**.
+This PERFORMANCE document focuses on **measured behavior**, optimization guidance, and operational recommendations, while [PLAN.md](/docs/development/PLAN.md) focuses on **roadmap and acceptance criteria**.
 
 ---
 
@@ -220,4 +220,4 @@ Planned and potential performance improvements include:
 - Refining database access patterns to reduce lock contention under high concurrency.
 - Adding more comprehensive benchmarks for wallet and network behavior.
 
-Any such changes should be accompanied by updated benchmarks in this document and revised targets in `PLAN.md`.
+Any such changes should be accompanied by updated benchmarks in this document and revised targets in [PLAN.md](/docs/development/PLAN.md).
