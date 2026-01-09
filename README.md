@@ -719,15 +719,18 @@ The metrics can be visualized in Grafana. Key panels to consider:
 
 **Example Queries:**
 ```promql
-# Top 5 slowest RPC methods
-topk(5, nmcd_rpc_duration_seconds)
+# Top 5 slowest RPC methods (with method label aggregation)
+topk(5, avg by (method) (nmcd_rpc_duration_seconds))
 
-# Error rate by category (per second)
-rate(nmcd_errors_total[5m])
+# Error rate by category (per second, grouped by type)
+sum by (type) (rate(nmcd_errors_total[5m]))
 
 # Database read/write latency comparison
 nmcd_namedb_read_latency_seconds
 nmcd_namedb_write_latency_seconds
+
+# RPC request rate by method
+sum by (method) (rate(nmcd_rpc_requests_total[5m]))
 ```
 
 ---

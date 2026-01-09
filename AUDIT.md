@@ -3,17 +3,20 @@ Generated: 2026-01-09T22:23:06.079Z
 Codebase Version: 2bf85f0
 
 ## Executive Summary
-Total Gaps Found: 1 (3 Resolved)  
+Total Gaps Found: 0 (4 Resolved, 1 Not a Gap)  
 - Critical: 0  
 - Moderate: 2 (2 Resolved)
-- Minor: 1 (1 Resolved)
+- Minor: 2 (2 Resolved)
 
-This audit focuses on subtle discrepancies between README.md documentation and actual implementation in a mature, nearly feature-complete Go application. The analysis reveals primarily documentation completeness issues and minor behavioral clarifications rather than functional defects. Overall, the documentation is highly accurate with only minor areas needing enhancement.
+This audit focuses on subtle discrepancies between README.md documentation and actual implementation in a mature, nearly feature-complete Go application. All identified gaps have been resolved through documentation updates and implementation improvements.
 
 **Updates:**
+- **2026-01-09 22:47**: Gap #5 resolved - Updated Prometheus query examples to include proper label aggregation
 - **2026-01-09 22:45**: Gap #3 resolved - Added optional `syncing` field to health endpoint documentation
 - **2026-01-09 22:43**: Gap #2 resolved - Updated rate limiter documentation to accurately describe token bucket algorithm
 - **2026-01-09 22:36**: Gap #4 resolved - Implemented automatic DNS seed discovery for embedded clients
+
+**Status:** ✅ All gaps resolved. Documentation now accurately reflects implementation.
 
 ---
 
@@ -210,7 +213,7 @@ nc, err := client.NewEmbeddedClient(&client.Config{
 
 ---
 
-### Gap #5: README Example Prometheus Queries Reference Non-Existent Label
+### Gap #5: README Example Prometheus Queries Reference Non-Existent Label - ✅ RESOLVED
 **Documentation Reference:**
 > "Example Queries:
 > ```promql
@@ -225,33 +228,43 @@ nc, err := client.NewEmbeddedClient(&client.Config{
 > nmcd_namedb_write_latency_seconds
 > ```" (README.md:696-706)
 
+**Status:** ✅ **RESOLVED** (2026-01-09)
+
 **Implementation Location:** `metrics/prometheus.go:318-329`
 
 **Expected Behavior:** Prometheus query examples in README work correctly against actual metrics
 
-**Actual Implementation:** The `nmcd_rpc_duration_seconds` metric has a `method` label, making the simple query invalid
+**Actual Implementation:** The `nmcd_rpc_duration_seconds` and `nmcd_errors_total` metrics have labels (`method` and `type` respectively), requiring aggregation in queries
 
-**Gap Details:** The README provides example Prometheus queries (lines 696-706) but some are oversimplified:
+**Gap Details:** The README provided example Prometheus queries (lines 720-731) but some were oversimplified:
 
-1. `topk(5, nmcd_rpc_duration_seconds)` - This query will fail because `nmcd_rpc_duration_seconds` is a labeled metric (has `method` label, line 327). The query should be `topk(5, nmcd_rpc_duration_seconds)` which works but returns raw label combinations, not aggregated values. A better example would be `topk(5, avg by (method) (nmcd_rpc_duration_seconds))`.
+1. `topk(5, nmcd_rpc_duration_seconds)` - This metric has a `method` label. The query works but returns raw label combinations without aggregation. Better: `topk(5, avg by (method) (nmcd_rpc_duration_seconds))`.
 
-2. `rate(nmcd_errors_total[5m])` - This is also a labeled metric (has `type` label, line 313). The query works but returns separate series for each error type. A clearer example would show aggregation: `sum by (type) (rate(nmcd_errors_total[5m]))`.
+2. `rate(nmcd_errors_total[5m])` - This metric has a `type` label. The query works but returns separate series for each error type without grouping. Better: `sum by (type) (rate(nmcd_errors_total[5m]))`.
 
-The queries aren't *wrong* but they're incomplete/misleading for labeled metrics.
+**Resolution:** Updated README.md lines 720-731 to include proper label aggregation in Prometheus query examples.
+
+**Changes Made:**
+- Updated `topk` query to: `topk(5, avg by (method) (nmcd_rpc_duration_seconds))`
+- Updated `rate` query to: `sum by (type) (rate(nmcd_errors_total[5m]))`
+- Added new example: `sum by (method) (rate(nmcd_rpc_requests_total[5m]))`
+- Added clarifying comments about label aggregation
 
 **Reproduction:**
 ```bash
 # Start nmcd with Prometheus
 ./nmcd -prometheusaddr=127.0.0.1:9100
 
-# Try the documented query
+# Try the old documented query
 curl 'http://localhost:9090/api/v1/query?query=topk(5,%20nmcd_rpc_duration_seconds)'
+# Works but returns confusing output without aggregation
 
-# May work but returns confusing output without aggregation
-# Better query: topk(5, avg by (method) (nmcd_rpc_duration_seconds))
+# Try the new documented query
+curl 'http://localhost:9090/api/v1/query?query=topk(5,%20avg%20by%20(method)%20(nmcd_rpc_duration_seconds))'
+# Returns clear top 5 methods with averaged durations
 ```
 
-**Production Impact:** Minor - Users copying the example queries from README may get unexpected results or errors when labels aren't properly aggregated. New Prometheus users might be confused by the output. More experienced users will recognize the issue and adjust queries.
+**Production Impact:** Resolved - Users now have working, properly aggregated Prometheus queries that return meaningful results for labeled metrics.
 
 **Evidence:**
 ```go
@@ -259,7 +272,7 @@ curl 'http://localhost:9090/api/v1/query?query=topk(5,%20nmcd_rpc_duration_secon
 rpcDurationSecondsDesc: prometheus.NewDesc(
     "nmcd_rpc_duration_seconds",
     "Average RPC request duration in seconds by method",
-    []string{"method"}, // <-- Label present but not shown in README query
+    []string{"method"}, // <-- Label now properly handled in README queries
     nil,
 )
 
@@ -267,7 +280,7 @@ rpcDurationSecondsDesc: prometheus.NewDesc(
 errorsTotalDesc: prometheus.NewDesc(
     "nmcd_errors_total",
     "Total number of errors by category",
-    []string{"type"}, // <-- Label present but not shown in README query
+    []string{"type"}, // <-- Label now properly handled in README queries
     nil,
 )
 ```
@@ -284,7 +297,7 @@ errorsTotalDesc: prometheus.NewDesc(
 
 4. **Gap #4 - Embedded Sync**: ✅ **RESOLVED** - Implemented automatic DNS seed discovery for embedded clients (see Gap #4 details)
 
-5. **Gap #5 - Prometheus Metrics**: Verify and document the exact Prometheus metric names match README examples, or update README to match implementation
+5. **Gap #5 - Prometheus Metrics**: ✅ **RESOLVED** - Updated Prometheus query examples to include proper label aggregation for labeled metrics
 
 ---
 
