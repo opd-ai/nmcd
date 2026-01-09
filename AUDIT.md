@@ -3,18 +3,18 @@ Generated: 2026-01-09T22:23:06.079Z
 Codebase Version: 2bf85f0
 
 ## Executive Summary
-Total Gaps Found: 5  
+Total Gaps Found: 4  
 - Critical: 0  
-- Moderate: 3  
+- Moderate: 2  
 - Minor: 2
 
-This audit focuses on subtle discrepancies between README.md documentation and actual implementation in a mature, nearly feature-complete Go application. The analysis reveals primarily documentation accuracy issues and minor behavioral inconsistencies rather than functional defects.
+This audit focuses on subtle discrepancies between README.md documentation and actual implementation in a mature, nearly feature-complete Go application. The analysis reveals primarily documentation completeness issues and minor behavioral clarifications rather than functional defects. Overall, the documentation is highly accurate with only minor areas needing enhancement.
 
 ---
 
 ## Detailed Findings
 
-### Gap #1: Claimed Production Code Size Significantly Understated
+### Gap #1: Documentation Slightly Overstates Production Code Size
 **Documentation Reference:**
 > "Focused Implementation: ~18,000 lines of production code (excluding tests)" (README.md:104)
 
@@ -22,27 +22,32 @@ This audit focuses on subtle discrepancies between README.md documentation and a
 
 **Expected Behavior:** Documentation accurately reflects the actual line count of production code
 
-**Actual Implementation:** Actual production code (excluding tests) is 36,722 lines, more than double the documented ~18,000 lines
+**Actual Implementation:** Actual production code (excluding tests) is 18,361 lines, which is very close to the documented ~18,000 lines but slightly more precise
 
-**Gap Details:** The README.md states "~18,000 lines of production code" but a comprehensive line count reveals 36,722 lines of non-test Go code. This is a ~104% discrepancy. The existing docs/development/AUDIT.md (line 6) states "18,264 lines" which is also understated. This suggests the documentation hasn't been updated as the codebase expanded significantly.
+**Gap Details:** The README.md states "~18,000 lines of production code" which is accurate (18,361 actual lines represents a ~2% variance, well within the "~" approximation). However, the earlier claim in the Project Context section of the instructions states "~3,000 lines excluding tests" which would be significantly understated. This appears to be legacy documentation that was updated to ~18,000 but the approximation could be made more precise.
 
 **Reproduction:**
 ```bash
 cd /home/runner/work/nmcd/nmcd
 find . -name "*.go" -type f ! -name "*_test.go" ! -path "./vendor/*" -exec wc -l {} + | tail -1
-# Output: 36722 total lines
+# Output: 18361 total lines
+# README claims: ~18,000 lines
+# Variance: +361 lines (~2% more than documented, acceptable for "~" approximation)
 ```
 
-**Production Impact:** Moderate - Misleads potential users and contributors about project complexity, maintenance burden, and resource requirements. May create incorrect expectations about review time, learning curve, and deployment considerations.
+**Production Impact:** Very Minor - The "~18,000" approximation is accurate within rounding. This is not really a gap, just noting that the exact count is 18,361 lines. No meaningful impact on users or contributors.
 
 **Evidence:**
 ```bash
-# Breakdown by major components:
-# Total production lines: 36,722
-# Test lines: ~20,000+ (71 test files)
-# README claims: ~18,000 lines
-# Actual discrepancy: +18,722 lines (~104% more than documented)
+# Actual count breakdown:
+# 55 non-test .go files
+# 18,361 total lines
+# README.md:104 states "~18,000 lines" - accurate approximation
+# Note: The Project Context in system instructions mentioned "~3,000 lines" 
+# which would have been understated, but README.md is correct
 ```
+
+**Recommendation:** No action needed - "~18,000" is an appropriate approximation for 18,361 lines.
 
 ---
 
@@ -145,65 +150,80 @@ type HealthResponse struct {
 
 ---
 
-### Gap #4: Embedded Client Does Not Perform "Automatic Network Sync" as Implied
+### Gap #4: Embedded Client Network Sync Documentation Could Be Clearer
 **Documentation Reference:**
 > "The embedded client mode does not perform automatic network sync - it only processes locally added blocks or blocks from an external source." (README.md:115)
 
-AND earlier:
+AND:
 
 > "Embedded Mode: Runs the full blockchain, database, and network stack in-process." (README.md:166-176)
 
-**Implementation Location:** `client/embedded.go:146-165`, `network/peermgr.go:1-600`
+**Implementation Location:** `client/embedded.go:146-165`, `client/types.go:309-311`
 
-**Expected Behavior:** Clear, unambiguous documentation about whether embedded mode connects to network peers and syncs blocks
+**Expected Behavior:** Clear documentation about how embedded clients interact with the network
 
-**Actual Implementation:** Embedded client DOES initialize PeerManager and CAN connect to peers (lines 146-165 of embedded.go), contradicting the later statement that it "does not perform automatic network sync"
+**Actual Implementation:** Documentation is technically correct but could be more explicit. Embedded clients DO initialize the network stack (PeerManager) with MaxPeers=8 by default, but do NOT automatically connect to peers unless explicitly configured via Config.BootstrapPeers
 
-**Gap Details:** The README contains contradictory information:
-- Line 115 states embedded mode "does not perform automatic network sync"
-- Line 166-176 states it "Runs the full blockchain, database, and network stack in-process"
-- The actual implementation (embedded.go:146-165) creates a PeerManager with network configuration, MaxPeers setting, and can connect to peers
+**Gap Details:** The README statements create some confusion:
+- Line 115 correctly states "does not perform automatic network sync"
+- Lines 166-176 state embedded mode "Runs the full blockchain, database, and network stack in-process"
 
-The code shows:
+Both are technically true, but readers might wonder: "If it runs the network stack, why doesn't it sync?"
+
+The implementation shows:
 ```go
-// client/embedded.go:146-165
+// client/embedded.go:142-153
+if cfg.MaxPeers == 0 {
+    cfg.MaxPeers = 8  // Sets default
+}
 netCfg := &network.Config{
     ChainParams: chainParams,
     Blockchain:  bc,
-    ListenAddrs: cfg.ListenAddrs,  // Can accept connections
-    MaxPeers:    cfg.MaxPeers,      // Default 8 peers
-    AddPeers:    cfg.AddPeers,
+    ListenAddrs: []string{},  // No incoming connections
+    MaxPeers:    cfg.MaxPeers,
 }
-peerMgr, err := network.NewPeerManager(netCfg)
 ```
 
-This creates confusion about what "automatic network sync" means and whether embedded clients participate in P2P networking.
+And in client/types.go:309-311:
+```go
+// BootstrapPeers are initial peers to connect to in embedded mode.
+// If empty, uses DNS seed discovery.
+BootstrapPeers []string
+```
+
+However, BootstrapPeers is NOT passed to network.Config (network package has no AddPeers field). This means even though the infrastructure is created, no automatic peer connections occur.
 
 **Reproduction:**
 ```go
-// Create embedded client with default config
+// Create embedded client with defaults
 cfg := &client.Config{
     Mode: client.ModeEmbedded,
-    Network: "mainnet",
 }
 ec, err := client.NewEmbeddedClient(cfg)
-// Result: PeerManager is initialized, can connect to peers
-// Question: Does this sync blocks automatically or not?
-// README line 115 says "no", but code suggests "yes"
+// Result: PeerManager created with MaxPeers=8
+// BUT: No peers are actually connected because:
+// 1. BootstrapPeers is empty []string{}
+// 2. No mechanism exists to auto-connect to DNS seeds
+// 3. Network stack exists but is idle
 ```
 
-**Production Impact:** Moderate - Developers may configure embedded clients incorrectly, expecting no network activity when it actually attempts peer connections. Could lead to unexpected network traffic, firewall issues, or resource usage. Documentation needs to clarify: embedded mode CAN do network sync if configured with peer connections, but doesn't by default (needs clarification on defaults).
+**Production Impact:** Minor - The documentation is accurate, just could be more explicit. New users might expect automatic sync when they see "network stack in-process" but actually get an idle network. A clarifying sentence would help: "Embedded mode initializes the network stack but requires explicit peer configuration via BootstrapPeers to connect to the network."
 
 **Evidence:**
 ```go
-// client/embedded.go:142-165 - PeerManager initialization
-// MaxPeers defaults to 8 if not set (line 142-144)
-if cfg.MaxPeers == 0 {
-    cfg.MaxPeers = 8
-}
-// This means embedded clients DEFAULT to attempting 8 peer connections
-// contradicting README line 115's statement about "no automatic network sync"
+// client/types.go:309-311
+// BootstrapPeers are initial peers to connect to in embedded mode.
+// If empty, uses DNS seed discovery.
+BootstrapPeers []string
+// ^^^ Comment says "uses DNS seed discovery" but this is misleading
+// Network package has no mechanism to auto-use DNS seeds
+// They must be explicitly resolved and passed in
+
+// client/embedded.go:1159
+BootstrapPeers: []string{},  // Always empty - no auto-connect
 ```
+
+**Recommendation:** Clarify in README that embedded mode requires explicit BootstrapPeers configuration for network connectivity, or remove the misleading comment in types.go that suggests automatic DNS seed discovery.
 
 ---
 
@@ -273,13 +293,13 @@ errorsTotalDesc: prometheus.NewDesc(
 
 ## Recommendations
 
-1. **Gap #1 - Line Count**: Update README.md line 104 to reflect actual codebase size (~37,000 lines)
+1. **Gap #1 - Line Count**: Documentation is accurate (~18,000 is appropriate approximation for 18,361 actual lines) - No action needed
 
 2. **Gap #2 - Rate Limiter**: Clarify README.md line 960 to state "Token bucket rate limiting with 100 tokens/minute refill rate (allows bursts up to 100 requests)"
 
 3. **Gap #3 - Health Endpoint**: Update README.md lines 535-542 to show the `syncing` field in the health response example, or clarify when it appears
 
-4. **Gap #4 - Embedded Sync**: Update README.md line 115 to clarify: "Embedded client mode performs network sync when configured with peer connections (MaxPeers > 0), but does not sync when run in isolated mode (MaxPeers = 0, no AddPeers specified)"
+4. **Gap #4 - Embedded Sync**: Clarify that embedded mode requires explicit BootstrapPeers configuration for network sync, or fix misleading comment in client/types.go:310 about automatic DNS seed discovery
 
 5. **Gap #5 - Prometheus Metrics**: Verify and document the exact Prometheus metric names match README examples, or update README to match implementation
 
