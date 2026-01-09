@@ -1,0 +1,125 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build for ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # Linux builds
+          - goos: linux
+            goarch: amd64
+            artifact_name: nmcd-linux-amd64
+          - goos: linux
+            goarch: arm64
+            artifact_name: nmcd-linux-arm64
+          # macOS builds
+          - goos: darwin
+            goarch: amd64
+            artifact_name: nmcd-darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            artifact_name: nmcd-darwin-arm64
+          # Windows build
+          - goos: windows
+            goarch: amd64
+            artifact_name: nmcd-windows-amd64.exe
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache: true
+
+      - name: Build nmcd binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          go build -v -trimpath \
+            -ldflags="-s -w" \
+            -o ${{ matrix.artifact_name }} \
+            ./cmd/nmcd
+
+      - name: Verify binary was created
+        run: |
+          ls -lh ${{ matrix.artifact_name }}
+          file ${{ matrix.artifact_name }} || true
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}
+          retention-days: 7
+
+  build-permamail:
+    name: Build Permamail for ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # Linux builds
+          - goos: linux
+            goarch: amd64
+            artifact_name: permamail-linux-amd64
+          - goos: linux
+            goarch: arm64
+            artifact_name: permamail-linux-arm64
+          # macOS builds
+          - goos: darwin
+            goarch: amd64
+            artifact_name: permamail-darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            artifact_name: permamail-darwin-arm64
+          # Windows build
+          - goos: windows
+            goarch: amd64
+            artifact_name: permamail-windows-amd64.exe
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache: true
+
+      - name: Build permamail binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          go build -v -trimpath \
+            -ldflags="-s -w" \
+            -o ${{ matrix.artifact_name }} \
+            ./cmd/permamail
+
+      - name: Verify binary was created
+        run: |
+          ls -lh ${{ matrix.artifact_name }}
+          file ${{ matrix.artifact_name }} || true
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}
+          retention-days: 7
