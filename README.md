@@ -559,9 +559,12 @@ Response:
 {
   "status": "healthy",
   "block_height": 500000,
-  "peers": 8
+  "peers": 8,
+  "syncing": true
 }
 ```
+
+The `syncing` field is optional (omitempty) and appears when the node is initializing or syncing blocks.
 
 Use this endpoint for **liveness probes** to detect if the process is alive and responsive.
 

@@ -3,14 +3,15 @@ Generated: 2026-01-09T22:23:06.079Z
 Codebase Version: 2bf85f0
 
 ## Executive Summary
-Total Gaps Found: 2 (2 Resolved)  
+Total Gaps Found: 1 (3 Resolved)  
 - Critical: 0  
 - Moderate: 2 (2 Resolved)
-- Minor: 1
+- Minor: 1 (1 Resolved)
 
 This audit focuses on subtle discrepancies between README.md documentation and actual implementation in a mature, nearly feature-complete Go application. The analysis reveals primarily documentation completeness issues and minor behavioral clarifications rather than functional defects. Overall, the documentation is highly accurate with only minor areas needing enhancement.
 
 **Updates:**
+- **2026-01-09 22:45**: Gap #3 resolved - Added optional `syncing` field to health endpoint documentation
 - **2026-01-09 22:43**: Gap #2 resolved - Updated rate limiter documentation to accurately describe token bucket algorithm
 - **2026-01-09 22:36**: Gap #4 resolved - Implemented automatic DNS seed discovery for embedded clients
 
@@ -109,7 +110,7 @@ if tokensToAdd > 0 {
 
 ---
 
-### Gap #3: Health Endpoint Response Missing Optional Field in Documentation
+### Gap #3: Health Endpoint Response Missing Optional Field in Documentation - ✅ RESOLVED
 **Documentation Reference:**
 > "Response:
 > ```json
@@ -120,13 +121,21 @@ if tokensToAdd > 0 {
 > }
 > ```" (README.md:535-542)
 
+**Status:** ✅ **RESOLVED** (2026-01-09)
+
 **Implementation Location:** `rpc/server.go:1990-2038`
 
 **Expected Behavior:** Health endpoint documentation shows all possible response fields
 
 **Actual Implementation:** Health endpoint can include an additional `syncing` field (omitempty) that is not documented in the example
 
-**Gap Details:** The HealthResponse struct includes a `Syncing bool` field with `json:"syncing,omitempty"` tag (line 1994). This field is returned when the node is initializing or syncing, but is not shown in the README example response. Users monitoring the health endpoint might encounter this field unexpectedly.
+**Gap Details:** The HealthResponse struct includes a `Syncing bool` field with `json:"syncing,omitempty"` tag (line 1994). This field is returned when the node is initializing or syncing, but was not shown in the README example response. Users monitoring the health endpoint might encounter this field unexpectedly.
+
+**Resolution:** Updated README.md lines 557-566 to include the `syncing` field in the health endpoint example response and added a note that it's optional.
+
+**Changes Made:**
+- Added `"syncing": true` to the health endpoint JSON example
+- Added clarification: "The `syncing` field is optional (omitempty) and appears when the node is initializing or syncing blocks."
 
 **Reproduction:**
 ```bash
@@ -139,12 +148,11 @@ curl http://127.0.0.1:8336/health
 # Actual response during sync:
 # {"status":"healthy","block_height":1000,"peers":3,"syncing":true}
 #
-# README example shows:
-# {"status":"healthy","block_height":500000,"peers":8}
-# (missing the 'syncing' field)
+# README example now shows:
+# {"status":"healthy","block_height":500000,"peers":8,"syncing":true}
 ```
 
-**Production Impact:** Minor - Monitoring systems or health check parsers might be surprised by the unexpected `syncing` field. However, since it's an additional field (not removing existing ones), most JSON parsers will ignore unknown fields, minimizing actual impact. Documentation should mention this field for completeness.
+**Production Impact:** Resolved - Documentation now shows all fields that may appear in the health response, eliminating confusion for monitoring system implementers.
 
 **Evidence:**
 ```go
@@ -153,7 +161,7 @@ type HealthResponse struct {
     Status      string `json:"status"`
     BlockHeight int32  `json:"block_height"`
     Peers       int    `json:"peers"`
-    Syncing     bool   `json:"syncing,omitempty"` // Optional field not in README
+    Syncing     bool   `json:"syncing,omitempty"` // Optional field now documented
 }
 
 // This field is set in handleHealth when status is "initializing"
@@ -272,7 +280,7 @@ errorsTotalDesc: prometheus.NewDesc(
 
 2. **Gap #2 - Rate Limiter**: ✅ **RESOLVED** - Updated README.md to accurately describe token bucket algorithm with burst capability
 
-3. **Gap #3 - Health Endpoint**: Update README.md lines 535-542 to show the `syncing` field in the health response example, or clarify when it appears
+3. **Gap #3 - Health Endpoint**: ✅ **RESOLVED** - Added `syncing` field to health endpoint documentation with clarification
 
 4. **Gap #4 - Embedded Sync**: ✅ **RESOLVED** - Implemented automatic DNS seed discovery for embedded clients (see Gap #4 details)
 
