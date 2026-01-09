@@ -152,11 +152,25 @@ func NewEmbeddedClient(cfg *Config) (*EmbeddedClient, error) {
 		defaultPort := config.DefaultPort(cfg.Network)
 		bootstrapPeers = network.ResolveSeedNodes(dnsSeeds, defaultPort)
 		
+		logger := logging.GetDefault()
 		if len(bootstrapPeers) > 0 {
-			logger := logging.GetDefault()
 			logger.Info("resolved bootstrap peers from DNS seeds",
 				"count", len(bootstrapPeers),
 				"network", cfg.Network,
+			)
+		} else if len(dnsSeeds) > 0 {
+			// DNS seeds are configured but resolution returned no peers.
+			// With MaxPeers > 0 this likely means the client will not sync.
+			logger.Warn("no peers resolved from DNS seeds; client may not sync",
+				"network", cfg.Network,
+				"max_peers", cfg.MaxPeers,
+			)
+		} else {
+			// No DNS seeds configured for this network; automatic
+			// peer discovery is effectively disabled.
+			logger.Info("no DNS seeds configured; skipping automatic peer discovery",
+				"network", cfg.Network,
+				"max_peers", cfg.MaxPeers,
 			)
 		}
 	}
