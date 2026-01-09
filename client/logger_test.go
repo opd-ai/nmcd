@@ -211,12 +211,12 @@ func TestCustomLogger_FileOutput(t *testing.T) {
 // TestCustomLogger_LogLevels verifies logger respects log levels
 func TestCustomLogger_LogLevels(t *testing.T) {
 	tests := []struct {
-		name           string
-		configLevel    logging.LogLevel
-		expectDebug    bool
-		expectInfo     bool
-		expectWarn     bool
-		expectError    bool
+		name        string
+		configLevel logging.LogLevel
+		expectDebug bool
+		expectInfo  bool
+		expectWarn  bool
+		expectError bool
 	}{
 		{
 			name:        "DEBUG level logs everything",
