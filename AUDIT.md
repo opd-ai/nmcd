@@ -305,6 +305,51 @@ errorsTotalDesc: prometheus.NewDesc(
 
 ---
 
+## Test Verification
+
+Selected findings were verified through code execution:
+
+### Gap #2 - Rate Limiter Burst Behavior
+
+**Test Code:** `/tmp/test_rate_limiter.go`
+
+```bash
+$ go run test_rate_limiter.go
+=== Testing burst of 100 requests ===
+Burst phase: 100/100 requests allowed
+Tokens remaining: 0.00
+
+=== After 60 seconds, testing 100 more requests ===
+Total allowed in ~60 seconds: 200 requests
+Expected by README: 100 requests/minute
+Actual: 200 requests/minute (100 burst + ~100 refilled)
+
+✓ Gap confirmed: Rate limiter allows 200 requests in 60 seconds (not strict 100/min)
+```
+
+This confirms the token bucket algorithm allows burst traffic followed by continuous refill, permitting up to 200 requests per minute under specific timing conditions, rather than the strict "100 requests/minute" stated in README.md.
+
+---
+
+## Audit Quality Assessment
+
+**Methodology Strengths:**
+- Systematic comparison of README claims against source code
+- Line-by-line code inspection of critical paths
+- Verification of numeric claims via direct measurement
+- Cross-referencing with existing documentation
+- Code execution tests for reproducibility
+
+**Limitations:**
+- Focus on README.md as primary specification source (other docs not exhaustively checked)
+- No runtime testing of daemon mode or RPC endpoints
+- No network behavior testing (DNS seed resolution, peer connections)
+- No performance or load testing
+
+**Confidence Level:** High for documented findings. All gaps are based on verifiable code inspection and reproducible evidence.
+
+---
+
 ## Verification Methodology
 
 This audit was conducted through:
@@ -313,5 +358,6 @@ This audit was conducted through:
 3. Analysis of struct definitions and JSON serialization tags
 4. Verification of numeric claims (line counts, defaults) via direct measurement
 5. Cross-referencing against existing audit documentation (docs/development/AUDIT.md, docs/development/PROTOCOL_COMPLIANCE_AUDIT.md)
+6. Code execution testing for rate limiter behavior validation
 
 All findings are reproducible with provided evidence and code references.
