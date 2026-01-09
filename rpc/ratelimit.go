@@ -75,20 +75,20 @@ func (rl *rateLimiter) allow(ip string) bool {
 	// Get or create bucket for this IP
 	elem, exists := rl.buckets[ip]
 	var b *bucket
-	
+
 	if !exists {
 		// Before creating a new bucket, check if we're at capacity
 		if len(rl.buckets) >= rl.maxSize {
 			// Evict the least recently used IP to make room (O(1) operation)
 			rl.evictOldestBucketLocked()
 		}
-		
+
 		b = &bucket{
 			tokens:     float64(rl.rate),
 			lastRefill: now,
 			lastUsed:   now,
 		}
-		
+
 		// Add to LRU list (most recently used = front)
 		entry := &bucketEntry{ip: ip, bucket: b}
 		elem = rl.lruList.PushFront(entry)
@@ -143,13 +143,13 @@ func (rl *rateLimiter) cleanupLoop() {
 		case <-rl.cleanup.C:
 			rl.mu.Lock()
 			now := time.Now()
-			
+
 			// Iterate through list and remove stale entries
 			var next *list.Element
 			for elem := rl.lruList.Front(); elem != nil; elem = next {
 				next = elem.Next()
 				entry := elem.Value.(*bucketEntry)
-				
+
 				// Remove buckets that haven't been used in 10 minutes
 				if now.Sub(entry.bucket.lastUsed) > 10*time.Minute {
 					delete(rl.buckets, entry.ip)
@@ -169,13 +169,13 @@ func (rl *rateLimiter) triggerCleanup() {
 	defer rl.mu.Unlock()
 
 	now := time.Now()
-	
+
 	// Iterate through list and remove stale entries
 	var next *list.Element
 	for elem := rl.lruList.Front(); elem != nil; elem = next {
 		next = elem.Next()
 		entry := elem.Value.(*bucketEntry)
-		
+
 		// Remove buckets that haven't been used in 10 minutes
 		if now.Sub(entry.bucket.lastUsed) > 10*time.Minute {
 			delete(rl.buckets, entry.ip)
