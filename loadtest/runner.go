@@ -228,10 +228,10 @@ func RPCLoadTest(config LoadTestConfig) (*TestResult, error) {
 
 	// Calculate statistics
 	result.Duration = duration
-	result.RequestCount = requestCount
-	result.SuccessCount = successCount
-	result.FailureCount = failureCount
-	result.ThroughputRPS = float64(requestCount) / duration.Seconds()
+	result.RequestCount = atomic.LoadInt64(&requestCount)
+	result.SuccessCount = atomic.LoadInt64(&successCount)
+	result.FailureCount = atomic.LoadInt64(&failureCount)
+	result.ThroughputRPS = float64(result.RequestCount) / duration.Seconds()
 
 	if len(latencies) > 0 {
 		var total time.Duration
@@ -326,7 +326,7 @@ func MemoryLeakTest(config LoadTestConfig, memoryCheckInterval time.Duration) (*
 	}
 
 	result.Duration = time.Since(start)
-	result.RequestCount = requestCount
+	result.RequestCount = atomic.LoadInt64(&requestCount)
 	result.MemoryEnd = finalMem
 	result.MemoryGrowth = int64(finalMem) - int64(initialMem)
 
@@ -428,7 +428,7 @@ func ContinuousOperationTest(config ContinuousOperationConfig) (*TestResult, err
 		time.Sleep(10 * time.Millisecond)
 
 		// Check if we've reached name count limit
-		if config.NameCount > 0 && int(successCount) >= config.NameCount {
+		if config.NameCount > 0 && int(atomic.LoadInt64(&successCount)) >= config.NameCount {
 			break
 		}
 	}
@@ -440,10 +440,10 @@ func ContinuousOperationTest(config ContinuousOperationConfig) (*TestResult, err
 	healthMutex.Unlock()
 
 	result.Duration = time.Since(start)
-	result.RequestCount = requestCount
-	result.SuccessCount = successCount
-	result.FailureCount = failureCount
-	result.ThroughputRPS = float64(requestCount) / time.Since(start).Seconds()
+	result.RequestCount = atomic.LoadInt64(&requestCount)
+	result.SuccessCount = atomic.LoadInt64(&successCount)
+	result.FailureCount = atomic.LoadInt64(&failureCount)
+	result.ThroughputRPS = float64(result.RequestCount) / time.Since(start).Seconds()
 
 	return result, nil
 }
