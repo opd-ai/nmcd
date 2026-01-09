@@ -13,7 +13,7 @@ This repository uses a multi-file GitHub Actions CI/CD pipeline with separated w
 - Pushes to the `main` branch
 
 **What it does**:
-1. **Test Job**: Runs tests with Go versions 1.21.x and 1.22.x
+1. **Test Job**: Runs tests with Go version 1.24.x
    - Checks out the code
    - Sets up Go with caching
    - Downloads and verifies dependencies
@@ -66,6 +66,7 @@ This repository uses a multi-file GitHub Actions CI/CD pipeline with separated w
 **Triggers**:
 1. **Scheduled (Nightly)**: Daily at 00:00 UTC
 2. **Tag Push**: When pushing tags matching `v[0-9]+.[0-9]+.[0-9]+` (e.g., v1.2.3)
+3. **Manual Trigger**: Via workflow_dispatch (Actions tab → Release workflow → Run workflow)
 
 **What it does**:
 
