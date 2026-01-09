@@ -3,14 +3,16 @@ Generated: 2026-01-09T22:23:06.079Z
 Codebase Version: 2bf85f0
 
 ## Executive Summary
-Total Gaps Found: 3 (1 Resolved)  
+Total Gaps Found: 2 (2 Resolved)  
 - Critical: 0  
-- Moderate: 2 (1 Resolved)
+- Moderate: 2 (2 Resolved)
 - Minor: 1
 
 This audit focuses on subtle discrepancies between README.md documentation and actual implementation in a mature, nearly feature-complete Go application. The analysis reveals primarily documentation completeness issues and minor behavioral clarifications rather than functional defects. Overall, the documentation is highly accurate with only minor areas needing enhancement.
 
-**Update (2026-01-09):** Gap #4 has been resolved by implementing automatic DNS seed discovery for embedded clients.
+**Updates:**
+- **2026-01-09 22:43**: Gap #2 resolved - Updated rate limiter documentation to accurately describe token bucket algorithm
+- **2026-01-09 22:36**: Gap #4 resolved - Implemented automatic DNS seed discovery for embedded clients
 
 ---
 
@@ -53,13 +55,15 @@ find . -name "*.go" -type f ! -name "*_test.go" ! -path "./vendor/*" -exec wc -l
 
 ---
 
-### Gap #2: Rate Limiter Algorithm Does Not Strictly Enforce "100 Requests Per Minute"
+### Gap #2: Rate Limiter Algorithm Does Not Strictly Enforce "100 Requests Per Minute" - ✅ RESOLVED
 **Documentation Reference:**
 > "Rate Limiting: Per-IP rate limiting protects against DoS attacks (default: 100 requests/minute)" (README.md:960)
 
+**Status:** ✅ **RESOLVED** (2026-01-09)
+
 **Implementation Location:** `rpc/ratelimit.go:68-124`
 
-**Expected Behavior:** Exactly 100 requests allowed per minute per IP, strictly enforced
+**Expected Behavior:** Documentation accurately describes the token bucket rate limiting algorithm
 
 **Actual Implementation:** Token bucket algorithm allows burst of 100 requests immediately, then 100 additional requests spread over the next minute, potentially allowing 200 requests in 60 seconds under specific timing
 
@@ -69,6 +73,12 @@ find . -name "*.go" -type f ! -name "*_test.go" ! -path "./vendor/*" -exec wc -l
 - Total in 60s: Up to 200 requests (100 burst + 100 refilled)
 
 This differs from a strict "100 requests per 60-second window" implementation.
+
+**Resolution:** Updated README.md line 982-985 to clarify that rate limiting uses a token bucket algorithm with burst capability, not a strict sliding window.
+
+**Changes Made:**
+- Updated README.md to state "token bucket algorithm (default: 100 tokens/minute refill rate)"
+- Added clarification: "Allows burst of up to 100 requests, then continuous refill at 100 tokens/minute"
 
 **Reproduction:**
 ```go
@@ -81,7 +91,7 @@ This differs from a strict "100 requests per 60-second window" implementation.
 // Actual: All 200 allowed (100 burst + 100 refill)
 ```
 
-**Production Impact:** Minor - Allows slightly more traffic than documented (up to 200 req/min vs stated 100 req/min). Not a security issue as it's still a protective rate limit, just less strict than documentation implies. The README should clarify "token bucket with 100 tokens/minute refill rate" rather than "100 requests/minute".
+**Production Impact:** Resolved - Documentation now accurately describes the rate limiting behavior. Users understand they can burst up to 100 requests and then maintain 100 req/min sustained rate.
 
 **Evidence:**
 ```go
@@ -260,7 +270,7 @@ errorsTotalDesc: prometheus.NewDesc(
 
 1. **Gap #1 - Line Count**: Documentation is accurate (~18,000 is appropriate approximation for 18,361 actual lines) - No action needed
 
-2. **Gap #2 - Rate Limiter**: Clarify README.md line 960 to state "Token bucket rate limiting with 100 tokens/minute refill rate (allows bursts up to 100 requests)"
+2. **Gap #2 - Rate Limiter**: ✅ **RESOLVED** - Updated README.md to accurately describe token bucket algorithm with burst capability
 
 3. **Gap #3 - Health Endpoint**: Update README.md lines 535-542 to show the `syncing` field in the health response example, or clarify when it appears
 

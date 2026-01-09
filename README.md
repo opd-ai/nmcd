@@ -980,7 +980,8 @@ See `examples/smtp_relay/` for a complete production-ready SMTP relay deployment
 - Constant-time comparison prevents timing attacks on credentials
 
 **Rate Limiting:**
-- Per-IP rate limiting protects against DoS attacks (default: 100 requests/minute)
+- Per-IP rate limiting using token bucket algorithm (default: 100 tokens/minute refill rate)
+- Allows burst of up to 100 requests, then continuous refill at 100 tokens/minute
 - Configurable via `Config.RateLimit` when using as a library
 - Automatic cleanup of stale IP tracking entries
 
