@@ -225,12 +225,12 @@ func (w *Wallet) save() error {
 	}
 
 	// Ensure directory exists
-	if err := os.MkdirAll(w.dataDir, 0700); err != nil {
+	if err := os.MkdirAll(w.dataDir, 0o700); err != nil {
 		return fmt.Errorf("failed to create wallet directory: %w", err)
 	}
 
 	// Write with restricted permissions
-	if err := os.WriteFile(w.walletPath(), data, 0600); err != nil {
+	if err := os.WriteFile(w.walletPath(), data, 0o600); err != nil {
 		return fmt.Errorf("failed to write wallet: %w", err)
 	}
 
@@ -522,7 +522,7 @@ func BuildNameUpdateScript(name, value string, pubKeyHash []byte) ([]byte, error
 //   - pubKeyHash: The 20-byte public key hash for the receiving address
 //
 // Returns the complete script bytes or an error if parameters are invalid.
-func BuildNameNewScript(hash []byte, pubKeyHash []byte) ([]byte, error) {
+func BuildNameNewScript(hash, pubKeyHash []byte) ([]byte, error) {
 	if len(hash) != 20 {
 		return nil, fmt.Errorf("invalid hash length: %d (expected 20)", len(hash))
 	}

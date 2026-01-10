@@ -47,7 +47,7 @@ func LoadMainnetTestVector(path string) (*MainnetTestVector, error) {
 
 // LoadMainnetTestVectors loads all mainnet test vectors from a directory matching a glob pattern
 // Example: LoadMainnetTestVectors("testdata/blocks", "block_*.json")
-func LoadMainnetTestVectors(dir string, pattern string) ([]*MainnetTestVector, error) {
+func LoadMainnetTestVectors(dir, pattern string) ([]*MainnetTestVector, error) {
 	globPattern := filepath.Join(dir, pattern)
 	matches, err := filepath.Glob(globPattern)
 	if err != nil {

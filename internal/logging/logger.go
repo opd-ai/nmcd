@@ -115,12 +115,12 @@ func Init(cfg *Config) (*Logger, error) {
 
 		// Create log directory if it doesn't exist
 		logDir := filepath.Dir(cfg.Output)
-		if err := os.MkdirAll(logDir, 0755); err != nil {
+		if err := os.MkdirAll(logDir, 0o755); err != nil {
 			return nil, err
 		}
 
 		// Open log file
-		f, err := os.OpenFile(cfg.Output, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		f, err := os.OpenFile(cfg.Output, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err != nil {
 			return nil, err
 		}
@@ -296,7 +296,7 @@ func LogBlockProcessed(logger *Logger, height int32, hash string, duration time.
 }
 
 // LogNameOperation logs a name operation event
-func LogNameOperation(logger *Logger, operation string, name string, txHash string) {
+func LogNameOperation(logger *Logger, operation, name, txHash string) {
 	logger.Info("name operation",
 		"operation", operation,
 		"name", name,
@@ -305,7 +305,7 @@ func LogNameOperation(logger *Logger, operation string, name string, txHash stri
 }
 
 // LogPeerConnected logs a peer connection event
-func LogPeerConnected(logger *Logger, peerID string, addr string) {
+func LogPeerConnected(logger *Logger, peerID, addr string) {
 	logger.Info("peer connected",
 		"peer_id", peerID,
 		"address", addr,
@@ -313,7 +313,7 @@ func LogPeerConnected(logger *Logger, peerID string, addr string) {
 }
 
 // LogPeerDisconnected logs a peer disconnection event
-func LogPeerDisconnected(logger *Logger, peerID string, reason string) {
+func LogPeerDisconnected(logger *Logger, peerID, reason string) {
 	logger.Info("peer disconnected",
 		"peer_id", peerID,
 		"reason", reason,
@@ -321,7 +321,7 @@ func LogPeerDisconnected(logger *Logger, peerID string, reason string) {
 }
 
 // LogRPCRequest logs an RPC request
-func LogRPCRequest(logger *Logger, method string, clientIP string) {
+func LogRPCRequest(logger *Logger, method, clientIP string) {
 	logger.Debug("rpc request",
 		"method", method,
 		"client_ip", clientIP,

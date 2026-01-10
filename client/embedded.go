@@ -94,7 +94,7 @@ func NewEmbeddedClient(cfg *Config) (*EmbeddedClient, error) {
 	}
 
 	// Create data directory if it doesn't exist
-	if err := os.MkdirAll(cfg.DataDir, 0700); err != nil {
+	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
@@ -151,7 +151,7 @@ func NewEmbeddedClient(cfg *Config) (*EmbeddedClient, error) {
 		dnsSeeds := config.DNSSeeds(cfg.Network)
 		defaultPort := config.DefaultPort(cfg.Network)
 		bootstrapPeers = network.ResolveSeedNodes(dnsSeeds, defaultPort)
-		
+
 		logger := logging.GetDefault()
 		if len(bootstrapPeers) > 0 {
 			logger.Info("resolved bootstrap peers from DNS seeds",

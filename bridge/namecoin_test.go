@@ -145,7 +145,6 @@ func TestLookupMail_Success(t *testing.T) {
 
 			bridge := NewNamecoinBridge(mock)
 			got, err := bridge.LookupMail(context.Background(), "alice")
-
 			if err != nil {
 				t.Fatalf("LookupMail() error = %v, want nil", err)
 			}

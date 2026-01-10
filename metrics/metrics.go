@@ -94,7 +94,7 @@ func Get() *Metrics {
 }
 
 // RecordBlockProcessed records a successfully processed block
-func (m *Metrics) RecordBlockProcessed(hash string, height int32, isMainChain bool, isOrphan bool, processingTime time.Duration) {
+func (m *Metrics) RecordBlockProcessed(hash string, height int32, isMainChain, isOrphan bool, processingTime time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -271,7 +271,7 @@ func (m *Metrics) GetRPCStats(method string) (count uint64, avgDuration time.Dur
 	if count > 0 {
 		avgDuration = m.rpcDurations[method] / time.Duration(count)
 	}
-	return
+	return count, avgDuration
 }
 
 // RecordNetworkError records a network-related error

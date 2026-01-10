@@ -255,7 +255,7 @@ func TestBlockSerialization(t *testing.T) {
 
 // Helper functions
 
-func createTestBlock(t *testing.T, version int32, height int32) *btcutil.Block {
+func createTestBlock(t *testing.T, version, height int32) *btcutil.Block {
 	header := wire.BlockHeader{
 		Version:    version,
 		PrevBlock:  chainhash.Hash{},

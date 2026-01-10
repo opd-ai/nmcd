@@ -1263,12 +1263,10 @@ func TestEmbeddedClient_RegisterName_TwoPhaseSuccess(t *testing.T) {
 		Confirmations:       12,
 		FeeRate:             1,
 	})
-
 	// Since we can't actually mine blocks in this test environment,
 	// we expect the test to timeout waiting for confirmations.
 	// The important part is that the code structure is correct.
 	// In a real integration test with a proper blockchain, this would succeed.
-
 	if err != nil {
 		// We expect a timeout or context cancellation error
 		if !strings.Contains(err.Error(), "context") && !strings.Contains(err.Error(), "confirmation") {
@@ -1801,7 +1799,6 @@ func TestEmbeddedClient_UpdateName_SameAddressTransferWarning(t *testing.T) {
 		WaitForConfirmation: false,
 	}
 	result, err := client.UpdateName(ctx, "d/testname", `{"ip":"5.6.7.8"}`, opts)
-
 	// Verify operation succeeded
 	if err != nil {
 		t.Fatalf("UpdateName() unexpected error: %v", err)

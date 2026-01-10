@@ -454,7 +454,7 @@ func TestWalletFilePermissions(t *testing.T) {
 	}
 
 	perm := info.Mode().Perm()
-	if perm != 0600 {
+	if perm != 0o600 {
 		t.Errorf("expected permissions 0600, got %04o", perm)
 	}
 }

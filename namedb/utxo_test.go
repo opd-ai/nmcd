@@ -212,7 +212,6 @@ func TestRemoveNonexistentUTXO(t *testing.T) {
 	// Try to remove a UTXO that doesn't exist
 	txHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000099")
 	err = db.RemoveUTXO(txHash, 0)
-
 	// Should not error - just be a no-op
 	if err != nil {
 		t.Errorf("RemoveUTXO should not error for nonexistent UTXO, got: %v", err)

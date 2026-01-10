@@ -153,7 +153,7 @@ func (c *Config) NameDBPath() string {
 
 // EnsureDataDir creates the data directory if it doesn't exist
 func (c *Config) EnsureDataDir() error {
-	return os.MkdirAll(c.DataDir, 0700)
+	return os.MkdirAll(c.DataDir, 0o700)
 }
 
 // IsValidNamespace checks if a name starts with a valid namespace prefix

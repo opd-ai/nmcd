@@ -43,7 +43,7 @@ listen = ["0.0.0.0:18334", "127.0.0.1:18334"]
 addpeer = ["peer1.example.com:18334", "peer2.example.com:18334"]
 `
 
-	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
 		t.Fatalf("Failed to write test config: %v", err)
 	}
 
@@ -98,7 +98,7 @@ func TestLoadConfigFile_Invalid(t *testing.T) {
 user = "incomplete
 `
 
-	if err := os.WriteFile(configPath, []byte(invalidContent), 0600); err != nil {
+	if err := os.WriteFile(configPath, []byte(invalidContent), 0o600); err != nil {
 		t.Fatalf("Failed to write test config: %v", err)
 	}
 

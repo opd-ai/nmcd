@@ -12,9 +12,7 @@ import (
 	"github.com/opd-ai/nmcd/internal/logging"
 )
 
-var (
-	testLoggerOnce sync.Once
-)
+var testLoggerOnce sync.Once
 
 // setupTestLogger initializes the test logger once for all tests in this file
 func setupTestLogger() {

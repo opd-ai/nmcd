@@ -49,7 +49,7 @@ func newRateLimiter(rate int) *rateLimiter {
 // When maxSize IPs are tracked and a new IP arrives, the least recently used IP is evicted.
 // This prevents unbounded memory growth in scenarios with rapid IP rotation.
 // Uses container/list for O(1) LRU eviction.
-func newBoundedRateLimiter(rate int, maxSize int) *rateLimiter {
+func newBoundedRateLimiter(rate, maxSize int) *rateLimiter {
 	rl := &rateLimiter{
 		buckets: make(map[string]*list.Element),
 		rate:    rate,

@@ -268,7 +268,6 @@ func (bw *BatchWriter) Commit() error {
 
 		return nil
 	})
-
 	if err != nil {
 		return fmt.Errorf("batch commit failed: %w", err)
 	}

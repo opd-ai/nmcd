@@ -67,7 +67,6 @@ func FuzzParseNameScript(f *testing.F) {
 		// Attempt to parse the script
 		// The function should never panic, even with malformed input
 		op, name, value, err := parseNameScript(script)
-
 		if err != nil {
 			// Error is acceptable for malformed scripts
 			return
@@ -146,7 +145,6 @@ func FuzzReadPushData(f *testing.F) {
 		// Attempt to read push data
 		// Should never panic regardless of input
 		data, newOffset, err := readPushData(script, offset)
-
 		if err != nil {
 			// Error is acceptable for malformed scripts
 			return
@@ -220,7 +218,7 @@ func FuzzValidateScriptFormat(f *testing.F) {
 	f.Add([]byte{}, int(0), int(0))                 // Empty
 	f.Add(make([]byte, 100), int(0), int(50))       // Long script
 
-	f.Fuzz(func(t *testing.T, script []byte, opTypeInt int, dataEndOffset int) {
+	f.Fuzz(func(t *testing.T, script []byte, opTypeInt, dataEndOffset int) {
 		// Clamp opType to valid range
 		var opType namedb.NameOperation
 		switch opTypeInt % 3 {
@@ -242,7 +240,6 @@ func FuzzValidateScriptFormat(f *testing.F) {
 
 		// Validate script format - should never panic
 		offset, err := validateScriptFormat(script, opType, dataEndOffset)
-
 		if err != nil {
 			// Error is acceptable for malformed scripts
 			return

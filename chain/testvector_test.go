@@ -24,7 +24,7 @@ func TestLoadMainnetTestVector(t *testing.T) {
   "notes": "Test notes"
 }`
 
-	if err := os.WriteFile(vectorPath, []byte(validVector), 0644); err != nil {
+	if err := os.WriteFile(vectorPath, []byte(validVector), 0o644); err != nil {
 		t.Fatalf("Failed to write test vector file: %v", err)
 	}
 
@@ -73,7 +73,7 @@ func TestLoadMainnetTestVector_InvalidJSON(t *testing.T) {
 	vectorPath := filepath.Join(tmpDir, "invalid.json")
 
 	// Write invalid JSON
-	if err := os.WriteFile(vectorPath, []byte("{invalid json}"), 0644); err != nil {
+	if err := os.WriteFile(vectorPath, []byte("{invalid json}"), 0o644); err != nil {
 		t.Fatalf("Failed to write test file: %v", err)
 	}
 
@@ -103,7 +103,7 @@ func TestLoadMainnetTestVector_MissingRequiredFields(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			vectorPath := filepath.Join(tmpDir, tc.name+".json")
-			if err := os.WriteFile(vectorPath, []byte(tc.content), 0644); err != nil {
+			if err := os.WriteFile(vectorPath, []byte(tc.content), 0o644); err != nil {
 				t.Fatalf("Failed to write test file: %v", err)
 			}
 
@@ -139,7 +139,7 @@ func TestLoadMainnetTestVectors(t *testing.T) {
 
 	for _, v := range vectors {
 		path := filepath.Join(tmpDir, v.filename)
-		if err := os.WriteFile(path, []byte(v.content), 0644); err != nil {
+		if err := os.WriteFile(path, []byte(v.content), 0o644); err != nil {
 			t.Fatalf("Failed to write test vector %s: %v", v.filename, err)
 		}
 	}

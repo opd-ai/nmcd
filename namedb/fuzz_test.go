@@ -111,7 +111,6 @@ func FuzzNameRecordJSON(f *testing.F) {
 		// This simulates what the name database does when storing d/ and id/ namespace values
 		var v interface{}
 		err := json.Unmarshal([]byte(value), &v)
-
 		if err != nil {
 			// Invalid JSON is expected for random input
 			return

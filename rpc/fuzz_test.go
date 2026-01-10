@@ -32,7 +32,6 @@ func FuzzJSONRPCRequest(f *testing.F) {
 		// Attempt to parse as JSON-RPC request
 		var req Request
 		err := json.Unmarshal(data, &req)
-
 		// We don't expect any panics, even with malformed input
 		// The function should either succeed or return an error
 		if err != nil {

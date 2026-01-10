@@ -86,7 +86,7 @@ func NewPeerManager(cfg *Config) (*PeerManager, error) {
 		pm.wg.Add(1)
 		go func(peerAddr string) {
 			defer pm.wg.Done()
-			
+
 			// Wait briefly for peer manager to be ready
 			select {
 			case <-time.After(time.Second):
@@ -95,7 +95,7 @@ func NewPeerManager(cfg *Config) (*PeerManager, error) {
 				// Shutdown requested during wait
 				return
 			}
-			
+
 			if err := pm.ConnectPeer(peerAddr); err != nil {
 				logger.Warn("failed to connect to initial peer",
 					"address", peerAddr,
