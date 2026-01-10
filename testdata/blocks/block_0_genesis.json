@@ -4,7 +4,7 @@
   "type": "block",
   "height": 0,
   "hash": "000000000062b72c5e2ceb45fbc8587e807c155b0da735e6483dfba2f0a9c770",
-  "hex": "PLACEHOLDER - Extract using: namecoin-cli getblock $(namecoin-cli getblockhash 0) 0",
+  "hex": "0100000000000000000000000000000000000000000000000000000000000000000000000dcbd3e6f061215bf3b3383c8ce2ec201bc65acde32595449ac86890bd2dc641c133aa4dff7f001c92a11ea20101000000010000000000000000000000000000000000000000000000000000000000000000ffffffff5404ff7f001c020a024b2e2e2e2063686f6f7365207768617420636f6d6573206e6578742e20204c69766573206f6620796f7572206f776e2c206f7220612072657475726e20746f20636861696e732e202d2d2056ffffffff0100f2052a01000000434104b620369050cd899ffbbc4e8ee51e8c4534a855bb463439d63d235d4779685d8b6f4870a238cf365ac94fa13ef9a2a22cd99d0d5ee86dcabcafce36c7acf43ce5ac00000000",
   "valid": true,
-  "notes": "Genesis block for Namecoin. Different from Bitcoin genesis block. Critical for validating Namecoin-specific genesis block parsing. See testdata/EXTRACTION_GUIDE.md for extraction instructions."
+  "notes": "Genesis block for Namecoin. Different from Bitcoin genesis block. Critical for validating Namecoin-specific genesis block parsing."
 }

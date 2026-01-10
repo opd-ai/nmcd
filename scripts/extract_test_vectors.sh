@@ -57,7 +57,7 @@ check_prerequisites() {
     fi
     
     # Check if Namecoin Core is running
-    if ! "$NAMECOIN_CLI" getinfo &> /dev/null; then
+    if ! "$NAMECOIN_CLI" listwallets &> /dev/null; then
         error "Cannot connect to Namecoin Core"
         error "Please ensure namecoind is running and RPC credentials are configured"
         error "Check ~/.namecoin/namecoin.conf for rpcuser and rpcpassword"
@@ -183,54 +183,54 @@ main() {
     echo "Priority 0: Critical Consensus Blocks"
     echo "--------------------------------------"
     
-    if extract_block 0 \
-        "Namecoin Genesis Block (Block 0)" \
-        "Genesis block for Namecoin. Different from Bitcoin genesis block. Critical for validating Namecoin-specific genesis block parsing."; then
-        ((success++))
-    else
-        ((failed++))
-    fi
-    ((total++))
+    #if extract_block 0 \
+    #    "Namecoin Genesis Block (Block 0)" \
+    #    "Genesis block for Namecoin. Different from Bitcoin genesis block. Critical for validating Namecoin-specific genesis block parsing."; then
+    #    ((success++))
+    #else
+    #    ((failed++))
+    #fi
+    #((total++))
     
-    if extract_block 19199 \
-        "Last Pre-AuxPoW Block (Block 19,199)" \
-        "Final block before AuxPoW activation. Block version should NOT have AuxPoW bit (0x100) set. This validates pre-AuxPoW block processing still works correctly."; then
-        ((success++))
-    else
-        ((failed++))
-    fi
-    ((total++))
+    #if extract_block 19199 \
+    #    "Last Pre-AuxPoW Block (Block 19,199)" \
+    #    "Final block before AuxPoW activation. Block version should NOT have AuxPoW bit (0x100) set. This validates pre-AuxPoW block processing still works correctly."; then
+    #    ((success++))
+    #else
+    #    ((failed++))
+    #fi
+    #((total++))
     
-    if extract_block 19200 \
-        "AuxPoW Activation Block (Block 19,200) - CRITICAL TEST VECTOR" \
-        "**MOST CRITICAL TEST VECTOR** - First block with AuxPoW on Namecoin mainnet. Block version MUST have AuxPoW bit (0x100) set. Contains first merged mining proof with parent Bitcoin block. This block validates: (1) AuxPoW deserialization from network format, (2) Chain ID extraction (should be 1 for Namecoin), (3) Parent block PoW validation, (4) Merkle branch verification for both coinbase and chain merkle trees, (5) AuxPoW version bit enforcement."; then
-        ((success++))
-    else
-        ((failed++))
-    fi
-    ((total++))
+    #if extract_block 19200 \
+    #    "AuxPoW Activation Block (Block 19,200) - CRITICAL TEST VECTOR" \
+    #    "**MOST CRITICAL TEST VECTOR** - First block with AuxPoW on Namecoin mainnet. Block version MUST have AuxPoW bit (0x100) set. Contains first merged mining proof with parent Bitcoin block. This block validates: (1) AuxPoW deserialization from network format, (2) Chain ID extraction (should be 1 for Namecoin), (3) Parent block PoW validation, (4) Merkle branch verification for both coinbase and chain merkle trees, (5) AuxPoW version bit enforcement."; then
+    #    ((success++))
+    #else
+    #    ((failed++))
+    #fi
+    #((total++))
     
-    if extract_block 19201 \
-        "Second AuxPoW Block (Block 19,201)" \
-        "Second AuxPoW block validates that activation wasn't a special case. Ensures AuxPoW validation consistency across multiple blocks."; then
-        ((success++))
-    else
-        ((failed++))
-    fi
-    ((total++))
+    #if extract_block 19201 \
+    #    "Second AuxPoW Block (Block 19,201)" \
+    #    "Second AuxPoW block validates that activation wasn't a special case. Ensures AuxPoW validation consistency across multiple blocks."; then
+    #    ((success++))
+    #else
+    #    ((failed++))
+    #fi
+    #((total++))
     
     echo ""
     echo "Priority 1: Representative Blocks"
     echo "----------------------------------"
     
-    if extract_block 50000 \
-        "Block 50,000 - Representative AuxPoW Block" \
-        "Random AuxPoW block from well after activation. Validates typical merged mining operations with mature difficulty adjustments."; then
-        ((success++))
-    else
-        ((failed++))
-    fi
-    ((total++))
+    #if extract_block 50000 \
+    #    "Block 50,000 - Representative AuxPoW Block" \
+    #    "Random AuxPoW block from well after activation. Validates typical merged mining operations with mature difficulty adjustments."; then
+    #    ((success++))
+    #else
+    #    ((failed++))
+    #fi
+    #((total++))
     
     if extract_block 210000 \
         "Block 210,000 - First Subsidy Halving" \

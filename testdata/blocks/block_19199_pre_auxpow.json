@@ -3,8 +3,8 @@
   "network": "mainnet",
   "type": "block",
   "height": 19199,
-  "hash": "PLACEHOLDER - Extract using: namecoin-cli getblockhash 19199",
-  "hex": "PLACEHOLDER - Extract using: namecoin-cli getblock $(namecoin-cli getblockhash 19199) 0",
+  "hash": "000000000000b19f0ad5cd46859fe8c9662e8828d8a75ff6da73167ac09a9036",
+  "hex": "010001005bd8502672439432b9acd94d83599a237ae6ecef76d562e664640000000000009498d86377710d46a1e961cd75928b227e66d022671feff9538e3cda238a8e0f7a0e904e69b2001b68a1e9d60101000000010000000000000000000000000000000000000000000000000000000000000000ffffffff070469b2001b012affffffff0100f2052a010000004341047cfcf96fd31892e90abdbf20b74628a3c91b75cbe93a19ad95521041fa79e2c38071f60a5d92fc8edefde8785f8ce331d2f8ea3dd541b99d2378118b9b5ebcbeac00000000",
   "valid": true,
-  "notes": "Final block before AuxPoW activation. Block version should NOT have AuxPoW bit (0x100) set. This validates pre-AuxPoW block processing still works correctly. See testdata/EXTRACTION_GUIDE.md for extraction instructions."
+  "notes": "Final block before AuxPoW activation. Block version should NOT have AuxPoW bit (0x100) set. This validates pre-AuxPoW block processing still works correctly."
 }
