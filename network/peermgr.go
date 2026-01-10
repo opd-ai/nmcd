@@ -39,6 +39,7 @@ type Config struct {
 	Blockchain  *chain.BlockChain
 	ListenAddrs []string
 	MaxPeers    int
+	AddPeers    []string // Initial peers to connect to (empty = no auto-connect)
 }
 
 // NewPeerManager creates a new peer manager
@@ -78,6 +79,30 @@ func NewPeerManager(cfg *Config) (*PeerManager, error) {
 
 		pm.wg.Add(1)
 		go pm.listenLoop(listener)
+	}
+
+	// Connect to initial peers if configured
+	for _, addr := range cfg.AddPeers {
+		pm.wg.Add(1)
+		go func(peerAddr string) {
+			defer pm.wg.Done()
+			
+			// Wait briefly for peer manager to be ready
+			select {
+			case <-time.After(time.Second):
+				// Proceed with connection
+			case <-pm.quit:
+				// Shutdown requested during wait
+				return
+			}
+			
+			if err := pm.ConnectPeer(peerAddr); err != nil {
+				logger.Warn("failed to connect to initial peer",
+					"address", peerAddr,
+					"error", err,
+				)
+			}
+		}(addr)
 	}
 
 	return pm, nil

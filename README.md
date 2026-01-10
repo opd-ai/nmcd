@@ -112,7 +112,7 @@ The daemon automatically synchronizes with the Namecoin network using a headers-
 3. **Peer Selection**: Tracks peer reliability and latency to choose the best sync sources
 4. **Health Monitoring**: Use the `/ready` endpoint to check if sync is complete
 
-The embedded client mode does not perform automatic network sync - it only processes locally added blocks or blocks from an external source.
+The embedded client mode automatically connects to the network and syncs blocks when MaxPeers > 0 (default: 8). By default, it uses DNS seed discovery to find peers. To disable automatic network sync, set MaxPeers to 0 or provide custom BootstrapPeers.
 
 ## Documentation
 
@@ -175,6 +175,27 @@ nc, err := client.NewEmbeddedClient(&client.Config{
 })
 ```
 
+**Network Connectivity:**
+
+By default, embedded mode automatically connects to the Namecoin network using DNS seed discovery (MaxPeers defaults to 8). To customize network behavior:
+
+```go
+// Disable automatic network sync (offline mode)
+nc, err := client.NewEmbeddedClient(&client.Config{
+    Mode:     client.ModeEmbedded,
+    MaxPeers: 0,  // No peer connections
+})
+
+// Use custom bootstrap peers (skip DNS seeds)
+nc, err := client.NewEmbeddedClient(&client.Config{
+    Mode: client.ModeEmbedded,
+    BootstrapPeers: []string{
+        "peer1.example.com:8334",
+        "peer2.example.com:8334",
+    },
+})
+```
+
 **Use When:**
 - Embedding nmcd in your application
 - Running multiple isolated instances
@@ -186,6 +207,7 @@ nc, err := client.NewEmbeddedClient(&client.Config{
 - ✅ Full control over resources
 - ✅ Isolated data and state
 - ✅ Simpler deployment
+- ✅ Automatic network sync by default
 
 **Cons:**
 - ❌ Higher memory usage (~250MB UTXO cache)
@@ -537,9 +559,12 @@ Response:
 {
   "status": "healthy",
   "block_height": 500000,
-  "peers": 8
+  "peers": 8,
+  "syncing": true
 }
 ```
+
+The `syncing` field is optional (omitempty) and appears when the node is initializing or syncing blocks.
 
 Use this endpoint for **liveness probes** to detect if the process is alive and responsive.
 
@@ -694,15 +719,18 @@ The metrics can be visualized in Grafana. Key panels to consider:
 
 **Example Queries:**
 ```promql
-# Top 5 slowest RPC methods
-topk(5, nmcd_rpc_duration_seconds)
+# Top 5 slowest RPC methods (with method label aggregation)
+topk(5, avg by (method) (nmcd_rpc_duration_seconds))
 
-# Error rate by category (per second)
-rate(nmcd_errors_total[5m])
+# Error rate by category (per second, grouped by type)
+sum by (type) (rate(nmcd_errors_total[5m]))
 
 # Database read/write latency comparison
 nmcd_namedb_read_latency_seconds
 nmcd_namedb_write_latency_seconds
+
+# RPC request rate by method
+sum by (method) (rate(nmcd_rpc_requests_total[5m]))
 ```
 
 ---
@@ -958,7 +986,8 @@ See `examples/smtp_relay/` for a complete production-ready SMTP relay deployment
 - Constant-time comparison prevents timing attacks on credentials
 
 **Rate Limiting:**
-- Per-IP rate limiting protects against DoS attacks (default: 100 requests/minute)
+- Per-IP rate limiting using token bucket algorithm (default: 100 tokens/minute refill rate)
+- Allows burst of up to 100 requests, then continuous refill at 100 tokens/minute
 - Configurable via `Config.RateLimit` when using as a library
 - Automatic cleanup of stale IP tracking entries
 
