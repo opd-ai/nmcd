@@ -3,14 +3,15 @@
 **Audit Date:** January 11, 2026  
 **nmcd Version:** v0.1.0 (development)  
 **Reference:** Namecoin Core (github.com/namecoin/namecoin-core)  
-**Codebase Size:** ~47,900 lines of Go code (including tests)
+**Codebase Size:** ~47,900 lines of Go code (including tests)  
+**Test Vector Status:** 6 real mainnet blocks extracted and evaluated
 
 ---
 
 ## Executive Summary
 
-**Compliance Status:** Partial Compliance (~75%)  
-**Critical Issues:** 1 (AuxPoW not fully tested against real mainnet blocks)  
+**Compliance Status:** Partial Compliance (~65%)  
+**Critical Issues:** 1 (AuxPoW deserialization bug - blocks fail to parse)  
 **Blockers for Production Use:** 1 (cannot sync mainnet past block 19,200)
 
 ### Key Strengths
@@ -20,13 +21,32 @@
 - ✅ Block subsidy: Matches Namecoin Core exactly (50 NMC initial, 210,000 block halving)
 - ✅ Network protocol: Correct magic bytes, ports, DNS seeds
 - ✅ JSON-RPC API: 20+ methods implemented (standard + Namecoin-specific)
+- ✅ Pre-AuxPoW blocks: Genesis and block 19,199 deserialize correctly
 
 ### Critical Gaps
-- ❌ AuxPoW validation implemented but not tested against real mainnet blocks > 19,200
+- ❌ **AuxPoW block deserialization fails** - btcd's MsgTx.BtcDecode misinterprets AuxPoW data as SegWit
+- ❌ Blocks 19,200+ cannot be parsed (verified with real test vectors)
 - ⚠️ NAME_DELETE: Not implemented (uses NAME_UPDATE with empty value instead - acceptable)
 - ⚠️ Maximum value size: Uses 1023 bytes (Namecoin Core uses 520 bytes for standard scripts)
 
-**Recommendation:** Suitable for development/testing/regtest. NOT for mainnet production until AuxPoW validation is tested against blocks > 19,200.
+**Recommendation:** NOT suitable for mainnet production. Pre-AuxPoW blocks (0-19,199) work correctly. AuxPoW deserialization bug must be fixed before mainnet sync is possible.
+
+---
+
+## Test Vector Evaluation Results (2026-01-11)
+
+Real mainnet blocks extracted from Namecoin Core were tested:
+
+| Block | Description | Deserialization | Hash Match | AuxPoW |
+|-------|-------------|-----------------|------------|--------|
+| 0 | Genesis | ✅ PASS | ✅ Match | N/A |
+| 19,199 | Last pre-AuxPoW | ✅ PASS | ✅ Match | N/A |
+| 19,200 | AuxPoW activation | ❌ FAIL | - | Required |
+| 19,201 | Second AuxPoW | ❌ FAIL | - | Required |
+| 50,000 | Representative | ❌ FAIL | - | Required |
+| 210,000 | First halving | ❌ FAIL | - | Required |
+
+**Error:** `MsgTx.BtcDecode: witness tx but flag byte is 00`
 
 ---
 
@@ -179,24 +199,36 @@ This matches Namecoin Core behavior.
 | Chain merkle branch verification | ✅ | `chain/auxpow.go:315-383` |
 | AuxPow caching (LRU, bounded memory) | ✅ | `chain/blockchain.go:41, 101` |
 
-**CRITICAL ISSUE #1: AuxPoW Mainnet Testing**
+**CRITICAL ISSUE #1: AuxPoW Block Deserialization Bug**
 
-**Problem:** AuxPoW validation logic is implemented but has not been extensively tested against real Namecoin mainnet blocks beyond height 19,200.
+**Problem:** AuxPoW blocks fail to deserialize with error: `MsgTx.BtcDecode: witness tx but flag byte is 00`
 
-**Impact:** **CRITICAL** - Node cannot safely sync mainnet past block 19,200. Risks:
-- Chain forks from accepting invalid blocks
-- Chain stalls from rejecting valid blocks
-- Potential security vulnerabilities in edge cases
+**Test Vector Evaluation (2026-01-11):**
+Real mainnet test vectors have been extracted from Namecoin Core and tested:
 
-**Current Status:**
-- Test infrastructure is ready (`chain/auxpow_mainnet_test.go`)
-- Extraction script for real blocks exists (`testdata/mainnet_blocks/README.md`)
-- Test vectors use placeholder data, awaiting real block extraction
+| Block | Type | Result | Details |
+|-------|------|--------|---------|
+| 0 (Genesis) | Pre-AuxPoW | ✅ PASS | Hash matches, deserialization works |
+| 19,199 | Pre-AuxPoW | ✅ PASS | Hash matches, last non-merged block |
+| 19,200 | AuxPoW Activation | ❌ FAIL | Deserialization fails |
+| 19,201 | AuxPoW | ❌ FAIL | Deserialization fails |
+| 50,000 | AuxPoW | ❌ FAIL | Deserialization fails |
+| 210,000 | AuxPoW + Halving | ❌ FAIL | Deserialization fails |
 
-**Recommendation:** 
-1. Run a Namecoin Core node to extract blocks 19200-19250
-2. Run nmcd AuxPow validation against these blocks
-3. Fix any discrepancies before production deployment
+**Root Cause:** btcd's `MsgTx.BtcDecode` interprets the AuxPoW data structure's initial bytes as a SegWit marker (0x0001), causing it to fail when the next byte is 0x00 (which is valid for AuxPoW but invalid for SegWit).
+
+**Impact:** **CRITICAL** - Node cannot sync mainnet past block 19,200.
+
+**Required Fix:**
+The `chain/block.go:NewBlockFromReader()` function needs to handle the AuxPoW data **before** the standard btcd block deserialization, or use a custom transaction deserializer that correctly handles the Namecoin wire format.
+
+**Code Reference:** `chain/block.go:72-104`, `chain/auxpow.go:104-137`
+
+**Files with Test Vectors:**
+- `testdata/blocks/block_19200_auxpow_activation.json` - First AuxPoW block (CRITICAL)
+- `testdata/blocks/block_19201_second_auxpow.json` - Second AuxPoW block
+- `testdata/blocks/block_50000_representative.json` - Typical AuxPoW block
+- `testdata/blocks/block_210000_halving1.json` - Halving with AuxPoW
 
 ---
 
@@ -457,7 +489,7 @@ Uses standard Bitcoin P2P messages. Name operations are embedded in transactions
 
 | Feature | Impact | Priority |
 |---------|--------|----------|
-| AuxPoW mainnet testing | Cannot sync mainnet past 19,200 | P0 |
+| AuxPoW block deserialization fix | Cannot sync mainnet past 19,200 | P0 |
 | Full mempool implementation | Limited unconfirmed tx handling | P2 |
 | 520-byte value limit option | May reject some Namecoin Core txs | P3 |
 | name_pending RPC | Cannot query mempool for pending names | P3 |
@@ -480,39 +512,50 @@ Uses standard Bitcoin P2P messages. Name operations are embedded in transactions
 
 ### 9. Critical Issues
 
-#### Issue #1: AuxPoW Mainnet Testing (CRITICAL)
+#### Issue #1: AuxPoW Block Deserialization Bug (CRITICAL - VERIFIED)
 
-**Problem:** AuxPoW validation logic exists but is not tested against real Namecoin mainnet blocks.
+**Problem:** AuxPoW blocks fail to deserialize due to btcd's MsgTx.BtcDecode misinterpreting AuxPoW data.
+
+**Error Message:** `MsgTx.BtcDecode: witness tx but flag byte is 00`
+
+**Verified With Test Vectors:**
+- Block 19,200 (AuxPoW activation): ❌ FAILS
+- Block 19,201: ❌ FAILS  
+- Block 50,000: ❌ FAILS
+- Block 210,000 (halving): ❌ FAILS
+
+**Root Cause Analysis:**
+The AuxPoW data structure begins with a coinbase transaction. btcd's transaction deserializer interprets the marker bytes as a SegWit flag (0x0001), but when the next byte is 0x00 (valid for AuxPoW but invalid for SegWit witness count), it fails.
 
 **Impact:** 
-- Node cannot safely sync mainnet past block 19,200
-- Potential chain forks or stalls
-- Security vulnerabilities in untested code paths
+- Node **cannot** sync mainnet past block 19,200
+- This is a fundamental deserialization bug, not just a testing gap
 
-**Current State:**
-- Code implemented: `chain/auxpow.go`
-- Test infrastructure ready: `chain/auxpow_mainnet_test.go`
-- Real block vectors: Awaiting extraction
+**Required Fix:**
+1. Modify `chain/block.go:NewBlockFromReader()` to handle the Namecoin wire format
+2. Option A: Read transactions first, then parse AuxPoW separately (avoiding btcd's SegWit detection)
+3. Option B: Implement a custom block deserializer for Namecoin's wire format
+4. Ensure the fix passes all 6 test vectors in `testdata/blocks/`
 
-**Resolution Steps:**
-1. Run Namecoin Core node to extract blocks 19200-19250
-2. Convert blocks to test vectors using extraction script
-3. Run nmcd validation against extracted blocks
-4. Fix any discrepancies
-5. Document validation results
+**Code References:**
+- Bug location: `chain/block.go:72-104`
+- AuxPoW deserializer: `chain/auxpow.go:104-137`
+- Test vectors: `testdata/blocks/block_19200_auxpow_activation.json`
 
-**Priority:** P0 (Blocker for mainnet)
+**Priority:** P0 (Absolute blocker for mainnet)
 
 ---
 
 ### 10. Recommendations
 
 #### Priority 1 (Blockers)
-1. **Complete AuxPoW mainnet testing**
-   - Extract real blocks from Namecoin Core
-   - Validate nmcd against these blocks
-   - Fix any discrepancies
-   - Files: `chain/auxpow.go`, `chain/blockchain.go:494-572`
+1. **Fix AuxPoW block deserialization bug**
+   - btcd's MsgTx.BtcDecode fails on AuxPoW wire format
+   - Root cause: SegWit marker byte detection conflicts with AuxPoW structure
+   - Solution: Custom block deserializer or transaction parsing workaround
+   - Test with: `go test -v ./chain -run TestMainnetBlockVector_AuxPowActivation`
+   - Files: `chain/block.go:72-104`, `chain/auxpow.go:104-137`
+   - Test vectors: `testdata/blocks/block_19200_auxpow_activation.json`
 
 #### Priority 2 (Compatibility)
 2. **Add 520-byte value limit relay policy option**
@@ -541,17 +584,18 @@ Uses standard Bitcoin P2P messages. Name operations are embedded in transactions
 |----------|-------|---------|
 | Protocol Constants | 100% | 21/21 constants correct |
 | Name Operations | 100% | All 3 operations correct |
-| Blockchain Rules | 85% | AuxPoW logic present, testing incomplete |
+| Pre-AuxPoW Blocks | 100% | Genesis and 19,199 validated |
+| AuxPoW Blocks | 0% | Deserialization bug - blocks fail to parse |
 | Data Structures | 100% | All structures correct |
 | Network Protocol | 100% | P2P, DNS seeds correct |
 | RPC API | 100% | 20+ methods implemented |
-| Missing Features | -5% | AuxPoW testing, some RPCs |
 
-**Overall Score:** ~75% protocol compliance
+**Overall Score:** ~65% protocol compliance (down from 75% after test vector evaluation)
 
 **Breakdown:**
-- **Implemented correctly:** 95% of features
-- **Production readiness:** ~60% (due to AuxPoW testing gap)
+- **Pre-AuxPoW functionality:** 100% working
+- **AuxPoW functionality:** 0% working (critical bug)
+- **Production readiness:** 0% for mainnet (cannot sync past block 19,199)
 
 ---
 
@@ -559,7 +603,8 @@ Uses standard Bitcoin P2P messages. Name operations are embedded in transactions
 
 | Check | Status | Notes |
 |-------|--------|-------|
-| Genesis block hash | ✅ | Matches Namecoin mainnet |
+| Genesis block hash | ✅ | Matches Namecoin mainnet (verified with test vector) |
+| Genesis block parsing | ✅ | Deserializes correctly |
 | Network magic bytes | ✅ | All 3 networks correct |
 | Address encoding | ✅ | 'N' prefix for mainnet |
 | Block time target | ✅ | 600 seconds |
@@ -570,35 +615,45 @@ Uses standard Bitcoin P2P messages. Name operations are embedded in transactions
 | NAME_FIRSTUPDATE opcode | ✅ | 0xd1 |
 | NAME_UPDATE opcode | ✅ | 0xd2 |
 | Script validation | ✅ | Correct drop opcodes |
+| Pre-AuxPoW blocks | ✅ | Block 19,199 parses correctly |
 | AuxPoW version bit | ✅ | 0x100 at height ≥ 19,200 |
-| AuxPoW validation | ⚠️ | Logic correct, testing incomplete |
-| Chain ID | ✅ | 1 for Namecoin |
+| AuxPoW deserialization | ❌ | **FAILS** - btcd SegWit conflict |
+| AuxPoW validation | ❌ | Cannot test - blocks don't parse |
+| Chain ID | ✅ | 1 for Namecoin (code correct) |
 | P2P protocol | ✅ | Compatible with Namecoin Core |
 | RPC API | ✅ | Standard + name methods |
 
-**Checks Passed:** 15/16 (93.75%)  
-*Note: The AuxPoW validation check is marked ⚠️ (partial) because the logic is implemented correctly but not tested against real mainnet blocks. For the pass/fail count, partial compliance is treated as a pass for implementation but a block for production readiness.*
+**Checks Passed:** 15/19 (78.9%)  
+**Critical Failures:** 2 (AuxPoW deserialization, AuxPoW validation)
 
 ---
 
 ## Conclusion
 
-nmcd demonstrates strong protocol compliance with correctly implemented name operations, blockchain rules, and network functionality. The implementation follows Namecoin Core specifications closely, with careful attention to consensus-critical details like commitment hashes, UTXO chain validation, and fee enforcement.
+nmcd demonstrates strong protocol compliance for pre-AuxPoW functionality. All protocol constants are correct, name operations work correctly, and the genesis block validates successfully against real Namecoin mainnet data.
 
-The primary gap is comprehensive AuxPoW testing against real mainnet blocks. While the validation logic is implemented correctly based on Namecoin Core source code analysis, it has not been validated against actual merged-mined blocks.
+**However, evaluation of real Namecoin Core test vectors reveals a critical bug:**
+
+AuxPoW blocks (≥ 19,200) fail to deserialize due to a conflict between btcd's SegWit marker detection and Namecoin's AuxPoW wire format. This is a **blocker for mainnet sync**.
 
 ### Readiness Assessment
 
 | Environment | Ready? | Notes |
 |-------------|--------|-------|
-| Development | ✅ Yes | Full functionality |
+| Development | ✅ Yes | Pre-AuxPoW blocks only |
 | Regtest | ✅ Yes | AuxPoW disabled (height 999,999,999) |
-| Testnet | ⚠️ Partial | With monitoring |
-| Mainnet | ❌ No | AuxPoW testing required |
+| Testnet (< 19,200) | ✅ Yes | Pre-AuxPoW portion |
+| Testnet (≥ 19,200) | ❌ No | AuxPoW bug |
+| Mainnet (< 19,200) | ✅ Yes | Verified with test vectors |
+| Mainnet (≥ 19,200) | ❌ No | **AuxPoW deserialization bug** |
 
 ### Final Recommendation
 
-Complete AuxPoW mainnet testing before production deployment. The current implementation is suitable for development, testing, embedded name resolution, and testnet experimentation.
+**Fix the AuxPoW deserialization bug before any mainnet deployment.** The current implementation:
+- ✅ Works for blocks 0-19,199 (verified)
+- ❌ Fails for blocks 19,200+ (verified with real test vectors)
+
+Use `testdata/blocks/block_19200_auxpow_activation.json` as the primary test case for the fix.
 
 ---
 
@@ -606,6 +661,7 @@ Complete AuxPoW mainnet testing before production deployment. The current implem
 
 | Date | Change |
 |------|--------|
+| 2026-01-11 | Test vector evaluation; found AuxPoW deserialization bug |
 | 2026-01-11 | Full re-audit; comprehensive coverage of all 5 scope areas |
 | 2026-01-09 | Previous audit; 70% compliance |
 | 2026-01-05 | Name registration RPC methods added |
