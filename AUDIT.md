@@ -17,7 +17,7 @@
 | **EDGE CASE BUG** | 0 (1 resolved) |
 | **PERFORMANCE ISSUE** | 0 |
 
-**Overall Assessment:** All audit findings have been resolved. The codebase is fully production-ready with complete Namecoin protocol compatibility.
+**Overall Assessment:** All findings within the scope of this functional audit have been resolved. However, nmcd still has significant protocol limitations (e.g., incomplete AuxPow support, ~35% Namecoin Core compatibility) and is not suitable for production mainnet use. Refer to `docs/development/PROTOCOL_COMPLIANCE_AUDIT.md` for current protocol compatibility status and known limitations.
 
 ---
 
@@ -148,13 +148,13 @@ The following documented features are correctly implemented:
 - ✅ walletpassphrase, walletlock, encryptwallet
 - ✅ getblock, getblockhash, getrawtransaction, sendrawtransaction
 
-### Protocol Compliance (All Verified)
+### Protocol Compliance (Partial - See PROTOCOL_COMPLIANCE_AUDIT.md)
 - ✅ Namecoin network magic bytes (mainnet: 0xf9beb4fe)
 - ✅ Protocol version 70015
-- ✅ AuxPoW support for blocks ≥ 19,200
+- ⚠️ AuxPoW support incomplete - cannot sync mainnet past block 19,200
 - ✅ Name expiration at 36,000 blocks
 - ✅ Name operation fees (0.01 NMC for FIRSTUPDATE/UPDATE)
-- ✅ All test vectors pass (genesis through first halving)
+- ✅ Test vectors pass for implemented features
 
 ---
 
@@ -191,16 +191,21 @@ All critical recommendations have been implemented:
 
 ## CONCLUSION
 
-**All audit findings have been resolved.** nmcd is a fully production-ready Namecoin library and daemon with complete protocol compatibility. All documented features are correctly implemented, including:
-- Full RPC compatibility with Namecoin Core (sendrawtransaction, name_pending, getbalance, listunspent)
-- Complete embedded client functionality (TransferTo name ownership transfers)
-- Reliable transaction confirmation detection (1000-block search range)
+**All findings within the scope of this functional audit have been resolved.** The identified RPC and client feature gaps have been implemented:
+- RPC methods: sendrawtransaction, name_pending, getbalance, listunspent
+- Embedded client: TransferTo name ownership transfers
+- Reliability: 1000-block transaction search range
+
+**Important Limitations (see PROTOCOL_COMPLIANCE_AUDIT.md):**
+- nmcd has ~35% Namecoin Core protocol compatibility
+- Cannot sync Namecoin mainnet past block 19,200 (AuxPow not fully implemented)
+- No mempool relay, limited block sync logic
 
 The codebase follows Go best practices with proper mutex protection, error handling, and interface-based design.
 
-**Production Readiness:** ✅ Ready for mainnet use  
-**API Stability:** Stable for all documented features  
-**Code Quality:** High - follows Go idioms and best practices
+**Production Readiness:** ⚠️ **Not suitable for production mainnet use.** Suitable for development, testing, regtest, and testnet experimentation only.  
+**API Stability:** Evolving - APIs may change as protocol features are implemented  
+**Code Quality:** High for implemented features - follows Go idioms and best practices
 
 ---
 

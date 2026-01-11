@@ -2312,10 +2312,8 @@ func (s *Server) getRawTransaction(req *Request) *Response {
 }
 
 // sendRawTransaction broadcasts a raw transaction to the network.
-// Parameters: [hexstring] or [hexstring, maxfeerate]
+// Parameters: [hexstring]
 //   - hexstring (string, required): The hex-encoded raw transaction
-//   - maxfeerate (numeric, optional): Reject transactions whose fee rate is higher than
-//     the specified value, expressed in NMC/kB. Set to 0 to accept any fee rate.
 //
 // Returns: transaction hash (txid) if broadcast was successful
 func (s *Server) sendRawTransaction(req *Request) *Response {
@@ -2325,7 +2323,7 @@ func (s *Server) sendRawTransaction(req *Request) *Response {
 			Jsonrpc: "2.0",
 			Error: &Error{
 				Code:    -32602,
-				Message: "Invalid params: expected [hexstring] or [hexstring, maxfeerate]",
+				Message: "Invalid params: expected [hexstring]",
 			},
 			ID: req.ID,
 		}
