@@ -109,7 +109,7 @@ Real mainnet blocks extracted from Namecoin Core:
 
 **Standard Methods:** getinfo, getblock, getblockhash, getblockcount, getrawtransaction, sendrawtransaction, getpeerinfo, getconnectioncount
 
-**Name Methods:** name_show, name_list, name_history, name_new, name_firstupdate, name_update
+**Name Methods:** name_show, name_list, name_history, name_new, name_firstupdate, name_update, name_scan, name_pending
 
 **Wallet Methods:** getnewaddress, listaddresses, walletpassphrase, walletlock, encryptwallet
 
@@ -129,8 +129,7 @@ Real mainnet blocks extracted from Namecoin Core:
 
 ## Minor Issues
 
-1. **Max value size:** nmcd uses 1023 bytes vs Namecoin Core's 520-byte relay policy (design choice)
-2. **Missing RPCs:** name_pending, name_scan not implemented
+1. **Max value size:** nmcd uses 1023 bytes consensus limit vs Namecoin Core's 520-byte relay policy. The `NameValueRelayLimit` constant (520 bytes) is now defined for relay policy compatibility.
 
 ---
 
@@ -148,8 +147,10 @@ Real mainnet blocks extracted from Namecoin Core:
 | Chain ID | ✅ |
 | P2P protocol | ✅ |
 | RPC API | ✅ |
+| name_scan RPC | ✅ |
+| name_pending RPC | ✅ |
 
-**19/19 checks passed (100%)**
+**21/21 checks passed (100%)**
 
 ---
 

@@ -70,6 +70,13 @@ const (
 	// Namecoin Core uses protocol version 70015 (similar to Bitcoin Core 0.13.x)
 	// See: https://github.com/namecoin/namecoin-core/blob/master/src/version.h
 	NamecoinProtocolVersion = 70015
+
+	// NameValueRelayLimit is the maximum value size for mempool acceptance (relay policy).
+	// Default matches Namecoin Core's relay policy of 520 bytes.
+	// Note: The consensus limit (MaxValueLength) is 1023 bytes, which is more permissive.
+	// Transactions with values between 520-1023 bytes are valid on-chain but may not
+	// be relayed by default by Namecoin Core nodes.
+	NameValueRelayLimit = 520
 )
 
 // UTXOTrackingStartHeight is the block height from which UTXO tracking is guaranteed.

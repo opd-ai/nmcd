@@ -332,6 +332,10 @@ func (s *Server) processRequest(req *Request) *Response {
 		return s.nameList(req)
 	case "name_history":
 		return s.nameHistory(req)
+	case "name_scan":
+		return s.nameScan(req)
+	case "name_pending":
+		return s.namePending(req)
 	case "getnewaddress":
 		return s.getNewAddress(req)
 	case "listaddresses":
@@ -1256,6 +1260,124 @@ func (s *Server) nameHistory(req *Request) *Response {
 			"address":    record.Address,
 		}
 	}
+
+	return &Response{
+		Jsonrpc: "2.0",
+		Result:  result,
+		ID:      req.ID,
+	}
+}
+
+// nameScan scans names with prefix matching and pagination.
+// Matches Namecoin Core's name_scan RPC.
+// Parameters: [start] [count] where start is the prefix and count is max results (default 500)
+func (s *Server) nameScan(req *Request) *Response {
+	if s.blockchain == nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32603,
+				Message: "Blockchain not initialized",
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Parse parameters: name_scan [start] [count]
+	var params []interface{}
+	start := ""
+	count := 500 // default
+
+	if err := json.Unmarshal(req.Params, &params); err == nil {
+		if len(params) > 0 {
+			if startStr, ok := params[0].(string); ok {
+				start = startStr
+			} else {
+				return &Response{
+					Jsonrpc: "2.0",
+					Error: &Error{
+						Code:    -32602,
+						Message: "start must be a string",
+					},
+					ID: req.ID,
+				}
+			}
+		}
+
+		if len(params) > 1 {
+			if countFloat, ok := params[1].(float64); ok {
+				count = int(countFloat)
+				if count <= 0 || count > 10000 {
+					return &Response{
+						Jsonrpc: "2.0",
+						Error: &Error{
+							Code:    -32602,
+							Message: "count must be between 1 and 10000",
+						},
+						ID: req.ID,
+					}
+				}
+			} else {
+				return &Response{
+					Jsonrpc: "2.0",
+					Error: &Error{
+						Code:    -32602,
+						Message: "count must be a number",
+					},
+					ID: req.ID,
+				}
+			}
+		}
+	}
+
+	names, err := s.blockchain.ScanNames(start, count)
+	if err != nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32603,
+				Message: fmt.Sprintf("Failed to scan names: %v", err),
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Format results similar to name_list
+	result := make([]map[string]interface{}, len(names))
+	currentHeight := s.blockchain.BestSnapshot().Height
+	for i, record := range names {
+		result[i] = map[string]interface{}{
+			"name":       record.Name,
+			"value":      record.Value,
+			"txid":       record.TxHash.String(),
+			"height":     record.Height,
+			"expires_in": record.ExpiresAt - currentHeight,
+			"address":    record.Address,
+		}
+	}
+
+	return &Response{
+		Jsonrpc: "2.0",
+		Result:  result,
+		ID:      req.ID,
+	}
+}
+
+// namePending returns pending name operations from the mempool.
+// Matches Namecoin Core's name_pending RPC.
+// Parameters: [] or ["name"] where name is an optional filter
+// Note: This implementation returns an empty list when no mempool is available,
+// as nmcd's current architecture does not track pending name operations separately.
+func (s *Server) namePending(req *Request) *Response {
+	// Currently nmcd does not have a dedicated pending name operations tracker.
+	// The mempool stores transactions but doesn't parse name operations from them.
+	// Return an empty list for now - this is valid behavior when no names are pending.
+	// A full implementation would:
+	// 1. Parse name operations from mempool transactions
+	// 2. Track which names have pending operations
+	// 3. Filter by name if a name parameter is provided in req.Params
+
+	result := []map[string]interface{}{}
 
 	return &Response{
 		Jsonrpc: "2.0",

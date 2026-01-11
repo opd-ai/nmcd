@@ -1078,6 +1078,15 @@ func (bc *BlockChain) ListNames() ([]*namedb.NameRecord, error) {
 	return bc.nameDB.ListNames()
 }
 
+// ScanNames scans names matching a prefix with pagination.
+// Returns up to count names starting from the given prefix.
+// This is used by the name_scan RPC to provide Namecoin Core compatibility.
+func (bc *BlockChain) ScanNames(prefix string, count int) ([]*namedb.NameRecord, error) {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	return bc.nameDB.ScanNames(prefix, count)
+}
+
 // GetNameHistory retrieves the historical records for a specific name.
 // Returns all past operations on the name in chronological order.
 func (bc *BlockChain) GetNameHistory(name string) ([]*namedb.NameRecord, error) {

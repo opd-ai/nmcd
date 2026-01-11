@@ -1,6 +1,7 @@
 package namedb
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -340,6 +341,49 @@ func (ndb *NameDatabase) ListNames() ([]*NameRecord, error) {
 		return nil
 	})
 	return names, err
+}
+
+// ScanNames scans names matching a prefix with pagination.
+// Returns up to count names starting from the given prefix.
+// This is used by the name_scan RPC to provide Namecoin Core compatibility.
+func (ndb *NameDatabase) ScanNames(prefix string, count int) ([]*NameRecord, error) {
+	ndb.mu.RLock()
+	defer ndb.mu.RUnlock()
+
+	var results []*NameRecord
+
+	err := ndb.db.View(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket(namesBucket)
+		if bucket == nil {
+			return nil
+		}
+
+		cursor := bucket.Cursor()
+		prefixBytes := []byte(prefix)
+
+		for k, v := cursor.Seek(prefixBytes); k != nil; k, v = cursor.Next() {
+			// Check if key still has prefix
+			if !bytes.HasPrefix(k, prefixBytes) {
+				break
+			}
+
+			record, decodeErr := decodeNameRecord(v)
+			if decodeErr != nil {
+				continue
+			}
+			record.Name = string(k)
+
+			results = append(results, record)
+
+			if len(results) >= count {
+				break
+			}
+		}
+
+		return nil
+	})
+
+	return results, err
 }
 
 // AddHistory adds a historical name operation and updates the name-to-history index.
