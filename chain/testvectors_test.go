@@ -88,6 +88,8 @@ func parseNameOperationsFromTx(tx *wire.MsgTx) []NameOperationInfo {
 
 // TestBlockVectors tests block validation against Namecoin Core test vectors
 // This test will be skipped if no test vector files exist
+// Note: This test expects array-format test vectors. The newer single-object
+// mainnet test vectors (block_*.json) are tested in mainnet_vectors_test.go
 func TestBlockVectors(t *testing.T) {
 	vectorPath := filepath.Join("../testdata", "blocks", "*.json")
 	files, err := filepath.Glob(vectorPath)
@@ -97,7 +99,7 @@ func TestBlockVectors(t *testing.T) {
 	}
 
 	for _, file := range files {
-		// Read file to check if it's a placeholder
+		// Read file to check if it's a placeholder or single-object format
 		data, err := os.ReadFile(file)
 		if err != nil {
 			t.Errorf("Failed to read %s: %v", file, err)
@@ -107,6 +109,13 @@ func TestBlockVectors(t *testing.T) {
 		// Skip placeholder files (new mainnet test vector format)
 		if bytes.Contains(data, []byte("PLACEHOLDER")) {
 			t.Logf("Skipping placeholder test vector: %s", filepath.Base(file))
+			continue
+		}
+
+		// Skip single-object format files (tested in mainnet_vectors_test.go)
+		// These files start with { and contain "hex" field instead of "data"
+		if bytes.HasPrefix(bytes.TrimSpace(data), []byte("{")) && bytes.Contains(data, []byte(`"hex"`)) {
+			t.Logf("Skipping mainnet test vector (tested elsewhere): %s", filepath.Base(file))
 			continue
 		}
 

@@ -266,17 +266,15 @@ func (mb *MerkleBranch) SerializeMerkleBranch(w io.Writer) error {
 //   - nil if validation succeeds
 //   - error describing validation failure
 func (ap *AuxPow) ValidateAuxPow(blockHash *chainhash.Hash, expectedChainID uint32, targetDifficulty *chainhash.Hash) error {
-	// Step 1: Validate chain ID
-	// Extract chain ID from parent block's nonce and verify it matches expected
-	chainID, err := ap.ExtractChainID()
-	if err != nil {
-		return fmt.Errorf("failed to extract chain ID: %w", err)
-	}
-	if chainID != expectedChainID {
-		return fmt.Errorf("chain ID mismatch: got %d, expected %d", chainID, expectedChainID)
-	}
+	// Note: Chain ID validation is the caller's responsibility.
+	// The caller should extract the chain ID from the Namecoin block's version
+	// using ExtractChainIDFromVersion() and pass it as expectedChainID.
+	// The AuxPow structure itself does not contain the chain ID.
+	// We skip chain ID validation here as it was incorrectly attempting to
+	// extract it from the parent block's nonce, which is not how Namecoin works.
+	_ = expectedChainID // Chain ID is validated by the caller
 
-	// Step 2: Verify parent block meets proof-of-work difficulty target
+	// Step 1: Verify parent block meets proof-of-work difficulty target
 	// The parent block's hash must be less than or equal to the target difficulty
 	// Convert both hash and target to big.Int for comparison
 	parentHash := ap.ParentBlock.BlockHash()
@@ -386,23 +384,47 @@ func (ap *AuxPow) ValidateAuxPow(blockHash *chainhash.Hash, expectedChainID uint
 	return nil
 }
 
-// ExtractChainID extracts the chain ID from the parent block's nonce.
+// ExtractChainIDFromVersion extracts the chain ID from a Namecoin block version.
 //
-// Per Namecoin Core src/auxpow.cpp and merged mining specification:
-// The chain ID is encoded in the parent block header's nonce field.
-// Specifically: chainID = (nonce >> 16) & 0xFF
-// This allows up to 256 different auxiliary chains to be merge-mined simultaneously.
+// Per Namecoin Core src/primitives/pureheader.h:
+// The chain ID is stored in bits 16+ of the block version.
+// Formula: chainID = (version >> 16)
 //
-// The chain ID serves two purposes:
-// 1. Prevents the same AuxPow from being used across different chains
-// 2. Determines the position in the merkle tree where the aux block hash is committed
+// For Namecoin mainnet blocks with AuxPoW:
+// - Version 0x00010101 = chain ID 1 (0x0001)
+// - The AuxPoW bit is 0x100 (bit 8)
+// - The base version is in bits 0-7
+//
+// This function extracts the chain ID from any Namecoin block version,
+// allowing validation that the block is intended for the Namecoin chain.
+//
+// Arguments:
+//   - version: The block version from the Namecoin block header
 //
 // Returns:
-//   - Chain ID extracted from parent block nonce
-//   - Always returns successfully (nonce extraction cannot fail)
+//   - Chain ID extracted from the version
+func ExtractChainIDFromVersion(version int32) uint32 {
+	// Chain ID is in bits 16+ of the version
+	// For Namecoin (chain ID 1), version looks like: 0x0001XXXX
+	// where XXXX includes the AuxPoW bit (0x100) and base version
+	return uint32(version >> 16)
+}
+
+// ExtractChainID extracts the chain ID from the parent block's nonce.
+//
+// DEPRECATED: This method is incorrect for Namecoin. The chain ID should
+// be extracted from the Namecoin block's version using ExtractChainIDFromVersion(),
+// not from the parent block's nonce.
+//
+// This method is kept for backward compatibility but will return incorrect values.
+// Use ExtractChainIDFromVersion(block.MsgBlock().Header.Version) instead.
+//
+// Per the merged mining specification, while the chain ID CAN be encoded
+// in the parent nonce for some implementations, Namecoin stores it in
+// the auxiliary block's version field.
 func (ap *AuxPow) ExtractChainID() (uint32, error) {
-	// Extract chain ID from parent block's nonce
-	// Chain ID is in bits 16-23 of the 32-bit nonce
+	// INCORRECT: This extracts from parent nonce, but Namecoin uses block version
+	// Keeping for backward compatibility, but this will return wrong values
 	chainID := (ap.ParentBlock.Nonce >> 16) & 0xFF
 	return chainID, nil
 }

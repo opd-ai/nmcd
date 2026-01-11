@@ -543,13 +543,21 @@ func (bc *BlockChain) validateAuxPow(block *btcutil.Block) error {
 	// We use the current block's difficulty target from its Bits field.
 	targetDifficulty := blockchain.CompactToBig(block.MsgBlock().Header.Bits)
 
+	// Validate chain ID from block version
+	// Chain ID is in bits 16+ of the Namecoin block version
+	blockChainID := ExtractChainIDFromVersion(version)
+	if blockChainID != NamecoinChainID {
+		return fmt.Errorf("block at height %d has invalid chain ID %d (expected %d)",
+			height, blockChainID, NamecoinChainID)
+	}
+
 	// Validate the AuxPow proof
 	// This checks:
-	// 1. Chain ID matches Namecoin (NamecoinChainID = 1)
-	// 2. Parent block hash meets difficulty target
-	// 3. Coinbase merkle branch proves coinbase is in parent block
-	// 4. Chain merkle branch proves aux block hash is committed in coinbase
+	// 1. Parent block hash meets difficulty target
+	// 2. Coinbase merkle branch proves coinbase is in parent block
+	// 3. Chain merkle branch proves aux block hash is committed in coinbase
 	//
+	// Note: Chain ID is validated above from the block version (not in ValidateAuxPow).
 	// Note: We need to convert targetDifficulty (big.Int) to a Hash for ValidateAuxPow.
 	// blockchain.HashToBig treats hash bytes as little-endian, so we must reverse
 	// the big-endian bytes from big.Int.

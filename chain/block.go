@@ -34,14 +34,21 @@ func NewBlock(msgBlock *wire.MsgBlock) *Block {
 
 // NewBlockFromBytes deserializes a block from a byte slice, including AuxPow data if present.
 //
-// The wire format for Namecoin blocks is:
-// 1. Block header (80 bytes)
-// 2. Transaction count (varint)
-// 3. Transactions (variable length)
-// 4. AuxPow data (if block version has AuxPow bit set)
+// The wire format for Namecoin blocks differs based on the block version:
+//
+// Pre-AuxPoW blocks (version bit 0x100 NOT set):
+//  1. Block header (80 bytes)
+//  2. Transaction count (varint)
+//  3. Transactions (variable length)
+//
+// AuxPoW blocks (version bit 0x100 set):
+//  1. Block header (80 bytes)
+//  2. AuxPoW data (variable length) - BEFORE transactions!
+//  3. Transaction count (varint)
+//  4. Transactions (variable length)
 //
 // This function automatically detects whether AuxPow is present based on the block version
-// and deserializes it if needed.
+// and deserializes it in the correct order.
 //
 // Arguments:
 //   - serializedBlock: The complete serialized block including AuxPow (if present)
@@ -57,11 +64,22 @@ func NewBlockFromBytes(serializedBlock []byte) (*Block, error) {
 //
 // This is the primary deserialization function for Namecoin blocks. It handles both:
 // 1. Pre-AuxPow blocks (< height 19,200): Standard Bitcoin block format
-// 2. AuxPow blocks (>= height 19,200): Bitcoin block + AuxPow data appended
+// 2. AuxPow blocks (>= height 19,200): Header + AuxPow + Transactions
 //
-// The function reads:
-// 1. Standard Bitcoin block (header + transactions)
-// 2. If block version has AuxPow bit (0x100), reads AuxPow data
+// IMPORTANT: The wire format for AuxPoW blocks places the AuxPoW data BEFORE
+// the transaction count and transactions, NOT after. This differs from what
+// one might expect and requires custom deserialization logic.
+//
+// Wire format for AuxPoW blocks:
+//  1. Block header (80 bytes)
+//  2. AuxPoW structure:
+//     - Coinbase TX from parent chain
+//     - Block hash (32 bytes)
+//     - Coinbase merkle branch
+//     - Chain merkle branch
+//     - Parent block header (80 bytes)
+//  3. Transaction count (varint)
+//  4. Block transactions
 //
 // Arguments:
 //   - r: Reader containing the serialized block data
@@ -70,34 +88,59 @@ func NewBlockFromBytes(serializedBlock []byte) (*Block, error) {
 //   - Block with AuxPow populated (if block version indicates AuxPow)
 //   - Error if deserialization fails (malformed block, incomplete AuxPow, etc.)
 func NewBlockFromReader(r io.Reader) (*Block, error) {
-	// Deserialize standard Bitcoin block (header + transactions)
-	// This uses btcd's standard deserialization which handles:
-	// - Block header (80 bytes)
-	// - Transaction count (varint)
-	// - Transactions (variable length)
-	btcBlock, err := btcutil.NewBlockFromReader(r)
-	if err != nil {
-		return nil, fmt.Errorf("failed to deserialize block: %w", err)
+	// Step 1: Read block header (80 bytes)
+	var header wire.BlockHeader
+	if err := header.Deserialize(r); err != nil {
+		return nil, fmt.Errorf("failed to deserialize block header: %w", err)
 	}
 
-	block := &Block{
-		Block:  btcBlock,
-		auxPow: nil,
-	}
-
-	// Check if this block has AuxPow data
+	// Step 2: Check if this block has AuxPow data
 	// AuxPow is present if the block version has the AuxPow bit (0x100) set
-	version := btcBlock.MsgBlock().Header.Version
-	hasAuxPow := (version & config.AuxPowVersionBit) != 0
+	hasAuxPow := (header.Version & config.AuxPowVersionBit) != 0
 
+	var auxPow *AuxPow
 	if hasAuxPow {
-		// Deserialize AuxPow data
-		// Per Namecoin wire protocol, AuxPow data follows immediately after the transactions
-		auxPow, err := DeserializeAuxPow(r)
+		// Step 3a: For AuxPoW blocks, read AuxPoW data BEFORE transactions
+		var err error
+		auxPow, err = DeserializeAuxPow(r)
 		if err != nil {
 			return nil, fmt.Errorf("failed to deserialize AuxPow: %w", err)
 		}
-		block.auxPow = auxPow
+	}
+
+	// Step 4: Read transaction count (varint)
+	txCount, err := wire.ReadVarInt(r, 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read transaction count: %w", err)
+	}
+
+	// Sanity check: prevent excessive memory allocation
+	// MaxBlockPayload (4MB) / minimum tx size (~60 bytes) ≈ 66K transactions
+	// Using 100K as a safe upper bound
+	const maxTxPerBlock = 100000
+	if txCount > maxTxPerBlock {
+		return nil, fmt.Errorf("transaction count %d exceeds maximum %d", txCount, maxTxPerBlock)
+	}
+
+	// Step 5: Read transactions
+	transactions := make([]*wire.MsgTx, 0, txCount)
+	for i := uint64(0); i < txCount; i++ {
+		tx := &wire.MsgTx{}
+		if err := tx.Deserialize(r); err != nil {
+			return nil, fmt.Errorf("failed to deserialize transaction %d: %w", i, err)
+		}
+		transactions = append(transactions, tx)
+	}
+
+	// Step 6: Construct the block
+	msgBlock := &wire.MsgBlock{
+		Header:       header,
+		Transactions: transactions,
+	}
+
+	block := &Block{
+		Block:  btcutil.NewBlock(msgBlock),
+		auxPow: auxPow,
 	}
 
 	return block, nil
@@ -137,11 +180,16 @@ func (b *Block) HasAuxPow() bool {
 
 // Serialize writes the complete block to a writer, including AuxPow if present.
 //
-// Wire format:
-// 1. Block header (80 bytes)
-// 2. Transaction count (varint)
-// 3. Transactions (variable length)
-// 4. AuxPow data (if HasAuxPow() returns true)
+// Wire format for AuxPoW blocks:
+//  1. Block header (80 bytes)
+//  2. AuxPoW data (if HasAuxPow() returns true) - BEFORE transactions!
+//  3. Transaction count (varint)
+//  4. Transactions (variable length)
+//
+// Wire format for pre-AuxPoW blocks:
+//  1. Block header (80 bytes)
+//  2. Transaction count (varint)
+//  3. Transactions (variable length)
 //
 // This produces a serialized block that can be sent over the Namecoin P2P network
 // or stored in block files.
@@ -153,16 +201,29 @@ func (b *Block) HasAuxPow() bool {
 //   - nil on success
 //   - error if serialization fails
 func (b *Block) Serialize(w io.Writer) error {
-	// Serialize standard block (header + transactions)
 	msgBlock := b.MsgBlock()
-	if err := msgBlock.Serialize(w); err != nil {
-		return fmt.Errorf("failed to serialize block: %w", err)
+
+	// Step 1: Serialize block header (80 bytes)
+	if err := msgBlock.Header.Serialize(w); err != nil {
+		return fmt.Errorf("failed to serialize block header: %w", err)
 	}
 
-	// Serialize AuxPow if present
+	// Step 2: Serialize AuxPow if present (BEFORE transactions)
 	if b.auxPow != nil {
 		if err := b.auxPow.SerializeAuxPow(w); err != nil {
 			return fmt.Errorf("failed to serialize AuxPow: %w", err)
+		}
+	}
+
+	// Step 3: Serialize transaction count
+	if err := wire.WriteVarInt(w, 0, uint64(len(msgBlock.Transactions))); err != nil {
+		return fmt.Errorf("failed to serialize transaction count: %w", err)
+	}
+
+	// Step 4: Serialize transactions
+	for i, tx := range msgBlock.Transactions {
+		if err := tx.Serialize(w); err != nil {
+			return fmt.Errorf("failed to serialize transaction %d: %w", i, err)
 		}
 	}
 

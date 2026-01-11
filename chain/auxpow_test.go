@@ -532,44 +532,64 @@ func TestExtractChainID(t *testing.T) {
 	}
 }
 
+// TestExtractChainIDFromVersion tests extracting chain ID from block version.
+func TestExtractChainIDFromVersion(t *testing.T) {
+	tests := []struct {
+		name     string
+		version  int32
+		expected uint32
+	}{
+		{
+			name:     "Namecoin mainnet AuxPoW block",
+			version:  0x00010101, // Chain ID 1, AuxPoW bit, version 1
+			expected: 1,
+		},
+		{
+			name:     "Pre-AuxPoW block",
+			version:  0x00000001, // No chain ID, just version 1
+			expected: 0,
+		},
+		{
+			name:     "Chain ID 2",
+			version:  0x00020101, // Chain ID 2, AuxPoW bit, version 1
+			expected: 2,
+		},
+		{
+			name:     "Chain ID 255",
+			version:  0x00ff0101, // Chain ID 255, AuxPoW bit, version 1
+			expected: 255,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chainID := ExtractChainIDFromVersion(tt.version)
+			if chainID != tt.expected {
+				t.Errorf("ExtractChainIDFromVersion(0x%08x) = %d, want %d",
+					tt.version, chainID, tt.expected)
+			}
+		})
+	}
+}
+
 // TestValidateAuxPow tests full AuxPow validation.
+// Note: Chain ID validation has been moved to the caller (blockchain.validateAuxPow),
+// which uses ExtractChainIDFromVersion() on the Namecoin block header version.
 func TestValidateAuxPow(t *testing.T) {
-	t.Run("chain ID mismatch", func(t *testing.T) {
-		auxpow := &AuxPow{
-			ParentBlock: wire.BlockHeader{
-				Nonce: 0x00020000, // chain ID = 2
-			},
-		}
-
-		blockHash := mustDecodeHash("0000000000000000000000000000000000000000000000000000000000000abc")
-		targetDiff := mustDecodeHash("00000000ffff0000000000000000000000000000000000000000000000000000")
-
-		err := auxpow.ValidateAuxPow(&blockHash, NamecoinChainID, &targetDiff)
-		if err == nil {
-			t.Fatal("ValidateAuxPow() expected error for chain ID mismatch, got nil")
-		}
-		if !strings.Contains(err.Error(), "chain ID mismatch") {
-			t.Errorf("ValidateAuxPow() error = %v, want error containing 'chain ID mismatch'", err)
-		}
-	})
-
 	t.Run("parent block hash exceeds difficulty", func(t *testing.T) {
 		auxpow := &AuxPow{
 			ParentBlock: wire.BlockHeader{
-				Nonce:   0x00010000, // chain ID = 1
 				Version: 1,
-				Bits:    0x1d00ffff,
-				// BlockHash will be very high (many leading zeros when viewed as big endian)
 			},
 		}
 
 		blockHash := mustDecodeHash("0000000000000000000000000000000000000000000000000000000000000abc")
-		// Very restrictive target - parent hash will exceed it
+		// Set a very low target (high difficulty) that the parent block won't meet
 		targetDiff := mustDecodeHash("0000000000000001000000000000000000000000000000000000000000000000")
 
 		err := auxpow.ValidateAuxPow(&blockHash, NamecoinChainID, &targetDiff)
 		if err == nil {
-			t.Fatal("ValidateAuxPow() expected error for difficulty not met, got nil")
+			t.Fatal("ValidateAuxPow() expected error for difficulty mismatch, got nil")
 		}
 		if !strings.Contains(err.Error(), "does not meet difficulty target") {
 			t.Errorf("ValidateAuxPow() error = %v, want error containing 'does not meet difficulty target'", err)

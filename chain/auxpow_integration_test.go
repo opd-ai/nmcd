@@ -80,14 +80,17 @@ func TestAuxPowIntegration(t *testing.T) {
 		}
 	})
 
-	// Test Case 5: Invalid chain ID - should fail
+	// Test Case 5: Invalid chain ID (block version has wrong chain ID) - should fail
 	t.Run("InvalidChainID", func(t *testing.T) {
 		block, auxPow := createTestAuxPowBlock(t, 19200)
 
-		// Corrupt the chain ID by modifying parent block nonce
-		// Chain ID is extracted as (nonce >> 16) & 0xFF
-		// Set it to something other than NamecoinChainID (1)
-		auxPow.ParentBlock.Nonce = (2 << 16) // Chain ID = 2
+		// Corrupt the chain ID by modifying the block version
+		// Chain ID is in bits 16+ of the block version
+		// Set version to have chain ID = 2 instead of 1
+		// Original version is 0x00010101 (chain ID 1, AuxPow bit, version 1)
+		// New version: 0x00020101 (chain ID 2, AuxPow bit, version 1)
+		msgBlock := block.MsgBlock()
+		msgBlock.Header.Version = (2 << 16) | config.AuxPowVersionBit | 1
 
 		bc.auxPowCache.Put(block.Hash(), auxPow)
 
@@ -101,9 +104,17 @@ func TestAuxPowIntegration(t *testing.T) {
 	t.Run("InvalidParentPoW", func(t *testing.T) {
 		block, auxPow := createTestAuxPowBlock(t, 19200)
 
-		// Set parent block nonce to a value that results in a high hash
-		// (doesn't meet difficulty target)
+		// Modify the block's difficulty target to be very restrictive
+		// so that the parent block's hash won't meet it
+		msgBlock := block.MsgBlock()
+		msgBlock.Header.Bits = 0x1d00ffff // Mainnet-like difficulty (very restrictive)
+
+		// The parent block hash with any random nonce is unlikely to meet this target
 		auxPow.ParentBlock.Nonce = 0
+
+		// Need to recreate block to get updated hash
+		block = btcutil.NewBlock(msgBlock)
+		block.SetHeight(19200)
 
 		bc.auxPowCache.Put(block.Hash(), auxPow)
 
@@ -288,8 +299,11 @@ func createTestAuxPowBlock(t *testing.T, height int32) (*btcutil.Block, *AuxPow)
 	})
 
 	// Create block with extremely easy difficulty (0x2100ffff = minimal work)
+	// Version includes: chain ID (1) in bits 16+, AuxPoW bit (0x100), and base version (1)
+	// For Namecoin: version = (1 << 16) | 0x100 | 1 = 0x00010101
+	version := int32((NamecoinChainID << 16) | config.AuxPowVersionBit | 1)
 	blockHeader := wire.BlockHeader{
-		Version:    config.AuxPowVersionBit,
+		Version:    version,
 		PrevBlock:  chainhash.Hash{},
 		MerkleRoot: coinbaseTx.TxHash(),
 		Timestamp:  time.Now(),
