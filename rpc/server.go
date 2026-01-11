@@ -1850,9 +1850,9 @@ func (s *Server) listUnspent(req *Request) *Response {
 		}
 
 		for _, utxo := range utxos {
-			// Calculate confirmations based on UTXO block height
-			// Default to 1 confirmation when height is 0 (unknown), as the UTXO exists and is spendable
-			confirmations := 1
+			// Calculate confirmations based on UTXO block height.
+			// A height of 0 indicates unknown or unconfirmed, so treat it as 0 confirmations.
+			confirmations := 0
 			if utxo.Height > 0 {
 				confirmations = int(bestHeight - utxo.Height + 1)
 			}
