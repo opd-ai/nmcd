@@ -1,13 +1,17 @@
 # Namecoin Protocol Compliance Audit: nmcd
 
 **Audit Date:** January 3, 2026  
-**Last Updated:** January 9, 2026  
+**Last Updated:** January 11, 2026  
 **nmcd Version:** v0.1.0 (development)  
 **Reference:** Namecoin Core
 
+> **Note:** A comprehensive protocol compliance audit was performed on January 11, 2026.
+> See [PROTOCOL_COMPLIANCE_AUDIT_2026-01-11.md](PROTOCOL_COMPLIANCE_AUDIT_2026-01-11.md) for
+> the full detailed audit covering all 5 scope areas with specific code references.
+
 ## Executive Summary
 
-**Compliance Status:** Partial Compliance (70% of protocol features)  
+**Compliance Status:** Partial Compliance (~75% of protocol features)  
 **Critical Issues:** 1 (AuxPoW mainnet testing incomplete)  
 **Production Blockers:** 1
 
