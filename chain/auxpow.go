@@ -257,23 +257,18 @@ func (mb *MerkleBranch) SerializeMerkleBranch(w io.Writer) error {
 // 4. Extract and validate chain ID matches expected chain
 // 5. Verify aux block hash appears in correct position in coinbase
 //
+// Note: Chain ID validation is the caller's responsibility. The caller should
+// extract the chain ID from the Namecoin block's version using
+// ExtractChainIDFromVersion() and validate it before calling this function.
+//
 // Arguments:
 //   - blockHash: The hash of the auxiliary blockchain block (this Namecoin block)
-//   - expectedChainID: The expected chain ID (should be NamecoinChainID = 1)
 //   - targetDifficulty: The required proof-of-work difficulty target for the parent block
 //
 // Returns:
 //   - nil if validation succeeds
 //   - error describing validation failure
-func (ap *AuxPow) ValidateAuxPow(blockHash *chainhash.Hash, expectedChainID uint32, targetDifficulty *chainhash.Hash) error {
-	// Note: Chain ID validation is the caller's responsibility.
-	// The caller should extract the chain ID from the Namecoin block's version
-	// using ExtractChainIDFromVersion() and pass it as expectedChainID.
-	// The AuxPow structure itself does not contain the chain ID.
-	// We skip chain ID validation here as it was incorrectly attempting to
-	// extract it from the parent block's nonce, which is not how Namecoin works.
-	_ = expectedChainID // Chain ID is validated by the caller
-
+func (ap *AuxPow) ValidateAuxPow(blockHash *chainhash.Hash, targetDifficulty *chainhash.Hash) error {
 	// Step 1: Verify parent block meets proof-of-work difficulty target
 	// The parent block's hash must be less than or equal to the target difficulty
 	// Convert both hash and target to big.Int for comparison
@@ -408,25 +403,6 @@ func ExtractChainIDFromVersion(version int32) uint32 {
 	// For Namecoin (chain ID 1), version looks like: 0x0001XXXX
 	// where XXXX includes the AuxPoW bit (0x100) and base version
 	return uint32(version >> 16)
-}
-
-// ExtractChainID extracts the chain ID from the parent block's nonce.
-//
-// DEPRECATED: This method is incorrect for Namecoin. The chain ID should
-// be extracted from the Namecoin block's version using ExtractChainIDFromVersion(),
-// not from the parent block's nonce.
-//
-// This method is kept for backward compatibility but will return incorrect values.
-// Use ExtractChainIDFromVersion(block.MsgBlock().Header.Version) instead.
-//
-// Per the merged mining specification, while the chain ID CAN be encoded
-// in the parent nonce for some implementations, Namecoin stores it in
-// the auxiliary block's version field.
-func (ap *AuxPow) ExtractChainID() (uint32, error) {
-	// INCORRECT: This extracts from parent nonce, but Namecoin uses block version
-	// Keeping for backward compatibility, but this will return wrong values
-	chainID := (ap.ParentBlock.Nonce >> 16) & 0xFF
-	return chainID, nil
 }
 
 // CheckMerkleBranch verifies a merkle branch proof.

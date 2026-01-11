@@ -484,54 +484,6 @@ func TestCheckMerkleBranch(t *testing.T) {
 	}
 }
 
-// TestExtractChainID tests chain ID extraction from parent block nonce.
-func TestExtractChainID(t *testing.T) {
-	tests := []struct {
-		name            string
-		parentNonce     uint32
-		expectedChainID uint32
-	}{
-		{
-			name:            "Namecoin chain ID (1)",
-			parentNonce:     0x00010000, // chain ID in bits 16-23
-			expectedChainID: 1,
-		},
-		{
-			name:            "chain ID 0",
-			parentNonce:     0x00000000,
-			expectedChainID: 0,
-		},
-		{
-			name:            "chain ID 255 (max)",
-			parentNonce:     0x00FF0000,
-			expectedChainID: 255,
-		},
-		{
-			name:            "chain ID with other bits set",
-			parentNonce:     0x12345678, // chain ID = 0x34
-			expectedChainID: 0x34,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			auxpow := &AuxPow{
-				ParentBlock: wire.BlockHeader{
-					Nonce: tt.parentNonce,
-				},
-			}
-
-			chainID, err := auxpow.ExtractChainID()
-			if err != nil {
-				t.Fatalf("ExtractChainID() unexpected error: %v", err)
-			}
-			if chainID != tt.expectedChainID {
-				t.Errorf("ExtractChainID() = %d, want %d", chainID, tt.expectedChainID)
-			}
-		})
-	}
-}
-
 // TestExtractChainIDFromVersion tests extracting chain ID from block version.
 func TestExtractChainIDFromVersion(t *testing.T) {
 	tests := []struct {
@@ -587,7 +539,7 @@ func TestValidateAuxPow(t *testing.T) {
 		// Set a very low target (high difficulty) that the parent block won't meet
 		targetDiff := mustDecodeHash("0000000000000001000000000000000000000000000000000000000000000000")
 
-		err := auxpow.ValidateAuxPow(&blockHash, NamecoinChainID, &targetDiff)
+		err := auxpow.ValidateAuxPow(&blockHash, &targetDiff)
 		if err == nil {
 			t.Fatal("ValidateAuxPow() expected error for difficulty mismatch, got nil")
 		}
@@ -636,7 +588,7 @@ func TestValidateAuxPow(t *testing.T) {
 		// Use a very high target (easy difficulty) so parent block hash will pass PoW check
 		targetDiff := mustDecodeHash("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
 
-		err := auxpow.ValidateAuxPow(&blockHash, NamecoinChainID, &targetDiff)
+		err := auxpow.ValidateAuxPow(&blockHash, &targetDiff)
 		if err == nil {
 			t.Fatal("ValidateAuxPow() expected error for invalid coinbase merkle branch, got nil")
 		}

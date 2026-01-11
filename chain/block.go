@@ -70,6 +70,11 @@ func NewBlockFromBytes(serializedBlock []byte) (*Block, error) {
 // the transaction count and transactions, NOT after. This differs from what
 // one might expect and requires custom deserialization logic.
 //
+// Reference: This ordering (AuxPoW serialized immediately after the header and before
+// the transaction vector) matches Namecoin Core's wire format as implemented in
+// src/primitives/block.h (CBlockHeader serialization with AuxPow) and related AuxPow
+// handling code. Maintain this ordering to stay consensus-compatible.
+//
 // Wire format for AuxPoW blocks:
 //  1. Block header (80 bytes)
 //  2. AuxPoW structure:

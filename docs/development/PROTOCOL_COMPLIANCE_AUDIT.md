@@ -3,7 +3,7 @@
 **Last Updated:** January 11, 2026  
 **nmcd Version:** v0.1.0 (development)  
 **Reference:** Namecoin Core (github.com/namecoin/namecoin-core)  
-**Codebase Size:** ~47,900 lines of Go code
+**Codebase Size:** ~18,500 lines of production Go code (excluding tests)
 
 ---
 

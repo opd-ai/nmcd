@@ -569,7 +569,7 @@ func (bc *BlockChain) validateAuxPow(block *btcutil.Block) error {
 		targetHash[len(targetBytes)-1-i] = targetBytes[i]
 	}
 
-	if err := auxPow.ValidateAuxPow(blockHash, NamecoinChainID, &targetHash); err != nil {
+	if err := auxPow.ValidateAuxPow(blockHash, &targetHash); err != nil {
 		return fmt.Errorf("AuxPow validation failed for block %s at height %d: %w",
 			blockHash.String(), height, err)
 	}

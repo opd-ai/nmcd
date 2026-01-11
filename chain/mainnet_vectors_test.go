@@ -175,7 +175,7 @@ func testMainnetBlock(t *testing.T, vector *MainnetTestVector) {
 			targetHash[len(targetBytes)-1-i] = targetBytes[i]
 		}
 
-		err = auxPow.ValidateAuxPow(blockHash, NamecoinChainID, &targetHash)
+		err = auxPow.ValidateAuxPow(blockHash, &targetHash)
 		if err != nil {
 			t.Errorf("AuxPoW validation failed: %v", err)
 		} else {
