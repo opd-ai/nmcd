@@ -352,6 +352,8 @@ func (s *Server) processRequest(req *Request) *Response {
 		return s.getBlockHash(req)
 	case "getrawtransaction":
 		return s.getRawTransaction(req)
+	case "sendrawtransaction":
+		return s.sendRawTransaction(req)
 	default:
 		return &Response{
 			Jsonrpc: "2.0",
@@ -2073,6 +2075,99 @@ func (s *Server) getRawTransaction(req *Request) *Response {
 	return &Response{
 		Jsonrpc: "2.0",
 		Result:  result,
+		ID:      req.ID,
+	}
+}
+
+// sendRawTransaction broadcasts a raw transaction to the network.
+// Parameters: [hexstring] or [hexstring, maxfeerate]
+//   - hexstring (string, required): The hex-encoded raw transaction
+//   - maxfeerate (numeric, optional): Reject transactions whose fee rate is higher than
+//     the specified value, expressed in NMC/kB. Set to 0 to accept any fee rate.
+//
+// Returns: transaction hash (txid) if broadcast was successful
+func (s *Server) sendRawTransaction(req *Request) *Response {
+	var params []interface{}
+	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32602,
+				Message: "Invalid params: expected [hexstring] or [hexstring, maxfeerate]",
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Parse hex-encoded transaction
+	hexStr, ok := params[0].(string)
+	if !ok {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32602,
+				Message: "Invalid params: hexstring must be a string",
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Decode hex string to bytes
+	txBytes, err := hex.DecodeString(hexStr)
+	if err != nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -22,
+				Message: fmt.Sprintf("TX decode failed: %v", err),
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Deserialize the transaction
+	var tx wire.MsgTx
+	if err := tx.Deserialize(bytes.NewReader(txBytes)); err != nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -22,
+				Message: fmt.Sprintf("TX decode failed: %v", err),
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Check if peer manager is available for broadcasting
+	if s.peerMgr == nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: "Network not available: peer manager not initialized",
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Broadcast the transaction to the network
+	// BroadcastTx adds to mempool with validation and relays to peers
+	if err := s.peerMgr.BroadcastTx(&tx); err != nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -25,
+				Message: fmt.Sprintf("Transaction rejected: %v", err),
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Return the transaction hash
+	txHash := tx.TxHash()
+	return &Response{
+		Jsonrpc: "2.0",
+		Result:  txHash.String(),
 		ID:      req.ID,
 	}
 }
