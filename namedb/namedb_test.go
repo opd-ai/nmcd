@@ -1043,3 +1043,103 @@ func TestDeleteHistoryMultipleNames(t *testing.T) {
 		t.Errorf("Expected 0 history entries for name2 after deletion, got %d", len(history2))
 	}
 }
+
+// TestScanNames tests the ScanNames function for prefix-based name searching
+func TestScanNames(t *testing.T) {
+	// Create temporary database
+	dbPath := filepath.Join(t.TempDir(), "test-scannames.db")
+
+	db, err := NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Create a hash for testing
+	hash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+
+	// Add test names with different prefixes
+	testNames := []string{
+		"d/alpha",
+		"d/beta",
+		"d/gamma",
+		"id/user1",
+		"id/user2",
+		"p/personal",
+	}
+
+	for i, name := range testNames {
+		record := &NameRecord{
+			Name:      name,
+			Value:     `{"test": true}`,
+			TxHash:    *hash,
+			Height:    int32(100 + i),
+			ExpiresAt: int32(36100 + i),
+			Address:   "N1234567890",
+			UpdatedAt: time.Now(),
+		}
+		if err := db.PutName(name, record); err != nil {
+			t.Fatalf("Failed to add name %s: %v", name, err)
+		}
+	}
+
+	// Test scanning with "d/" prefix
+	t.Run("scan d/ prefix", func(t *testing.T) {
+		results, err := db.ScanNames("d/", 100)
+		if err != nil {
+			t.Fatalf("ScanNames failed: %v", err)
+		}
+		if len(results) != 3 {
+			t.Errorf("Expected 3 names with d/ prefix, got %d", len(results))
+		}
+		for _, r := range results {
+			if r.Name[:2] != "d/" {
+				t.Errorf("Expected name to start with d/, got %s", r.Name)
+			}
+		}
+	})
+
+	// Test scanning with "id/" prefix
+	t.Run("scan id/ prefix", func(t *testing.T) {
+		results, err := db.ScanNames("id/", 100)
+		if err != nil {
+			t.Fatalf("ScanNames failed: %v", err)
+		}
+		if len(results) != 2 {
+			t.Errorf("Expected 2 names with id/ prefix, got %d", len(results))
+		}
+	})
+
+	// Test scanning with count limit
+	t.Run("scan with count limit", func(t *testing.T) {
+		results, err := db.ScanNames("d/", 2)
+		if err != nil {
+			t.Fatalf("ScanNames failed: %v", err)
+		}
+		if len(results) != 2 {
+			t.Errorf("Expected 2 names (limited by count), got %d", len(results))
+		}
+	})
+
+	// Test scanning with non-matching prefix
+	t.Run("scan non-matching prefix", func(t *testing.T) {
+		results, err := db.ScanNames("x/", 100)
+		if err != nil {
+			t.Fatalf("ScanNames failed: %v", err)
+		}
+		if len(results) != 0 {
+			t.Errorf("Expected 0 names with x/ prefix, got %d", len(results))
+		}
+	})
+
+	// Test scanning with empty prefix (all names)
+	t.Run("scan empty prefix", func(t *testing.T) {
+		results, err := db.ScanNames("", 100)
+		if err != nil {
+			t.Fatalf("ScanNames failed: %v", err)
+		}
+		if len(results) != 6 {
+			t.Errorf("Expected 6 names with empty prefix, got %d", len(results))
+		}
+	})
+}

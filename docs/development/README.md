@@ -6,8 +6,7 @@ This directory contains development artifacts, audit reports, and implementation
 
 ### Audit and Compliance Reports
 
-- **[AUDIT.md](AUDIT.md)** - Comprehensive functional audit of the codebase (last updated: January 8, 2026)
-- **[PROTOCOL_COMPLIANCE_AUDIT.md](PROTOCOL_COMPLIANCE_AUDIT.md)** - Detailed audit of Namecoin protocol compliance (last updated: January 4, 2026)
+- **[PROTOCOL_COMPLIANCE_AUDIT.md](PROTOCOL_COMPLIANCE_AUDIT.md)** - Detailed audit of Namecoin protocol compliance (95% complete, last updated: January 11, 2026)
 
 ### Implementation Summaries
 
@@ -26,6 +25,7 @@ This directory contains development artifacts, audit reports, and implementation
 ### Planning and Roadmap
 
 - **[PLAN.md](PLAN.md)** - Production readiness plan and development roadmap
+- **[PROTOCOL_COMPLIANCE_PLAN.md](PROTOCOL_COMPLIANCE_PLAN.md)** - Plan to achieve 100% Namecoin protocol compliance (current: 95%)
 
 ## For Users
 
