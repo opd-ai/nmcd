@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/btcsuite/btcd/wire"
-	"github.com/opd-ai/nmcd/namedb"
 )
 
 // TestVector represents a test case from Namecoin Core
@@ -52,38 +51,6 @@ func deserializeTransaction(data []byte) (*wire.MsgTx, error) {
 		return nil, fmt.Errorf("failed to deserialize transaction: %w", err)
 	}
 	return tx, nil
-}
-
-// NameOperationInfo holds information about a name operation found in a transaction
-type NameOperationInfo struct {
-	OutputIndex int
-	OpType      namedb.NameOperation
-	Name        string
-}
-
-// String returns a string representation of the name operation
-func (n *NameOperationInfo) String() string {
-	return fmt.Sprintf("%s (name: %s)", n.OpType.String(), n.Name)
-}
-
-// parseNameOperationsFromTx extracts name operations from transaction outputs
-// This is a simplified version that just identifies name operations without full validation
-func parseNameOperationsFromTx(tx *wire.MsgTx) []NameOperationInfo {
-	var operations []NameOperationInfo
-
-	for i, txOut := range tx.TxOut {
-		// Try to parse as name operation script
-		opType, name, _, err := parseNameScript(txOut.PkScript)
-		if err == nil && opType != namedb.NameOperation(0) {
-			operations = append(operations, NameOperationInfo{
-				OutputIndex: i,
-				OpType:      opType,
-				Name:        name,
-			})
-		}
-	}
-
-	return operations
 }
 
 // TestBlockVectors tests block validation against Namecoin Core test vectors
@@ -220,11 +187,11 @@ func TestTransactionVectors(t *testing.T) {
 					}
 
 					// Parse name operation scripts from outputs
-					nameOps := parseNameOperationsFromTx(tx)
+					nameOps := ParseNameOperationsFromTx(tx)
 					if len(nameOps) > 0 {
 						t.Logf("Found %d name operation(s) in transaction", len(nameOps))
 						for i, op := range nameOps {
-							t.Logf("  Output %d: %s", i, op.String())
+							t.Logf("  Output %d: %s (%s)", i, op.OpType.String(), op.Name)
 						}
 					}
 
