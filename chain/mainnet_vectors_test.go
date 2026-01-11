@@ -116,15 +116,20 @@ func testMainnetBlock(t *testing.T, vector *MainnetTestVector) {
 		t.Logf("  ✓ Block hash matches: %s", blockHash.String())
 	}
 
-	// Verify block height
-	if block.Height() != vector.Height {
+	// Note: Block height is not stored in the serialized block data.
+	// It's determined by the blockchain context (position in the chain).
+	// The btcutil.Block.Height() method returns -1 for blocks not in a chain.
+	// This is expected behavior, not a bug.
+	if block.Height() == -1 {
+		t.Logf("  Block height: not set (expected for deserialized blocks)")
+	} else if block.Height() != vector.Height {
 		t.Errorf("Block height mismatch: expected %d, got %d",
 			vector.Height, block.Height())
 	} else {
 		t.Logf("  ✓ Block height matches: %d", vector.Height)
 	}
 
-	// Check AuxPoW based on height
+	// Check AuxPoW based on expected height from test vector
 	requiresAuxPow := vector.Height >= config.MainNetAuxPowActivationHeight
 	hasAuxPow := block.HasAuxPow()
 
@@ -149,16 +154,14 @@ func testMainnetBlock(t *testing.T, vector *MainnetTestVector) {
 			t.Fatal("HasAuxPow() returned true but AuxPow() returned nil")
 		}
 
-		// Extract and verify chain ID
-		chainID, err := auxPow.ExtractChainID()
-		if err != nil {
-			t.Errorf("Failed to extract chain ID: %v", err)
-		} else {
-			t.Logf("    ✓ Chain ID: %d (expected: %d for Namecoin)", chainID, NamecoinChainID)
-			if chainID != NamecoinChainID {
-				t.Errorf("Invalid chain ID: expected %d (Namecoin), got %d",
-					NamecoinChainID, chainID)
-			}
+		// Extract and verify chain ID from the Namecoin block's version
+		// The chain ID is in bits 16+ of the block version, not in the AuxPow structure
+		blockVersion := block.MsgBlock().Header.Version
+		chainID := ExtractChainIDFromVersion(blockVersion)
+		t.Logf("    ✓ Chain ID: %d (expected: %d for Namecoin)", chainID, NamecoinChainID)
+		if chainID != NamecoinChainID {
+			t.Errorf("Invalid chain ID: expected %d (Namecoin), got %d",
+				NamecoinChainID, chainID)
 		}
 
 		// Validate parent block PoW
@@ -172,7 +175,7 @@ func testMainnetBlock(t *testing.T, vector *MainnetTestVector) {
 			targetHash[len(targetBytes)-1-i] = targetBytes[i]
 		}
 
-		err = auxPow.ValidateAuxPow(blockHash, NamecoinChainID, &targetHash)
+		err = auxPow.ValidateAuxPow(blockHash, &targetHash)
 		if err != nil {
 			t.Errorf("AuxPoW validation failed: %v", err)
 		} else {
@@ -286,7 +289,9 @@ func TestMainnetBlockVector_AuxPowActivation(t *testing.T) {
 	}
 
 	// Verify this is truly merged mining with Namecoin chain ID
-	chainID, _ := auxPow.ExtractChainID()
+	// Chain ID is extracted from the Namecoin block's version, not from AuxPow
+	blockVersion := block.MsgBlock().Header.Version
+	chainID := ExtractChainIDFromVersion(blockVersion)
 	if chainID != NamecoinChainID {
 		t.Errorf("AuxPoW activation block should have Namecoin chain ID (%d), got %d",
 			NamecoinChainID, chainID)
