@@ -685,17 +685,21 @@ func (c *EmbeddedClient) UpdateName(ctx context.Context, name, value string, opt
 	// Parse destination address if transfer is requested
 	var destAddr btcutil.Address
 	if opts.TransferTo != "" {
-		// For now, only same-address "transfers" are allowed and treated as no-transfer
-		// (destAddr remains nil, so ownership stays with the current address).
-		// Any real transfer to a different address requires full network integration.
-		if opts.TransferTo != nameRecord.Address {
-			return nil, fmt.Errorf("name transfers (TransferTo) require network integration (coming in future phase)")
+		// Check if transferring to same address (redundant but allowed)
+		if opts.TransferTo == nameRecord.Address {
+			c.logger.Warn("TransferTo address matches current owner - transfer is redundant",
+				"address", opts.TransferTo,
+				"name", name)
+			// Keep destAddr nil to use current owner's address
+			destAddr = nil
+		} else {
+			// Parse the destination address for transfer
+			var err error
+			destAddr, err = btcutil.DecodeAddress(opts.TransferTo, c.chain.ChainParams())
+			if err != nil {
+				return nil, fmt.Errorf("invalid TransferTo address %q: %w", opts.TransferTo, err)
+			}
 		}
-		// Transferring to same address is redundant but allowed
-		c.logger.Warn("TransferTo address matches current owner - transfer is redundant and will be ignored",
-			"address", opts.TransferTo,
-			"name", name)
-		destAddr = nil
 	}
 
 	// Create NAME_UPDATE transaction
@@ -1057,12 +1061,11 @@ func (c *EmbeddedClient) getTransactionConfirmationStatus(txHash *chainhash.Hash
 
 	// Search through recent blocks for the transaction
 	// We search backwards from current height for efficiency
-	// In production, this would use a transaction index
-	// For now, we check the last 100 blocks (should cover most cases)
+	// Using 1000 blocks to handle edge cases with slow sync or long poll intervals
 	// Performance note: This creates O(blocks * transactions_per_block) complexity.
 	// For blocks with many transactions, this linear search may be slow.
-	// Consider reducing maxBlocksToSearch if performance becomes an issue.
-	maxBlocksToSearch := int32(100)
+	// A full implementation would use a transaction index for O(1) lookups.
+	maxBlocksToSearch := int32(1000)
 	startHeight := currentHeight - maxBlocksToSearch
 	if startHeight < 0 {
 		startHeight = 0

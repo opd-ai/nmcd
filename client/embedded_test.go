@@ -1502,7 +1502,7 @@ func TestEmbeddedClient_UpdateName(t *testing.T) {
 			errContains: "context",
 		},
 		{
-			name:        "transfer to new address requires network",
+			name:        "transfer to invalid address fails",
 			updateName:  "d/test",
 			value:       "value",
 			opts:        &UpdateOpts{TransferTo: "N1A2B3C4D5E6F7G8H9"},
@@ -1510,7 +1510,7 @@ func TestEmbeddedClient_UpdateName(t *testing.T) {
 			setupUTXOs:  true,
 			setupName:   true,
 			wantErr:     true,
-			errContains: "require network integration",
+			errContains: "invalid TransferTo address",
 		},
 		{
 			name:        "transfer to same address succeeds",

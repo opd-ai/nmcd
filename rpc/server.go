@@ -23,6 +23,7 @@ import (
 	"github.com/opd-ai/nmcd/chain"
 	"github.com/opd-ai/nmcd/internal/logging"
 	"github.com/opd-ai/nmcd/metrics"
+	"github.com/opd-ai/nmcd/namedb"
 	"github.com/opd-ai/nmcd/network"
 	"github.com/opd-ai/nmcd/wallet"
 )
@@ -346,6 +347,10 @@ func (s *Server) processRequest(req *Request) *Response {
 		return s.walletLock(req)
 	case "encryptwallet":
 		return s.encryptWallet(req)
+	case "getbalance":
+		return s.getBalance(req)
+	case "listunspent":
+		return s.listUnspent(req)
 	case "getblock":
 		return s.getBlock(req)
 	case "getblockhash":
@@ -1368,18 +1373,65 @@ func (s *Server) nameScan(req *Request) *Response {
 // namePending returns pending name operations from the mempool.
 // Matches Namecoin Core's name_pending RPC.
 // Parameters: [] or ["name"] where name is an optional filter
-// Note: This implementation returns an empty list when no mempool is available,
-// as nmcd's current architecture does not track pending name operations separately.
 func (s *Server) namePending(req *Request) *Response {
-	// Currently nmcd does not have a dedicated pending name operations tracker.
-	// The mempool stores transactions but doesn't parse name operations from them.
-	// Return an empty list for now - this is valid behavior when no names are pending.
-	// A full implementation would:
-	// 1. Parse name operations from mempool transactions
-	// 2. Track which names have pending operations
-	// 3. Filter by name if a name parameter is provided in req.Params
-
 	result := []map[string]interface{}{}
+
+	// Get mempool from peer manager
+	if s.peerMgr == nil {
+		// No peer manager means no mempool - return empty list
+		return &Response{
+			Jsonrpc: "2.0",
+			Result:  result,
+			ID:      req.ID,
+		}
+	}
+
+	mempool := s.peerMgr.GetMempool()
+	if mempool == nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Result:  result,
+			ID:      req.ID,
+		}
+	}
+
+	// Parse optional name filter from params
+	var nameFilter string
+	var params []interface{}
+	if err := json.Unmarshal(req.Params, &params); err == nil && len(params) > 0 {
+		if name, ok := params[0].(string); ok {
+			nameFilter = name
+		}
+	}
+
+	// Get all transactions from mempool and parse name operations
+	mempoolTxs := mempool.GetAll()
+	for _, tx := range mempoolTxs {
+		nameOps := chain.ParseNameOperationsFromTx(tx)
+		for _, op := range nameOps {
+			// Apply name filter if specified
+			if nameFilter != "" && op.Name != nameFilter {
+				continue
+			}
+
+			// Build result object matching Namecoin Core format
+			opResult := map[string]interface{}{
+				"name":   op.Name,
+				"txid":   op.TxHash.String(),
+				"vout":   op.OutputIndex,
+				"op":     op.OpType.String(),
+				"ismine": false, // Would require wallet lookup
+			}
+
+			// Add value for NAME_FIRSTUPDATE and NAME_UPDATE
+			// NAME_NEW operations only contain a hash commitment, not a value
+			if op.OpType != namedb.NameNew {
+				opResult["value"] = op.Value
+			}
+
+			result = append(result, opResult)
+		}
+	}
 
 	return &Response{
 		Jsonrpc: "2.0",
@@ -1659,6 +1711,186 @@ func (s *Server) encryptWallet(req *Request) *Response {
 	return &Response{
 		Jsonrpc: "2.0",
 		Result:  "Wallet encrypted successfully. Please backup your wallet and remember your password.",
+		ID:      req.ID,
+	}
+}
+
+// getBalance returns the total balance for all wallet addresses.
+// Parameters: [] (no parameters required)
+// Returns: balance in NMC as a float
+func (s *Server) getBalance(req *Request) *Response {
+	if s.wallet == nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: "Wallet not initialized. Start the node with wallet enabled.",
+			},
+			ID: req.ID,
+		}
+	}
+
+	if s.blockchain == nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32603,
+				Message: "Blockchain not initialized",
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Get all wallet addresses
+	addresses := s.wallet.GetAddresses()
+	if len(addresses) == 0 {
+		return &Response{
+			Jsonrpc: "2.0",
+			Result:  0.0,
+			ID:      req.ID,
+		}
+	}
+
+	// Sum up UTXOs for all addresses
+	var totalSatoshis int64
+	for _, addr := range addresses {
+		utxos, err := s.blockchain.GetUTXOsForAddress(addr)
+		if err != nil {
+			continue // Skip addresses with errors
+		}
+		for _, utxo := range utxos {
+			totalSatoshis += utxo.Value
+		}
+	}
+
+	// Convert satoshis to NMC (1 NMC = 100,000,000 satoshis)
+	balance := float64(totalSatoshis) / 1e8
+
+	return &Response{
+		Jsonrpc: "2.0",
+		Result:  balance,
+		ID:      req.ID,
+	}
+}
+
+// listUnspent returns all unspent transaction outputs for wallet addresses.
+// Parameters: [] or [minconf] or [minconf, maxconf] or [minconf, maxconf, [addresses]]
+//   - minconf (int, optional): Minimum confirmations (default: 1)
+//   - maxconf (int, optional): Maximum confirmations (default: 9999999)
+//   - addresses (array, optional): Filter by addresses (default: all wallet addresses)
+//
+// Returns array of UTXO objects with txid, vout, address, amount, confirmations, etc.
+func (s *Server) listUnspent(req *Request) *Response {
+	if s.wallet == nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -1,
+				Message: "Wallet not initialized. Start the node with wallet enabled.",
+			},
+			ID: req.ID,
+		}
+	}
+
+	if s.blockchain == nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32603,
+				Message: "Blockchain not initialized",
+			},
+			ID: req.ID,
+		}
+	}
+
+	// Parse optional parameters
+	minConf := 1
+	maxConf := 9999999
+	var filterAddresses []string
+
+	var params []interface{}
+	if err := json.Unmarshal(req.Params, &params); err == nil && len(params) > 0 {
+		// Parse minconf
+		if minC, ok := params[0].(float64); ok {
+			minConf = int(minC)
+		}
+		// Parse maxconf
+		if len(params) > 1 {
+			if maxC, ok := params[1].(float64); ok {
+				maxConf = int(maxC)
+			}
+		}
+		// Parse addresses filter
+		if len(params) > 2 {
+			if addrs, ok := params[2].([]interface{}); ok {
+				for _, a := range addrs {
+					if addr, ok := a.(string); ok {
+						filterAddresses = append(filterAddresses, addr)
+					}
+				}
+			}
+		}
+	}
+
+	// If no filter addresses specified, use all wallet addresses
+	addresses := filterAddresses
+	if len(addresses) == 0 {
+		addresses = s.wallet.GetAddresses()
+	}
+
+	// Get current block height for confirmations calculation
+	bestHeight := s.blockchain.BestSnapshot().Height
+
+	// Collect UTXOs for all addresses
+	var result []map[string]interface{}
+	for _, addr := range addresses {
+		utxos, err := s.blockchain.GetUTXOsForAddress(addr)
+		if err != nil {
+			continue // Skip addresses with errors
+		}
+
+		for _, utxo := range utxos {
+			// Calculate confirmations based on UTXO block height
+			// Default to 1 confirmation when height is 0 (unknown), as the UTXO exists and is spendable
+			confirmations := 1
+			if utxo.Height > 0 {
+				confirmations = int(bestHeight - utxo.Height + 1)
+			}
+
+			// Apply confirmation filters
+			if confirmations < minConf || confirmations > maxConf {
+				continue
+			}
+
+			// Build UTXO result object
+			utxoResult := map[string]interface{}{
+				"txid":          utxo.TxHash.String(),
+				"vout":          utxo.OutIndex,
+				"address":       utxo.Address,
+				"amount":        float64(utxo.Value) / 1e8,
+				"confirmations": confirmations,
+				"spendable":     true, // Wallet has the key
+				"solvable":      true,
+				"safe":          true,
+			}
+
+			// Add script if available
+			if len(utxo.PkScript) > 0 {
+				utxoResult["scriptPubKey"] = hex.EncodeToString(utxo.PkScript)
+			}
+
+			result = append(result, utxoResult)
+		}
+	}
+
+	// Return empty array if no UTXOs found
+	if result == nil {
+		result = []map[string]interface{}{}
+	}
+
+	return &Response{
+		Jsonrpc: "2.0",
+		Result:  result,
 		ID:      req.ID,
 	}
 }

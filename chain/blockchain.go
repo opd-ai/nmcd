@@ -1928,3 +1928,38 @@ func (bc *BlockChain) ValidateMempoolTransaction(tx *wire.MsgTx) error {
 
 	return nil
 }
+
+// NameOperationInfo contains parsed name operation data extracted from a transaction output.
+// Used by RPC methods like name_pending to provide information about pending name operations
+// in the mempool before they are confirmed in a block.
+type NameOperationInfo struct {
+	OpType      namedb.NameOperation // The type of name operation (NameNew, NameFirstUpdate, NameUpdate)
+	Name        string               // The name being operated on (empty for NAME_NEW)
+	Value       string               // The value associated with the name (empty for NAME_NEW)
+	TxHash      chainhash.Hash       // The transaction hash containing this operation
+	OutputIndex int                  // The output index within the transaction
+}
+
+// ParseNameOperationsFromTx extracts name operations from a transaction's outputs.
+// Returns a slice of NameOperationInfo for each name operation found in the transaction.
+// This is useful for finding pending name operations in the mempool.
+func ParseNameOperationsFromTx(tx *wire.MsgTx) []NameOperationInfo {
+	var operations []NameOperationInfo
+
+	txHash := tx.TxHash()
+
+	for i, txOut := range tx.TxOut {
+		opType, name, value, err := parseNameScript(txOut.PkScript)
+		if err == nil && opType != namedb.NameOperation(0) {
+			operations = append(operations, NameOperationInfo{
+				OpType:      opType,
+				Name:        name,
+				Value:       value,
+				TxHash:      txHash,
+				OutputIndex: i,
+			})
+		}
+	}
+
+	return operations
+}
