@@ -661,42 +661,38 @@ func (c *DaemonClient) WaitForConfirmation(ctx context.Context, txHash string, c
 		return fmt.Errorf("confirmations must be at least 1, got %d", confirmations)
 	}
 
-	// Check context before proceeding to avoid race condition
 	select {
 	case <-ctx.Done():
 		return ErrContextCanceled
 	default:
 	}
 
-	// Poll every second for responsive feedback without excessive RPC load
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	// Check immediately before starting the polling loop
-	info, err := c.getRawTransaction(ctx, txHash)
-	if err == nil && info.Confirmations >= confirmations {
+	if c.txHasConfirmations(ctx, txHash, confirmations) {
 		return nil
 	}
+
+	return c.pollDaemonConfirmation(ctx, txHash, confirmations)
+}
+
+// txHasConfirmations checks if a transaction has at least the required confirmations.
+func (c *DaemonClient) txHasConfirmations(ctx context.Context, txHash string, required int) bool {
+	info, err := c.getRawTransaction(ctx, txHash)
+	return err == nil && info.Confirmations >= required
+}
+
+// pollDaemonConfirmation polls the daemon until the transaction has enough confirmations.
+func (c *DaemonClient) pollDaemonConfirmation(ctx context.Context, txHash string, required int) error {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ErrContextCanceled
 		case <-ticker.C:
-			// Query actual confirmations from the blockchain
-			info, err := c.getRawTransaction(ctx, txHash)
-			if err != nil {
-				// Transaction not found yet - this is normal for newly broadcast transactions
-				// Continue polling until context deadline
-				continue
-			}
-
-			// Check if we have enough confirmations
-			if info.Confirmations >= confirmations {
+			if c.txHasConfirmations(ctx, txHash, required) {
 				return nil
 			}
-
-			// Continue polling
 		}
 	}
 }
