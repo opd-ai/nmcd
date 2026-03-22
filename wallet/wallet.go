@@ -223,7 +223,11 @@ func (w *Wallet) save() error {
 		return fmt.Errorf("failed to create wallet directory: %w", err)
 	}
 
-	return os.WriteFile(w.walletPath(), data, 0o600)
+	path := w.walletPath()
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("failed to write wallet file %s: %w", path, err)
+	}
+	return nil
 }
 
 // encodePrivateKey encodes a private key for storage based on encryption state.
