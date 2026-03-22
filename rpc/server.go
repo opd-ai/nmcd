@@ -2068,17 +2068,6 @@ func (s *Server) getBlock(req *Request) *Response {
 // Parameters: [height]
 // - height (int): The block height
 func (s *Server) getBlockHash(req *Request) *Response {
-	if s.blockchain == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32603,
-				Message: "Blockchain not initialized",
-			},
-			ID: req.ID,
-		}
-	}
-
 	var params []interface{}
 	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
 		return &Response{
@@ -2134,6 +2123,18 @@ func (s *Server) getBlockHash(req *Request) *Response {
 		}
 	}
 
+	// Check blockchain availability after parameter validation
+	if s.blockchain == nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32603,
+				Message: "Blockchain not initialized",
+			},
+			ID: req.ID,
+		}
+	}
+
 	// Get hash by height
 	hash, err := s.blockchain.BlockHashByHeight(height)
 	if err != nil {
@@ -2163,17 +2164,6 @@ func (s *Server) getBlockHash(req *Request) *Response {
 // Note: This implementation searches through recent blocks to find transactions.
 // It does not currently support mempool transactions or a full transaction index.
 func (s *Server) getRawTransaction(req *Request) *Response {
-	if s.blockchain == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32603,
-				Message: "Blockchain not initialized",
-			},
-			ID: req.ID,
-		}
-	}
-
 	var params []interface{}
 	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
 		return &Response{
@@ -2226,6 +2216,18 @@ func (s *Server) getRawTransaction(req *Request) *Response {
 			}
 		}
 		verbose = v
+	}
+
+	// Check blockchain availability after parameter validation
+	if s.blockchain == nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32603,
+				Message: "Blockchain not initialized",
+			},
+			ID: req.ID,
+		}
 	}
 
 	// Search for transaction in recent blocks
@@ -2351,17 +2353,6 @@ func (s *Server) getRawTransaction(req *Request) *Response {
 //
 // Returns: transaction hash (txid) if broadcast was successful
 func (s *Server) sendRawTransaction(req *Request) *Response {
-	if s.blockchain == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32603,
-				Message: "Blockchain not initialized",
-			},
-			ID: req.ID,
-		}
-	}
-
 	var params []interface{}
 	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
 		return &Response{
