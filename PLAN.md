@@ -97,7 +97,7 @@
 - **Dependencies**: None (parallel with Step 1-2)
 - **Goal Impact**: Addresses "Block Synchronization" partial status
 - **Acceptance**: network package coverage ≥60% (from 50.9%)
-- **Result**: Added `network/event_handlers_test.go` with 789 lines. Fixed nil peer handling in `onTx`, `onInv`, `onGetData`. Coverage reached 59.0%.
+- **Result**: Added `network/event_handlers_test.go` with 40+ tests. Fixed nil peer handling in `onTx`, `onInv`, `onGetData`. Coverage improved from 50.9% to 57.8% (7pp gain).
 - **Validation**:
   ```bash
   go test -cover ./network | grep -E "coverage: [0-9]+\.[0-9]+%"
