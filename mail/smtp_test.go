@@ -28,6 +28,46 @@ func (m *mockSMTPResolver) LookupMail(ctx context.Context, name string) (bridge.
 	return bridge.MailConfig{}, fmt.Errorf("name not found: %s", name)
 }
 
+// setupTestRelay creates and starts a test relay with default configuration
+func setupTestRelay(t *testing.T, lookups map[string]bridge.MailConfig) (*Relay, string) {
+	t.Helper()
+	resolver := &mockSMTPResolver{lookups: lookups}
+	router := NewRouter(resolver, 0)
+	config := DefaultRelayConfig()
+	config.ListenAddr = "localhost:0"
+
+	relay := NewRelay(router, config)
+	if err := relay.Start(); err != nil {
+		t.Fatalf("Failed to start relay: %v", err)
+	}
+	return relay, relay.listener.Addr().String()
+}
+
+// setupTestConnection creates a connection to the test relay and returns conn and reader
+func setupTestConnection(t *testing.T, addr string) (net.Conn, *bufio.Reader) {
+	t.Helper()
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Failed to connect to relay: %v", err)
+	}
+	reader := bufio.NewReader(conn)
+	// Read greeting
+	reader.ReadString('\n')
+	return conn, reader
+}
+
+// sendEHLO sends EHLO command and skips the multi-line response
+func sendEHLO(t *testing.T, conn net.Conn, reader *bufio.Reader) {
+	t.Helper()
+	fmt.Fprintf(conn, "EHLO client.example.com\r\n")
+	for {
+		line, _ := reader.ReadString('\n')
+		if !strings.Contains(line, "250-") {
+			break
+		}
+	}
+}
+
 // TestNewRelay tests relay creation.
 func TestNewRelay(t *testing.T) {
 	resolver := &mockSMTPResolver{
@@ -133,25 +173,12 @@ func TestRelayStartBindError(t *testing.T) {
 
 // TestSMTPProtocol tests basic SMTP protocol handling.
 func TestSMTPProtocol(t *testing.T) {
-	resolver := &mockSMTPResolver{
-		lookups: map[string]bridge.MailConfig{
-			"alice": {ForwardTo: "alice@gmail.com"},
-		},
+	lookups := map[string]bridge.MailConfig{
+		"alice": {ForwardTo: "alice@gmail.com"},
 	}
-	router := NewRouter(resolver, 0) // No caching for test
-	config := DefaultRelayConfig()
-	config.ListenAddr = "localhost:0"
-
-	relay := NewRelay(router, config)
-	if err := relay.Start(); err != nil {
-		t.Fatalf("Failed to start relay: %v", err)
-	}
+	relay, addr := setupTestRelay(t, lookups)
 	defer relay.Stop()
 
-	// Get actual listen address
-	addr := relay.listener.Addr().String()
-
-	// Connect to relay
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		t.Fatalf("Failed to connect to relay: %v", err)
@@ -227,45 +254,16 @@ func TestSMTPProtocol(t *testing.T) {
 
 // TestSMTPNonBitAddress tests rejection of non-.bit addresses.
 func TestSMTPNonBitAddress(t *testing.T) {
-	resolver := &mockSMTPResolver{
-		lookups: map[string]bridge.MailConfig{
-			"alice": {ForwardTo: "alice@gmail.com"},
-		},
+	lookups := map[string]bridge.MailConfig{
+		"alice": {ForwardTo: "alice@gmail.com"},
 	}
-	router := NewRouter(resolver, 0)
-	config := DefaultRelayConfig()
-	config.ListenAddr = "localhost:0"
-
-	relay := NewRelay(router, config)
-	if err := relay.Start(); err != nil {
-		t.Fatalf("Failed to start relay: %v", err)
-	}
+	relay, addr := setupTestRelay(t, lookups)
 	defer relay.Stop()
 
-	// Get actual listen address
-	addr := relay.listener.Addr().String()
-
-	// Connect to relay
-	conn, err := net.Dial("tcp", addr)
-	if err != nil {
-		t.Fatalf("Failed to connect to relay: %v", err)
-	}
+	conn, reader := setupTestConnection(t, addr)
 	defer conn.Close()
 
-	reader := bufio.NewReader(conn)
-
-	// Read greeting
-	reader.ReadString('\n')
-
-	// Send EHLO
-	fmt.Fprintf(conn, "EHLO client.example.com\r\n")
-	// Skip EHLO responses
-	for {
-		line, _ := reader.ReadString('\n')
-		if !strings.Contains(line, "250-") {
-			break
-		}
-	}
+	sendEHLO(t, conn, reader)
 
 	// Send MAIL FROM
 	fmt.Fprintf(conn, "MAIL FROM:<sender@example.com>\r\n")
@@ -288,45 +286,16 @@ func TestSMTPNonBitAddress(t *testing.T) {
 
 // TestSMTPRSET tests RSET command.
 func TestSMTPRSET(t *testing.T) {
-	resolver := &mockSMTPResolver{
-		lookups: map[string]bridge.MailConfig{
-			"alice": {ForwardTo: "alice@gmail.com"},
-		},
+	lookups := map[string]bridge.MailConfig{
+		"alice": {ForwardTo: "alice@gmail.com"},
 	}
-	router := NewRouter(resolver, 0)
-	config := DefaultRelayConfig()
-	config.ListenAddr = "localhost:0"
-
-	relay := NewRelay(router, config)
-	if err := relay.Start(); err != nil {
-		t.Fatalf("Failed to start relay: %v", err)
-	}
+	relay, addr := setupTestRelay(t, lookups)
 	defer relay.Stop()
 
-	// Get actual listen address
-	addr := relay.listener.Addr().String()
-
-	// Connect to relay
-	conn, err := net.Dial("tcp", addr)
-	if err != nil {
-		t.Fatalf("Failed to connect to relay: %v", err)
-	}
+	conn, reader := setupTestConnection(t, addr)
 	defer conn.Close()
 
-	reader := bufio.NewReader(conn)
-
-	// Read greeting
-	reader.ReadString('\n')
-
-	// Send EHLO
-	fmt.Fprintf(conn, "EHLO client.example.com\r\n")
-	// Skip EHLO responses
-	for {
-		line, _ := reader.ReadString('\n')
-		if !strings.Contains(line, "250-") {
-			break
-		}
-	}
+	sendEHLO(t, conn, reader)
 
 	// Send MAIL FROM
 	fmt.Fprintf(conn, "MAIL FROM:<sender@example.com>\r\n")
@@ -349,35 +318,14 @@ func TestSMTPRSET(t *testing.T) {
 
 // TestSMTPNOOP tests NOOP command.
 func TestSMTPNOOP(t *testing.T) {
-	resolver := &mockSMTPResolver{
-		lookups: map[string]bridge.MailConfig{
-			"alice": {ForwardTo: "alice@gmail.com"},
-		},
+	lookups := map[string]bridge.MailConfig{
+		"alice": {ForwardTo: "alice@gmail.com"},
 	}
-	router := NewRouter(resolver, 0)
-	config := DefaultRelayConfig()
-	config.ListenAddr = "localhost:0"
-
-	relay := NewRelay(router, config)
-	if err := relay.Start(); err != nil {
-		t.Fatalf("Failed to start relay: %v", err)
-	}
+	relay, addr := setupTestRelay(t, lookups)
 	defer relay.Stop()
 
-	// Get actual listen address
-	addr := relay.listener.Addr().String()
-
-	// Connect to relay
-	conn, err := net.Dial("tcp", addr)
-	if err != nil {
-		t.Fatalf("Failed to connect to relay: %v", err)
-	}
+	conn, reader := setupTestConnection(t, addr)
 	defer conn.Close()
-
-	reader := bufio.NewReader(conn)
-
-	// Read greeting
-	reader.ReadString('\n')
 
 	// Send NOOP
 	fmt.Fprintf(conn, "NOOP\r\n")
@@ -492,43 +440,16 @@ func TestSMTPConcurrentConnections(t *testing.T) {
 
 // TestSMTPDataCommand tests the DATA command and message body handling.
 func TestSMTPDataCommand(t *testing.T) {
-	resolver := &mockSMTPResolver{
-		lookups: map[string]bridge.MailConfig{
-			"alice": {ForwardTo: "alice@gmail.com"},
-		},
+	lookups := map[string]bridge.MailConfig{
+		"alice": {ForwardTo: "alice@gmail.com"},
 	}
-	router := NewRouter(resolver, 0)
-	config := DefaultRelayConfig()
-	config.ListenAddr = "localhost:0"
-	// Note: This test won't actually forward since we don't have a real upstream server
-	// but it tests the protocol handling
-
-	relay := NewRelay(router, config)
-	if err := relay.Start(); err != nil {
-		t.Fatalf("Failed to start relay: %v", err)
-	}
+	relay, addr := setupTestRelay(t, lookups)
 	defer relay.Stop()
 
-	addr := relay.listener.Addr().String()
-	conn, err := net.Dial("tcp", addr)
-	if err != nil {
-		t.Fatalf("Failed to connect to relay: %v", err)
-	}
+	conn, reader := setupTestConnection(t, addr)
 	defer conn.Close()
 
-	reader := bufio.NewReader(conn)
-
-	// Read greeting
-	reader.ReadString('\n')
-
-	// Send EHLO
-	fmt.Fprintf(conn, "EHLO client.example.com\r\n")
-	for {
-		line, _ := reader.ReadString('\n')
-		if !strings.Contains(line, "250-") {
-			break
-		}
-	}
+	sendEHLO(t, conn, reader)
 
 	// Send MAIL FROM
 	fmt.Fprintf(conn, "MAIL FROM:<sender@example.com>\r\n")
@@ -569,41 +490,16 @@ func TestSMTPDataCommand(t *testing.T) {
 
 // TestSMTPDataWithoutEnvelope tests DATA command without proper envelope.
 func TestSMTPDataWithoutEnvelope(t *testing.T) {
-	resolver := &mockSMTPResolver{
-		lookups: map[string]bridge.MailConfig{
-			"alice": {ForwardTo: "alice@gmail.com"},
-		},
+	lookups := map[string]bridge.MailConfig{
+		"alice": {ForwardTo: "alice@gmail.com"},
 	}
-	router := NewRouter(resolver, 0)
-	config := DefaultRelayConfig()
-	config.ListenAddr = "localhost:0"
-
-	relay := NewRelay(router, config)
-	if err := relay.Start(); err != nil {
-		t.Fatalf("Failed to start relay: %v", err)
-	}
+	relay, addr := setupTestRelay(t, lookups)
 	defer relay.Stop()
 
-	addr := relay.listener.Addr().String()
-	conn, err := net.Dial("tcp", addr)
-	if err != nil {
-		t.Fatalf("Failed to connect to relay: %v", err)
-	}
+	conn, reader := setupTestConnection(t, addr)
 	defer conn.Close()
 
-	reader := bufio.NewReader(conn)
-
-	// Read greeting
-	reader.ReadString('\n')
-
-	// Send EHLO
-	fmt.Fprintf(conn, "EHLO client.example.com\r\n")
-	for {
-		line, _ := reader.ReadString('\n')
-		if !strings.Contains(line, "250-") {
-			break
-		}
-	}
+	sendEHLO(t, conn, reader)
 
 	// Send DATA without MAIL FROM or RCPT TO
 	fmt.Fprintf(conn, "DATA\r\n")
