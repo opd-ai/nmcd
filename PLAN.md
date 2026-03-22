@@ -114,11 +114,12 @@
   go test -cover ./network | grep -E "coverage: [0-9]+\.[0-9]+%"
   ```
 
-### Step 5: Chain Package Test Coverage — Mempool Validation
+### Step 5: Chain Package Test Coverage — Mempool Validation ⚠️ PARTIAL
 - **Deliverable**: Tests for `ValidateMempoolTransaction` (0% coverage) in `chain/blockchain.go:1789`
 - **Dependencies**: None (parallel with Steps 1-4)
 - **Goal Impact**: Covers critical 0% coverage function with CC=24
 - **Acceptance**: `ValidateMempoolTransaction` function coverage ≥70%
+- **Result**: Added `chain/mempool_validation_test.go` with 11 tests. Coverage improved from 0% to 37.5%. Remaining paths (name operation script parsing, UTXO lookup, signature validation) require properly encoded name scripts which need txscript builder integration.
 - **Validation**:
   ```bash
   go test -coverprofile=c.out ./chain && go tool cover -func=c.out | grep ValidateMempoolTransaction
