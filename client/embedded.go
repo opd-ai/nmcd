@@ -145,7 +145,10 @@ func applyConfigDefaults(cfg *Config) error {
 	if cfg.MaxPeers == 0 {
 		cfg.MaxPeers = 8
 	}
-	return os.MkdirAll(cfg.DataDir, 0o700)
+	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
+		return fmt.Errorf("failed to create data directory %q: %w", cfg.DataDir, err)
+	}
+	return nil
 }
 
 // resolveChainParams maps a network name to its chain parameters.
