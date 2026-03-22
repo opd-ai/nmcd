@@ -378,39 +378,7 @@ func TestNewClient_AutoMode_NetworkMatch(t *testing.T) {
 		return nil, &rpcError{Code: -32601, Message: "Method not found"}
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		var req rpcRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Bad request", http.StatusBadRequest)
-			return
-		}
-
-		var paramsRaw json.RawMessage
-		if req.Params != nil {
-			paramsRaw, _ = json.Marshal(req.Params)
-		}
-		result, rpcErr := handler(req.Method, paramsRaw)
-
-		resp := rpcResponse{
-			Jsonrpc: "2.0",
-			ID:      req.ID,
-		}
-
-		if rpcErr != nil {
-			resp.Error = rpcErr
-		} else {
-			resultBytes, _ := json.Marshal(result)
-			resp.Result = resultBytes
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-	}))
+	server := setupMockRPCServer(t, handler)
 	defer server.Close()
 
 	// Try to connect with Auto mode configured for mainnet (or empty, which defaults to mainnet)
