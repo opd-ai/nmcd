@@ -712,73 +712,94 @@ func (bc *BlockChain) validateNameUpdateOp(msgTx *wire.MsgTx, txOut *wire.TxOut,
 
 // validateNameOperations validates name operations in a block
 func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
-	// Determine the block height
 	height, err := bc.determineBlockHeight(block)
 	if err != nil {
-		return nil // Cannot determine height - skip validation
+		return nil
 	}
 
-	// Create validation context for tracking seen names/commits
 	ctx := newNameValidationContext()
 
 	for txIdx, tx := range block.Transactions() {
-		msgTx := tx.MsgTx()
+		if err := bc.validateTransactionNameOps(tx, txIdx, height, ctx); err != nil {
+			return err
+		}
+	}
 
-		// Detect and validate name operations in transaction outputs
-		nameOpTypes := make(map[namedb.NameOperation]struct{})
-		for _, txOut := range msgTx.TxOut {
-			op, _, _, _, err := parseNameScriptFull(txOut.PkScript)
-			if err != nil {
-				continue // Not a name operation
-			}
+	return nil
+}
+
+// validateTransactionNameOps validates all name operations in a transaction.
+func (bc *BlockChain) validateTransactionNameOps(tx *btcutil.Tx, txIdx int, height int32, ctx *nameValidationContext) error {
+	msgTx := tx.MsgTx()
+	nameOpTypes := bc.collectNameOperationTypes(msgTx)
+
+	if err := bc.validateNameOpFees(msgTx, nameOpTypes, txIdx, height); err != nil {
+		return err
+	}
+
+	return bc.validateNameOutputs(msgTx, height, ctx)
+}
+
+// collectNameOperationTypes identifies unique name operation types in transaction outputs.
+func (bc *BlockChain) collectNameOperationTypes(msgTx *wire.MsgTx) map[namedb.NameOperation]struct{} {
+	nameOpTypes := make(map[namedb.NameOperation]struct{})
+	for _, txOut := range msgTx.TxOut {
+		if op, _, _, _, err := parseNameScriptFull(txOut.PkScript); err == nil {
 			nameOpTypes[op] = struct{}{}
 		}
+	}
+	return nameOpTypes
+}
 
-		// Validate transaction fee for name operations (skip coinbase)
-		if len(nameOpTypes) > 0 && txIdx > 0 {
-			txHash := msgTx.TxHash()
-			for opType := range nameOpTypes {
-				if err := bc.validateTransactionFee(msgTx, opType, height); err != nil {
-					return fmt.Errorf("invalid transaction fee for %s in tx %s: %w", opType, txHash, err)
-				}
-			}
+// validateNameOpFees validates transaction fees for name operations.
+func (bc *BlockChain) validateNameOpFees(msgTx *wire.MsgTx, nameOpTypes map[namedb.NameOperation]struct{}, txIdx int, height int32) error {
+	if len(nameOpTypes) == 0 || txIdx == 0 {
+		return nil
+	}
+
+	txHash := msgTx.TxHash()
+	for opType := range nameOpTypes {
+		if err := bc.validateTransactionFee(msgTx, opType, height); err != nil {
+			return fmt.Errorf("invalid transaction fee for %s in tx %s: %w", opType, txHash, err)
+		}
+	}
+	return nil
+}
+
+// validateNameOutputs validates each name operation output in a transaction.
+func (bc *BlockChain) validateNameOutputs(msgTx *wire.MsgTx, height int32, ctx *nameValidationContext) error {
+	txHash := msgTx.TxHash()
+
+	for _, txOut := range msgTx.TxOut {
+		op, name, value, extra, err := parseNameScriptFull(txOut.PkScript)
+		if err != nil {
+			continue
 		}
 
-		// Validate each name operation in transaction outputs
-		for _, txOut := range msgTx.TxOut {
-			op, name, value, extra, err := parseNameScriptFull(txOut.PkScript)
-			if err != nil {
-				continue // Not a name operation
-			}
+		if err := bc.dispatchNameOpValidation(msgTx, txOut, op, name, value, extra, txHash, height, ctx); err != nil {
+			return err
+		}
 
-			txHash := msgTx.TxHash()
-
-			switch op {
-			case namedb.NameNew:
-				if err := bc.validateNameNewOp(txOut, extra, txHash, ctx); err != nil {
-					return err
-				}
-
-			case namedb.NameFirstUpdate:
-				if err := bc.validateNameFirstUpdateOp(txOut, name, extra, txHash, height, ctx); err != nil {
-					return err
-				}
-
-			case namedb.NameUpdate:
-				if err := bc.validateNameUpdateOp(msgTx, txOut, name, txHash, height, ctx); err != nil {
-					return err
-				}
-			}
-
-			// Validate name format and value size (not applicable to NAME_NEW)
-			if op != namedb.NameNew {
-				if err := validateNameFormat(name, value); err != nil {
-					return fmt.Errorf("%w (name: '%s', tx: %s)", err, name, txHash)
-				}
+		if op != namedb.NameNew {
+			if err := validateNameFormat(name, value); err != nil {
+				return fmt.Errorf("%w (name: '%s', tx: %s)", err, name, txHash)
 			}
 		}
 	}
 
+	return nil
+}
+
+// dispatchNameOpValidation dispatches validation to operation-specific handlers.
+func (bc *BlockChain) dispatchNameOpValidation(msgTx *wire.MsgTx, txOut *wire.TxOut, op namedb.NameOperation, name, value string, extra []byte, txHash chainhash.Hash, height int32, ctx *nameValidationContext) error {
+	switch op {
+	case namedb.NameNew:
+		return bc.validateNameNewOp(txOut, extra, txHash, ctx)
+	case namedb.NameFirstUpdate:
+		return bc.validateNameFirstUpdateOp(txOut, name, extra, txHash, height, ctx)
+	case namedb.NameUpdate:
+		return bc.validateNameUpdateOp(msgTx, txOut, name, txHash, height, ctx)
+	}
 	return nil
 }
 

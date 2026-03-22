@@ -1781,6 +1781,23 @@ func (s *Server) getBalance(req *Request) *Response {
 //
 // Returns array of UTXO objects with txid, vout, address, amount, confirmations, etc.
 func (s *Server) listUnspent(req *Request) *Response {
+	if err := s.validateListUnspentState(); err != nil {
+		return err
+	}
+
+	minConf, maxConf, filterAddrs := s.parseListUnspentParams(req.Params)
+	addresses := s.resolveTargetAddresses(filterAddrs)
+	utxos := s.collectFilteredUTXOs(addresses, minConf, maxConf)
+
+	return &Response{
+		Jsonrpc: "2.0",
+		Result:  utxos,
+		ID:      req.ID,
+	}
+}
+
+// validateListUnspentState checks wallet and blockchain availability.
+func (s *Server) validateListUnspentState() *Response {
 	if s.wallet == nil {
 		return &Response{
 			Jsonrpc: "2.0",
@@ -1788,10 +1805,8 @@ func (s *Server) listUnspent(req *Request) *Response {
 				Code:    -1,
 				Message: "Wallet not initialized. Start the node with wallet enabled.",
 			},
-			ID: req.ID,
 		}
 	}
-
 	if s.blockchain == nil {
 		return &Response{
 			Jsonrpc: "2.0",
@@ -1799,100 +1814,111 @@ func (s *Server) listUnspent(req *Request) *Response {
 				Code:    -32603,
 				Message: "Blockchain not initialized",
 			},
-			ID: req.ID,
 		}
 	}
+	return nil
+}
 
-	// Parse optional parameters
-	minConf := 1
-	maxConf := 9999999
-	var filterAddresses []string
+// parseListUnspentParams extracts minconf, maxconf, and address filters from request params.
+func (s *Server) parseListUnspentParams(rawParams json.RawMessage) (minConf, maxConf int, filterAddresses []string) {
+	minConf = 1
+	maxConf = 9999999
 
 	var params []interface{}
-	if err := json.Unmarshal(req.Params, &params); err == nil && len(params) > 0 {
-		// Parse minconf
-		if minC, ok := params[0].(float64); ok {
-			minConf = int(minC)
+	if err := json.Unmarshal(rawParams, &params); err != nil || len(params) == 0 {
+		return minConf, maxConf, filterAddresses
+	}
+
+	if minC, ok := params[0].(float64); ok {
+		minConf = int(minC)
+	}
+	if len(params) > 1 {
+		if maxC, ok := params[1].(float64); ok {
+			maxConf = int(maxC)
 		}
-		// Parse maxconf
-		if len(params) > 1 {
-			if maxC, ok := params[1].(float64); ok {
-				maxConf = int(maxC)
-			}
-		}
-		// Parse addresses filter
-		if len(params) > 2 {
-			if addrs, ok := params[2].([]interface{}); ok {
-				for _, a := range addrs {
-					if addr, ok := a.(string); ok {
-						filterAddresses = append(filterAddresses, addr)
-					}
-				}
+	}
+	if len(params) > 2 {
+		filterAddresses = s.extractAddressFilter(params[2])
+	}
+	return minConf, maxConf, filterAddresses
+}
+
+// extractAddressFilter parses the address filter parameter.
+func (s *Server) extractAddressFilter(param interface{}) []string {
+	var addresses []string
+	if addrs, ok := param.([]interface{}); ok {
+		for _, a := range addrs {
+			if addr, ok := a.(string); ok {
+				addresses = append(addresses, addr)
 			}
 		}
 	}
+	return addresses
+}
 
-	// If no filter addresses specified, use all wallet addresses
-	addresses := filterAddresses
-	if len(addresses) == 0 {
-		addresses = s.wallet.GetAddresses()
+// resolveTargetAddresses returns the addresses to query (filter or all wallet addresses).
+func (s *Server) resolveTargetAddresses(filterAddresses []string) []string {
+	if len(filterAddresses) > 0 {
+		return filterAddresses
 	}
+	return s.wallet.GetAddresses()
+}
 
-	// Get current block height for confirmations calculation
+// collectFilteredUTXOs gathers UTXOs for addresses, applying confirmation filters.
+func (s *Server) collectFilteredUTXOs(addresses []string, minConf, maxConf int) []map[string]interface{} {
 	bestHeight := s.blockchain.BestSnapshot().Height
-
-	// Collect UTXOs for all addresses
 	var result []map[string]interface{}
+
 	for _, addr := range addresses {
 		utxos, err := s.blockchain.GetUTXOsForAddress(addr)
 		if err != nil {
-			continue // Skip addresses with errors
+			continue
 		}
 
 		for _, utxo := range utxos {
-			// Calculate confirmations based on UTXO block height.
-			// A height of 0 indicates unknown or unconfirmed, so treat it as 0 confirmations.
-			confirmations := 0
-			if utxo.Height > 0 {
-				confirmations = int(bestHeight - utxo.Height + 1)
+			if utxoObj := s.buildUTXOResult(utxo, bestHeight, minConf, maxConf); utxoObj != nil {
+				result = append(result, utxoObj)
 			}
-
-			// Apply confirmation filters
-			if confirmations < minConf || confirmations > maxConf {
-				continue
-			}
-
-			// Build UTXO result object
-			utxoResult := map[string]interface{}{
-				"txid":          utxo.TxHash.String(),
-				"vout":          utxo.OutIndex,
-				"address":       utxo.Address,
-				"amount":        float64(utxo.Value) / 1e8,
-				"confirmations": confirmations,
-				"spendable":     true, // Wallet has the key
-				"solvable":      true,
-				"safe":          true,
-			}
-
-			// Add script if available
-			if len(utxo.PkScript) > 0 {
-				utxoResult["scriptPubKey"] = hex.EncodeToString(utxo.PkScript)
-			}
-
-			result = append(result, utxoResult)
 		}
 	}
 
-	// Return empty array if no UTXOs found
 	if result == nil {
 		result = []map[string]interface{}{}
 	}
+	return result
+}
 
-	return &Response{
-		Jsonrpc: "2.0",
-		Result:  result,
-		ID:      req.ID,
+// buildUTXOResult creates a UTXO result object if it passes confirmation filters.
+func (s *Server) buildUTXOResult(utxo *namedb.UTXO, bestHeight int32, minConf, maxConf int) map[string]interface{} {
+	confirmations := s.calculateConfirmations(utxo.Height, bestHeight)
+	if confirmations < minConf || confirmations > maxConf {
+		return nil
 	}
+
+	result := map[string]interface{}{
+		"txid":          utxo.TxHash.String(),
+		"vout":          utxo.OutIndex,
+		"address":       utxo.Address,
+		"amount":        float64(utxo.Value) / 1e8,
+		"confirmations": confirmations,
+		"spendable":     true,
+		"solvable":      true,
+		"safe":          true,
+	}
+
+	if len(utxo.PkScript) > 0 {
+		result["scriptPubKey"] = hex.EncodeToString(utxo.PkScript)
+	}
+
+	return result
+}
+
+// calculateConfirmations computes confirmations for a UTXO at a given height.
+func (s *Server) calculateConfirmations(utxoHeight, bestHeight int32) int {
+	if utxoHeight > 0 {
+		return int(bestHeight - utxoHeight + 1)
+	}
+	return 0
 }
 
 // getBlock returns a block by hash with optional verbose mode.
