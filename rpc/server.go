@@ -89,6 +89,112 @@ type Error struct {
 	Message string `json:"message"`
 }
 
+// errorResponse creates a JSON-RPC error response with the given code and message.
+func errorResponse(id interface{}, code int, message string) *Response {
+	return &Response{
+		Jsonrpc: "2.0",
+		Error: &Error{
+			Code:    code,
+			Message: message,
+		},
+		ID: id,
+	}
+}
+
+// successResponse creates a JSON-RPC success response with the given result.
+func successResponse(id interface{}, result interface{}) *Response {
+	return &Response{
+		Jsonrpc: "2.0",
+		Result:  result,
+		ID:      id,
+	}
+}
+
+// requireWallet returns an error response if the wallet is not initialized.
+func (s *Server) requireWallet(reqID interface{}) *Response {
+	if s.wallet == nil {
+		return errorResponse(reqID, -1, "Wallet not initialized. Start the node with wallet enabled.")
+	}
+	return nil
+}
+
+// requireBlockchain returns an error response if the blockchain is not initialized.
+func (s *Server) requireBlockchain(reqID interface{}) *Response {
+	if s.blockchain == nil {
+		return errorResponse(reqID, -32603, "Blockchain not initialized")
+	}
+	return nil
+}
+
+// parseInterfaceParams unmarshals JSON params into []interface{} with a minimum count.
+// Returns the params and nil on success, or nil and an error response on failure.
+func parseInterfaceParams(params json.RawMessage, reqID interface{}, minCount int, usage string) ([]interface{}, *Response) {
+	var result []interface{}
+	if err := json.Unmarshal(params, &result); err != nil || len(result) < minCount {
+		return nil, errorResponse(reqID, -32602, "Invalid params: expected "+usage)
+	}
+	return result, nil
+}
+
+// parseStringParams unmarshals JSON params into []string with a minimum count.
+// Returns the params and nil on success, or nil and an error response on failure.
+func parseStringParams(params json.RawMessage, reqID interface{}, minCount int, usage string) ([]string, *Response) {
+	var result []string
+	if err := json.Unmarshal(params, &result); err != nil || len(result) < minCount {
+		return nil, errorResponse(reqID, -32602, "Invalid params: expected "+usage)
+	}
+	return result, nil
+}
+
+// parseHashParam parses a hash string from params and returns a chainhash.Hash.
+func parseHashParam(params []interface{}, index int, reqID interface{}, paramName string) (*chainhash.Hash, *Response) {
+	hashStr, ok := params[index].(string)
+	if !ok {
+		return nil, errorResponse(reqID, -32602, fmt.Sprintf("Invalid params: %s must be a string", paramName))
+	}
+	hash, err := chainhash.NewHashFromStr(hashStr)
+	if err != nil {
+		return nil, errorResponse(reqID, -5, fmt.Sprintf("Invalid %s: %v", paramName, err))
+	}
+	return hash, nil
+}
+
+// parseVerboseParam parses an optional verbose boolean from params.
+func parseVerboseParam(params []interface{}, index int, reqID interface{}) (bool, *Response) {
+	if len(params) <= index {
+		return false, nil
+	}
+	v, ok := params[index].(bool)
+	if !ok {
+		return false, errorResponse(reqID, -32602, "Invalid params: verbose must be a boolean")
+	}
+	return v, nil
+}
+
+// validateNameLength validates that a name is between 1 and 255 characters.
+func validateNameLength(name string, reqID interface{}) *Response {
+	if len(name) == 0 || len(name) > 255 {
+		return errorResponse(reqID, -5, fmt.Sprintf("Invalid name length: %d (max 255)", len(name)))
+	}
+	return nil
+}
+
+// validateValueSize validates that a name value does not exceed 1023 bytes.
+func validateValueSize(value string, reqID interface{}) *Response {
+	if len(value) > 1023 {
+		return errorResponse(reqID, -5, fmt.Sprintf("Value too large: %d bytes (max 1023)", len(value)))
+	}
+	return nil
+}
+
+// broadcastAndRespond broadcasts a transaction and returns a success or error response.
+func (s *Server) broadcastAndRespond(tx *wire.MsgTx, reqID interface{}, result map[string]interface{}) *Response {
+	if err := s.peerMgr.BroadcastTx(tx); err != nil {
+		return errorResponse(reqID, -1, fmt.Sprintf("Failed to broadcast transaction: %v", err))
+	}
+	return successResponse(reqID, result)
+}
+
 // NewServer creates a new RPC server
 func NewServer(cfg *Config) (*Server, error) {
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
@@ -563,158 +669,123 @@ func (s *Server) nameShow(req *Request) *Response {
 // signing and broadcasting, the wallet must have the private key for the
 // address that owns the name.
 func (s *Server) nameUpdate(req *Request) *Response {
-	// Check if wallet is available
-	if s.wallet == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: "Wallet not initialized. Start the node with wallet enabled.",
-			},
-			ID: req.ID,
-		}
+	if errResp := s.requireWallet(req.ID); errResp != nil {
+		return errResp
 	}
 
-	// Parse parameters
-	var params []string
-	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) < 2 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32602,
-				Message: "Invalid params: expected [\"name\", \"value\"] or [\"name\", \"value\", \"address\"]",
-			},
-			ID: req.ID,
-		}
+	params, errResp := parseStringParams(req.Params, req.ID, 2, "[\"name\", \"value\"] or [\"name\", \"value\", \"address\"]")
+	if errResp != nil {
+		return errResp
 	}
 
 	name := params[0]
 	newValue := params[1]
 
-	// Parse optional destination address (third parameter)
-	// This enables name ownership transfer. If not provided, the name stays at the current address.
-	// Format: name_update "d/example" "new value" "N1Address..."
-	var destAddress btcutil.Address
-	if len(params) >= 3 && params[2] != "" {
-		// Decode and validate the destination address
-		addr, err := btcutil.DecodeAddress(params[2], s.blockchain.ChainParams())
-		if err != nil {
-			return &Response{
-				Jsonrpc: "2.0",
-				Error: &Error{
-					Code:    -5,
-					Message: fmt.Sprintf("Invalid destination address: %v", err),
-				},
-				ID: req.ID,
-			}
-		}
-		// Ensure it's a P2PKH address (Namecoin only supports P2PKH for name operations)
-		if _, ok := addr.(*btcutil.AddressPubKeyHash); !ok {
-			return &Response{
-				Jsonrpc: "2.0",
-				Error: &Error{
-					Code:    -5,
-					Message: fmt.Sprintf("Destination address must be P2PKH, got: %T", addr),
-				},
-				ID: req.ID,
-			}
-		}
-		destAddress = addr
+	destAddress, errResp := s.parseOptionalDestAddress(params, req.ID)
+	if errResp != nil {
+		return errResp
 	}
 
-	// Validate name format
-	if len(name) == 0 || len(name) > 255 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -5,
-				Message: fmt.Sprintf("Invalid name length: %d (max 255)", len(name)),
-			},
-			ID: req.ID,
-		}
+	if errResp := validateNameLength(name, req.ID); errResp != nil {
+		return errResp
+	}
+	if errResp := validateValueSize(newValue, req.ID); errResp != nil {
+		return errResp
 	}
 
-	// Validate value format
-	if len(newValue) > 1023 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -5,
-				Message: fmt.Sprintf("Value too large: %d bytes (max 1023)", len(newValue)),
-			},
-			ID: req.ID,
-		}
+	record, errResp := s.lookupActiveNameRecord(name, req.ID)
+	if errResp != nil {
+		return errResp
 	}
 
-	// Look up the current name record
+	if errResp := s.verifyNameOwnership(record, req.ID); errResp != nil {
+		return errResp
+	}
+
+	utxos, nameUtxoIndex, errResp := s.collectNameUpdateUTXOs(name, record, req.ID)
+	if errResp != nil {
+		return errResp
+	}
+
+	feeRate := int64(1)
+	tx, err := s.wallet.CreateNameUpdateTx(name, newValue, utxos, nameUtxoIndex, feeRate, destAddress)
+	if err != nil {
+		return errorResponse(req.ID, -1, fmt.Sprintf("Failed to create transaction: %v", err))
+	}
+
+	result := map[string]interface{}{
+		"txid":   tx.TxHash().String(),
+		"name":   name,
+		"value":  newValue,
+		"status": "broadcasted",
+	}
+	if destAddress != nil {
+		result["address"] = destAddress.EncodeAddress()
+	}
+
+	return s.broadcastAndRespond(tx, req.ID, result)
+}
+
+// parseOptionalDestAddress parses an optional P2PKH destination address from the third parameter.
+func (s *Server) parseOptionalDestAddress(params []string, reqID interface{}) (btcutil.Address, *Response) {
+	if len(params) < 3 || params[2] == "" {
+		return nil, nil
+	}
+	addr, err := btcutil.DecodeAddress(params[2], s.blockchain.ChainParams())
+	if err != nil {
+		return nil, errorResponse(reqID, -5, fmt.Sprintf("Invalid destination address: %v", err))
+	}
+	if _, ok := addr.(*btcutil.AddressPubKeyHash); !ok {
+		return nil, errorResponse(reqID, -5, fmt.Sprintf("Destination address must be P2PKH, got: %T", addr))
+	}
+	return addr, nil
+}
+
+// lookupActiveNameRecord retrieves a name record and verifies it is not expired.
+func (s *Server) lookupActiveNameRecord(name string, reqID interface{}) (*namedb.NameRecord, *Response) {
 	record, err := s.blockchain.GetName(name)
 	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -4,
-				Message: fmt.Sprintf("Name not found: %s", name),
-			},
-			ID: req.ID,
-		}
+		return nil, errorResponse(reqID, -4, fmt.Sprintf("Name not found: %s", name))
 	}
-
-	// Check if name is expired
 	bestHeight := s.blockchain.BestSnapshot().Height
 	if record.ExpiresAt <= bestHeight {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -4,
-				Message: fmt.Sprintf("Name expired at block %d (current: %d)", record.ExpiresAt, bestHeight),
-			},
-			ID: req.ID,
-		}
+		return nil, errorResponse(reqID, -4, fmt.Sprintf("Name expired at block %d (current: %d)", record.ExpiresAt, bestHeight))
 	}
+	return record, nil
+}
 
-	// Check if wallet has the key for the current owner
-	// (needed to sign the transaction spending the name UTXO)
+// verifyNameOwnership checks that the wallet has the private key for the name's current owner.
+func (s *Server) verifyNameOwnership(record *namedb.NameRecord, reqID interface{}) *Response {
 	if !s.wallet.HasKey(record.Address) {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -13,
-				Message: fmt.Sprintf("Wallet does not have the private key for address: %s", record.Address),
-			},
-			ID: req.ID,
-		}
+		return errorResponse(reqID, -13, fmt.Sprintf("Wallet does not have the private key for address: %s", record.Address))
 	}
+	return nil
+}
 
-	// Get the name UTXO (the UTXO holding the current name registration)
+// collectNameUpdateUTXOs retrieves and converts the UTXOs needed for a NAME_UPDATE transaction.
+func (s *Server) collectNameUpdateUTXOs(name string, record *namedb.NameRecord, reqID interface{}) ([]wallet.UTXO, int, *Response) {
 	nameUTXO, err := s.blockchain.GetNameUTXO(name)
 	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: fmt.Sprintf("Failed to get name UTXO: %v", err),
-			},
-			ID: req.ID,
-		}
+		return nil, 0, errorResponse(reqID, -1, fmt.Sprintf("Failed to get name UTXO: %v", err))
 	}
 
-	// Get wallet UTXOs for fee payment
 	walletUTXOs, err := s.blockchain.GetUTXOsForAddress(record.Address)
 	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: fmt.Sprintf("Failed to get wallet UTXOs: %v", err),
-			},
-			ID: req.ID,
-		}
+		return nil, 0, errorResponse(reqID, -1, fmt.Sprintf("Failed to get wallet UTXOs: %v", err))
 	}
 
-	// Convert namedb UTXOs to wallet UTXOs
+	utxos, nameUtxoIndex := convertAndFindNameUTXO(walletUTXOs, &nameUTXO.TxHash, nameUTXO.OutIndex)
+	if nameUtxoIndex == -1 {
+		return nil, 0, errorResponse(reqID, -1, "Name UTXO not found in wallet UTXOs")
+	}
+	return utxos, nameUtxoIndex, nil
+}
+
+// convertAndFindNameUTXO converts namedb UTXOs to wallet UTXOs and locates the name UTXO index.
+func convertAndFindNameUTXO(dbUTXOs []*namedb.UTXO, nameHash *chainhash.Hash, nameOutIndex uint32) ([]wallet.UTXO, int) {
 	var utxos []wallet.UTXO
 	nameUtxoIndex := -1
-	for _, dbUTXO := range walletUTXOs {
+	for _, dbUTXO := range dbUTXOs {
 		wUtxo := wallet.UTXO{
 			TxHash:   dbUTXO.TxHash,
 			Vout:     dbUTXO.OutIndex,
@@ -722,73 +793,12 @@ func (s *Server) nameUpdate(req *Request) *Response {
 			PkScript: dbUTXO.PkScript,
 			Address:  dbUTXO.Address,
 		}
-		// Check if this is the name UTXO
-		if dbUTXO.TxHash.IsEqual(&nameUTXO.TxHash) && dbUTXO.OutIndex == nameUTXO.OutIndex {
+		if dbUTXO.TxHash.IsEqual(nameHash) && dbUTXO.OutIndex == nameOutIndex {
 			nameUtxoIndex = len(utxos)
 		}
 		utxos = append(utxos, wUtxo)
 	}
-
-	if nameUtxoIndex == -1 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: "Name UTXO not found in wallet UTXOs",
-			},
-			ID: req.ID,
-		}
-	}
-
-	// Create the NAME_UPDATE transaction
-	// Use a fee rate of 1 satoshi/byte (1000 satoshis/KB)
-	// This is a reasonable fee for Namecoin transactions
-	feeRate := int64(1) // satoshis per byte
-	tx, err := s.wallet.CreateNameUpdateTx(name, newValue, utxos, nameUtxoIndex, feeRate, destAddress)
-	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: fmt.Sprintf("Failed to create transaction: %v", err),
-			},
-			ID: req.ID,
-		}
-	}
-
-	// Broadcast the transaction to the network
-	// This adds it to our mempool and relays it to all connected peers
-	err = s.peerMgr.BroadcastTx(tx)
-	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: fmt.Sprintf("Failed to broadcast transaction: %v", err),
-			},
-			ID: req.ID,
-		}
-	}
-
-	// Return success with transaction details
-	txHash := tx.TxHash()
-	result := map[string]interface{}{
-		"txid":   txHash.String(),
-		"name":   name,
-		"value":  newValue,
-		"status": "broadcasted", // Transaction is now in mempool and relayed to peers
-	}
-
-	// Include destination address in response if specified
-	if destAddress != nil {
-		result["address"] = destAddress.EncodeAddress()
-	}
-
-	return &Response{
-		Jsonrpc: "2.0",
-		Result:  result,
-		ID:      req.ID,
-	}
+	return utxos, nameUtxoIndex
 }
 
 // getWalletAddressAndUTXOs is a helper function that retrieves the wallet address and UTXOs
@@ -879,123 +889,60 @@ func (s *Server) getWalletAddressAndUTXOs(reqID interface{}) (btcutil.Address, [
 //   - rand: Hex-encoded random salt (MUST be saved for NAME_FIRSTUPDATE)
 //   - status: "broadcasted" indicating transaction is in mempool
 func (s *Server) nameNew(req *Request) *Response {
-	// Check if wallet is available
-	if s.wallet == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: "Wallet not initialized. Start the node with wallet enabled.",
-			},
-			ID: req.ID,
-		}
+	if errResp := s.requireWallet(req.ID); errResp != nil {
+		return errResp
 	}
 
-	// Parse parameters
-	var params []string
-	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) < 1 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32602,
-				Message: "Invalid params: expected [\"name\"]",
-			},
-			ID: req.ID,
-		}
+	params, errResp := parseStringParams(req.Params, req.ID, 1, "[\"name\"]")
+	if errResp != nil {
+		return errResp
 	}
 
 	name := params[0]
-
-	// Validate name format
-	if len(name) == 0 || len(name) > 255 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -5,
-				Message: fmt.Sprintf("Invalid name length: %d (max 255)", len(name)),
-			},
-			ID: req.ID,
-		}
+	if errResp := validateNameLength(name, req.ID); errResp != nil {
+		return errResp
 	}
 
-	// Check if name already exists and is not expired
-	existingRecord, err := s.blockchain.GetName(name)
-	if err == nil {
-		// Name exists, check if it's expired
-		bestHeight := s.blockchain.BestSnapshot().Height
-		if existingRecord.ExpiresAt > bestHeight {
-			return &Response{
-				Jsonrpc: "2.0",
-				Error: &Error{
-					Code:    -25,
-					Message: fmt.Sprintf("Name already exists and is not expired (expires at block %d, current: %d)", existingRecord.ExpiresAt, bestHeight),
-				},
-				ID: req.ID,
-			}
-		}
+	if errResp := s.checkNameNotActive(name, req.ID); errResp != nil {
+		return errResp
 	}
 
-	// Get wallet address and UTXOs
 	addr, utxos, errResp := s.getWalletAddressAndUTXOs(req.ID)
 	if errResp != nil {
 		return errResp
 	}
 
-	// Generate random salt (20 bytes) using wallet's crypto/rand helper
 	randBytes, err := wallet.GenerateRand()
 	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: fmt.Sprintf("Failed to generate random salt for NAME_NEW: %v", err),
-			},
-			ID: req.ID,
-		}
+		return errorResponse(req.ID, -1, fmt.Sprintf("Failed to generate random salt for NAME_NEW: %v", err))
 	}
 
-	// Create the NAME_NEW transaction
-	// Use a fee rate of 1 satoshi/byte (1000 satoshis/KB)
-	feeRate := int64(1) // satoshis per byte
+	feeRate := int64(1)
 	tx, randBytesReturned, err := s.wallet.CreateNameNewTx(randBytes, name, utxos, feeRate, addr)
 	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: fmt.Sprintf("Failed to create NAME_NEW transaction: %v", err),
-			},
-			ID: req.ID,
-		}
+		return errorResponse(req.ID, -1, fmt.Sprintf("Failed to create NAME_NEW transaction: %v", err))
 	}
 
-	// Broadcast the transaction to the network
-	err = s.peerMgr.BroadcastTx(tx)
-	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: fmt.Sprintf("Failed to broadcast transaction: %v", err),
-			},
-			ID: req.ID,
-		}
-	}
-
-	// Return success with transaction details
-	txHash := tx.TxHash()
 	result := map[string]interface{}{
-		"txid":   txHash.String(),
+		"txid":   tx.TxHash().String(),
 		"name":   name,
-		"rand":   fmt.Sprintf("%x", randBytesReturned), // Hex-encode the random bytes
-		"status": "broadcasted",                        // Transaction is now in mempool and relayed to peers
+		"rand":   fmt.Sprintf("%x", randBytesReturned),
+		"status": "broadcasted",
 	}
+	return s.broadcastAndRespond(tx, req.ID, result)
+}
 
-	return &Response{
-		Jsonrpc: "2.0",
-		Result:  result,
-		ID:      req.ID,
+// checkNameNotActive verifies a name doesn't already exist as an unexpired registration.
+func (s *Server) checkNameNotActive(name string, reqID interface{}) *Response {
+	existingRecord, err := s.blockchain.GetName(name)
+	if err != nil {
+		return nil // Name doesn't exist - that's what we want
 	}
+	bestHeight := s.blockchain.BestSnapshot().Height
+	if existingRecord.ExpiresAt > bestHeight {
+		return errorResponse(reqID, -25, fmt.Sprintf("Name already exists and is not expired (expires at block %d, current: %d)", existingRecord.ExpiresAt, bestHeight))
+	}
+	return nil
 }
 
 // nameFirstUpdate creates a NAME_FIRSTUPDATE transaction to complete name registration.
@@ -1013,181 +960,83 @@ func (s *Server) nameNew(req *Request) *Response {
 //   - value: The initial value
 //   - status: "broadcasted" indicating transaction is in mempool
 func (s *Server) nameFirstUpdate(req *Request) *Response {
-	// Check if wallet is available
-	if s.wallet == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: "Wallet not initialized. Start the node with wallet enabled.",
-			},
-			ID: req.ID,
-		}
+	if errResp := s.requireWallet(req.ID); errResp != nil {
+		return errResp
 	}
 
-	// Parse parameters
-	var params []string
-	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) < 3 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32602,
-				Message: "Invalid params: expected [\"name\", \"rand\", \"value\"]",
-			},
-			ID: req.ID,
-		}
+	params, errResp := parseStringParams(req.Params, req.ID, 3, "[\"name\", \"rand\", \"value\"]")
+	if errResp != nil {
+		return errResp
 	}
 
-	name := params[0]
-	randHex := params[1]
-	value := params[2]
+	name, randHex, value := params[0], params[1], params[2]
 
-	// Validate name format
-	if len(name) == 0 || len(name) > 255 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -5,
-				Message: fmt.Sprintf("Invalid name length: %d (max 255)", len(name)),
-			},
-			ID: req.ID,
-		}
+	if errResp := validateNameLength(name, req.ID); errResp != nil {
+		return errResp
+	}
+	if errResp := validateValueSize(value, req.ID); errResp != nil {
+		return errResp
 	}
 
-	// Validate value format
-	if len(value) > 1023 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -5,
-				Message: fmt.Sprintf("Value too large: %d bytes (max 1023)", len(value)),
-			},
-			ID: req.ID,
-		}
-	}
-
-	// Decode and validate random bytes
 	randBytes, err := hex.DecodeString(randHex)
 	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -5,
-				Message: fmt.Sprintf("Invalid rand hex: %v", err),
-			},
-			ID: req.ID,
-		}
+		return errorResponse(req.ID, -5, fmt.Sprintf("Invalid rand hex: %v", err))
 	}
 
-	// Compute the commitment hash to find the NAME_NEW UTXO
-	commitHash := wallet.ComputeNameNewHash(randBytes, name, s.blockchain.ChainParams())
-
-	// Check if NAME_NEW commitment exists
-	nameNewRecord, err := s.blockchain.GetNameDB().GetNameNew(commitHash)
-	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -25,
-				Message: "NAME_NEW commitment not found. You must call name_new first and wait for confirmation.",
-			},
-			ID: req.ID,
-		}
+	if errResp := s.validateNameNewCommitment(randBytes, name, req.ID); errResp != nil {
+		return errResp
 	}
 
-	// Check if enough blocks have passed (minimum 12 blocks)
-	bestHeight := s.blockchain.BestSnapshot().Height
-	blocksSinceNameNew := bestHeight - nameNewRecord.Height
-	if blocksSinceNameNew < 12 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -25,
-				Message: fmt.Sprintf("NAME_NEW not confirmed enough. Need 12 blocks, only %d blocks have passed.", blocksSinceNameNew),
-			},
-			ID: req.ID,
-		}
-	}
-
-	// Check if too many blocks have passed (maximum 36,000 blocks - name expiration period)
-	if blocksSinceNameNew > 36000 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -25,
-				Message: fmt.Sprintf("NAME_NEW commitment expired. Maximum window is 36,000 blocks, but %d blocks have passed.", blocksSinceNameNew),
-			},
-			ID: req.ID,
-		}
-	}
-
-	// Get wallet address and UTXOs
 	addr, utxos, errResp := s.getWalletAddressAndUTXOs(req.ID)
 	if errResp != nil {
 		return errResp
 	}
 
-	// Find the NAME_NEW UTXO by checking for OP_NAME_NEW opcode in scripts
-	nameNewUtxoIndex := -1
-	for i, utxo := range utxos {
-		// Try to identify NAME_NEW UTXO by checking the script
-		// NAME_NEW script format: OP_NAME_NEW <hash> OP_2DROP <P2PKH>
-		if len(utxo.PkScript) > 22 && utxo.PkScript[0] == opNameNew {
-			// This looks like a NAME_NEW output, mark it as a candidate
-			if nameNewUtxoIndex == -1 {
-				nameNewUtxoIndex = i
-			}
-		}
-	}
+	nameNewUtxoIndex := findNameNewUTXOIndex(utxos)
 
-	if nameNewUtxoIndex == -1 {
-		// If we couldn't identify the NAME_NEW UTXO, use the first UTXO as a fallback
-		// The wallet transaction creation will handle validation
-		nameNewUtxoIndex = 0
-	}
-
-	// Create the NAME_FIRSTUPDATE transaction
-	// Use a fee rate of 1 satoshi/byte (1000 satoshis/KB)
-	feeRate := int64(1) // satoshis per byte
+	feeRate := int64(1)
 	tx, err := s.wallet.CreateNameFirstUpdateTx(name, randHex, value, utxos, nameNewUtxoIndex, feeRate, addr)
 	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: fmt.Sprintf("Failed to create NAME_FIRSTUPDATE transaction: %v", err),
-			},
-			ID: req.ID,
-		}
+		return errorResponse(req.ID, -1, fmt.Sprintf("Failed to create NAME_FIRSTUPDATE transaction: %v", err))
 	}
 
-	// Broadcast the transaction to the network
-	err = s.peerMgr.BroadcastTx(tx)
-	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: fmt.Sprintf("Failed to broadcast transaction: %v", err),
-			},
-			ID: req.ID,
-		}
-	}
-
-	// Return success with transaction details
-	txHash := tx.TxHash()
 	result := map[string]interface{}{
-		"txid":   txHash.String(),
+		"txid":   tx.TxHash().String(),
 		"name":   name,
 		"value":  value,
-		"status": "broadcasted", // Transaction is now in mempool and relayed to peers
+		"status": "broadcasted",
+	}
+	return s.broadcastAndRespond(tx, req.ID, result)
+}
+
+// validateNameNewCommitment validates that a NAME_NEW commitment exists and is within the valid window.
+func (s *Server) validateNameNewCommitment(randBytes []byte, name string, reqID interface{}) *Response {
+	commitHash := wallet.ComputeNameNewHash(randBytes, name, s.blockchain.ChainParams())
+	nameNewRecord, err := s.blockchain.GetNameDB().GetNameNew(commitHash)
+	if err != nil {
+		return errorResponse(reqID, -25, "NAME_NEW commitment not found. You must call name_new first and wait for confirmation.")
 	}
 
-	return &Response{
-		Jsonrpc: "2.0",
-		Result:  result,
-		ID:      req.ID,
+	bestHeight := s.blockchain.BestSnapshot().Height
+	blocksSinceNameNew := bestHeight - nameNewRecord.Height
+	if blocksSinceNameNew < 12 {
+		return errorResponse(reqID, -25, fmt.Sprintf("NAME_NEW not confirmed enough. Need 12 blocks, only %d blocks have passed.", blocksSinceNameNew))
 	}
+	if blocksSinceNameNew > 36000 {
+		return errorResponse(reqID, -25, fmt.Sprintf("NAME_NEW commitment expired. Maximum window is 36,000 blocks, but %d blocks have passed.", blocksSinceNameNew))
+	}
+	return nil
+}
+
+// findNameNewUTXOIndex locates the NAME_NEW UTXO index by checking for OP_NAME_NEW opcode in scripts.
+// Falls back to index 0 if no NAME_NEW UTXO is found.
+func findNameNewUTXOIndex(utxos []wallet.UTXO) int {
+	for i, utxo := range utxos {
+		if len(utxo.PkScript) > 22 && utxo.PkScript[0] == opNameNew {
+			return i
+		}
+	}
+	return 0
 }
 
 // nameList returns all names in the database
@@ -1279,79 +1128,58 @@ func (s *Server) nameHistory(req *Request) *Response {
 // Matches Namecoin Core's name_scan RPC.
 // Parameters: [start] [count] where start is the prefix and count is max results (default 500)
 func (s *Server) nameScan(req *Request) *Response {
-	if s.blockchain == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32603,
-				Message: "Blockchain not initialized",
-			},
-			ID: req.ID,
-		}
+	if errResp := s.requireBlockchain(req.ID); errResp != nil {
+		return errResp
 	}
 
-	// Parse parameters: name_scan [start] [count]
-	var params []interface{}
-	start := ""
-	count := 500 // default
-
-	if err := json.Unmarshal(req.Params, &params); err == nil {
-		if len(params) > 0 {
-			if startStr, ok := params[0].(string); ok {
-				start = startStr
-			} else {
-				return &Response{
-					Jsonrpc: "2.0",
-					Error: &Error{
-						Code:    -32602,
-						Message: "start must be a string",
-					},
-					ID: req.ID,
-				}
-			}
-		}
-
-		if len(params) > 1 {
-			if countFloat, ok := params[1].(float64); ok {
-				count = int(countFloat)
-				if count <= 0 || count > 10000 {
-					return &Response{
-						Jsonrpc: "2.0",
-						Error: &Error{
-							Code:    -32602,
-							Message: "count must be between 1 and 10000",
-						},
-						ID: req.ID,
-					}
-				}
-			} else {
-				return &Response{
-					Jsonrpc: "2.0",
-					Error: &Error{
-						Code:    -32602,
-						Message: "count must be a number",
-					},
-					ID: req.ID,
-				}
-			}
-		}
+	start, count, errResp := parseNameScanParams(req.Params, req.ID)
+	if errResp != nil {
+		return errResp
 	}
 
 	names, err := s.blockchain.ScanNames(start, count)
 	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32603,
-				Message: fmt.Sprintf("Failed to scan names: %v", err),
-			},
-			ID: req.ID,
+		return errorResponse(req.ID, -32603, fmt.Sprintf("Failed to scan names: %v", err))
+	}
+
+	return successResponse(req.ID, formatNameRecords(names, s.blockchain.BestSnapshot().Height))
+}
+
+// parseNameScanParams extracts start prefix and count from name_scan parameters.
+func parseNameScanParams(rawParams json.RawMessage, reqID interface{}) (string, int, *Response) {
+	start := ""
+	count := 500
+
+	var params []interface{}
+	if err := json.Unmarshal(rawParams, &params); err != nil || len(params) == 0 {
+		return start, count, nil
+	}
+
+	if len(params) > 0 {
+		startStr, ok := params[0].(string)
+		if !ok {
+			return "", 0, errorResponse(reqID, -32602, "start must be a string")
+		}
+		start = startStr
+	}
+
+	if len(params) > 1 {
+		countFloat, ok := params[1].(float64)
+		if !ok {
+			return "", 0, errorResponse(reqID, -32602, "count must be a number")
+		}
+		count = int(countFloat)
+		if count <= 0 || count > 10000 {
+			return "", 0, errorResponse(reqID, -32602, "count must be between 1 and 10000")
 		}
 	}
 
-	// Format results similar to name_list
+	return start, count, nil
+}
+
+// formatNameRecords converts name records to JSON-RPC result format.
+func formatNameRecords(names []*namedb.NameRecord, currentHeight int32) []map[string]interface{} {
 	result := make([]map[string]interface{}, len(names))
-	currentHeight := s.blockchain.BestSnapshot().Height
 	for i, record := range names {
 		result[i] = map[string]interface{}{
 			"name":       record.Name,
@@ -1362,12 +1190,7 @@ func (s *Server) nameScan(req *Request) *Response {
 			"address":    record.Address,
 		}
 	}
-
-	return &Response{
-		Jsonrpc: "2.0",
-		Result:  result,
-		ID:      req.ID,
-	}
+	return result
 }
 
 // namePending returns pending name operations from the mempool.
@@ -1507,102 +1330,54 @@ func (s *Server) listAddresses(req *Request) *Response {
 //   - -13: Wallet is not encrypted
 //   - -14: Incorrect password
 func (s *Server) walletPassphrase(req *Request) *Response {
-	if s.wallet == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: "Wallet not initialized. Start the node with wallet enabled.",
-			},
-			ID: req.ID,
-		}
+	if errResp := s.requireWallet(req.ID); errResp != nil {
+		return errResp
 	}
 
-	var params []interface{}
-	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32602,
-				Message: "Invalid params: expected [password] or [password, timeout]",
-			},
-			ID: req.ID,
-		}
+	params, errResp := parseInterfaceParams(req.Params, req.ID, 1, "[password] or [password, timeout]")
+	if errResp != nil {
+		return errResp
 	}
 
 	password, ok := params[0].(string)
 	if !ok {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32602,
-				Message: "Invalid password parameter: expected string",
-			},
-			ID: req.ID,
-		}
+		return errorResponse(req.ID, -32602, "Invalid password parameter: expected string")
 	}
 
-	// Get timeout (default: 60 seconds)
-	timeout := 60
-	if len(params) > 1 {
-		timeoutFloat, ok := params[1].(float64)
-		if !ok {
-			return &Response{
-				Jsonrpc: "2.0",
-				Error: &Error{
-					Code:    -32602,
-					Message: "Invalid timeout parameter: expected integer",
-				},
-				ID: req.ID,
-			}
-		}
-		timeout = int(timeoutFloat)
-		if timeout <= 0 {
-			return &Response{
-				Jsonrpc: "2.0",
-				Error: &Error{
-					Code:    -32602,
-					Message: "Invalid timeout: must be positive",
-				},
-				ID: req.ID,
-			}
-		}
+	timeout, errResp := parsePassphraseTimeout(params, req.ID)
+	if errResp != nil {
+		return errResp
 	}
 
-	// Check if wallet is encrypted
 	if !s.wallet.IsEncrypted() {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -13,
-				Message: "Wallet is not encrypted",
-			},
-			ID: req.ID,
-		}
+		return errorResponse(req.ID, -13, "Wallet is not encrypted")
 	}
 
-	// Unlock wallet
 	if err := s.wallet.Unlock(password); err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -14,
-				Message: fmt.Sprintf("Failed to unlock wallet: %v", err),
-			},
-			ID: req.ID,
-		}
+		return errorResponse(req.ID, -14, fmt.Sprintf("Failed to unlock wallet: %v", err))
 	}
 
-	// Schedule auto-lock after timeout
 	time.AfterFunc(time.Duration(timeout)*time.Second, func() {
 		s.wallet.Lock()
 	})
 
-	return &Response{
-		Jsonrpc: "2.0",
-		Result:  nil,
-		ID:      req.ID,
+	return successResponse(req.ID, nil)
+}
+
+// parsePassphraseTimeout extracts the optional timeout parameter (default 60 seconds).
+func parsePassphraseTimeout(params []interface{}, reqID interface{}) (int, *Response) {
+	if len(params) <= 1 {
+		return 60, nil
 	}
+	timeoutFloat, ok := params[1].(float64)
+	if !ok {
+		return 0, errorResponse(reqID, -32602, "Invalid timeout parameter: expected integer")
+	}
+	timeout := int(timeoutFloat)
+	if timeout <= 0 {
+		return 0, errorResponse(reqID, -32602, "Invalid timeout: must be positive")
+	}
+	return timeout, nil
 }
 
 // walletLock locks the wallet, removing keys from memory.
@@ -1927,139 +1702,66 @@ func (s *Server) calculateConfirmations(utxoHeight, bestHeight int32) int {
 //   - verbose (bool, optional): If false (default), returns hex-encoded block data.
 //     If true, returns JSON object with block details.
 func (s *Server) getBlock(req *Request) *Response {
-	var params []interface{}
-	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32602,
-				Message: "Invalid params: expected [blockhash] or [blockhash, verbose]",
-			},
-			ID: req.ID,
-		}
+	params, errResp := parseInterfaceParams(req.Params, req.ID, 1, "[blockhash] or [blockhash, verbose]")
+	if errResp != nil {
+		return errResp
 	}
 
-	// Parse block hash
-	hashStr, ok := params[0].(string)
-	if !ok {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32602,
-				Message: "Invalid params: blockhash must be a string",
-			},
-			ID: req.ID,
-		}
+	hash, errResp := parseHashParam(params, 0, req.ID, "block hash")
+	if errResp != nil {
+		return errResp
 	}
 
-	hash, err := chainhash.NewHashFromStr(hashStr)
-	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -5,
-				Message: fmt.Sprintf("Invalid block hash: %v", err),
-			},
-			ID: req.ID,
-		}
+	verbose, errResp := parseVerboseParam(params, 1, req.ID)
+	if errResp != nil {
+		return errResp
 	}
 
-	// Parse optional verbose parameter (default is false for hex output)
-	verbose := false
-	if len(params) >= 2 {
-		v, ok := params[1].(bool)
-		if !ok {
-			return &Response{
-				Jsonrpc: "2.0",
-				Error: &Error{
-					Code:    -32602,
-					Message: "Invalid params: verbose must be a boolean",
-				},
-				ID: req.ID,
-			}
-		}
-		verbose = v
+	if errResp := s.requireBlockchain(req.ID); errResp != nil {
+		return errResp
 	}
 
-	// Check blockchain availability after parameter validation
-	if s.blockchain == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32603,
-				Message: "Blockchain not initialized",
-			},
-			ID: req.ID,
-		}
-	}
-
-	// Get the block from blockchain
 	block, err := s.blockchain.GetBlockByHash(hash)
 	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -5,
-				Message: fmt.Sprintf("Block not found: %v", err),
-			},
-			ID: req.ID,
-		}
+		return errorResponse(req.ID, -5, fmt.Sprintf("Block not found: %v", err))
 	}
 
 	if !verbose {
-		// Return hex-encoded block data
-		blockBytes, err := block.Bytes()
-		if err != nil {
-			return &Response{
-				Jsonrpc: "2.0",
-				Error: &Error{
-					Code:    -1,
-					Message: fmt.Sprintf("Failed to serialize block: %v", err),
-				},
-				ID: req.ID,
-			}
-		}
-
-		return &Response{
-			Jsonrpc: "2.0",
-			Result:  fmt.Sprintf("%x", blockBytes),
-			ID:      req.ID,
-		}
+		return s.serializeBlockHex(block, req.ID)
 	}
 
-	// Return verbose JSON object
+	return successResponse(req.ID, s.buildVerboseBlockResult(block, hash))
+}
+
+// serializeBlockHex returns a hex-encoded block data response.
+func (s *Server) serializeBlockHex(block *btcutil.Block, reqID interface{}) *Response {
+	blockBytes, err := block.Bytes()
+	if err != nil {
+		return errorResponse(reqID, -1, fmt.Sprintf("Failed to serialize block: %v", err))
+	}
+	return successResponse(reqID, fmt.Sprintf("%x", blockBytes))
+}
+
+// buildVerboseBlockResult builds a verbose JSON result for a block.
+func (s *Server) buildVerboseBlockResult(block *btcutil.Block, hash *chainhash.Hash) map[string]interface{} {
 	msgBlock := block.MsgBlock()
 	header := msgBlock.Header
-
-	// Capture best snapshot once to avoid race conditions
 	bestSnapshot := s.blockchain.BestSnapshot()
 
-	// Get block height
 	height, err := s.blockchain.BlockHeightByHash(hash)
 	if err != nil {
-		// If we can't get height, return -1 (for orphan blocks)
 		height = -1
 	}
 
-	// Calculate confirmations
 	var confirmations int32
-	if height == -1 {
-		// Orphan block - no confirmations
-		confirmations = 0
-	} else {
+	if height >= 0 {
 		confirmations = bestSnapshot.Height - height + 1
 	}
 
-	// Build transaction list
 	txs := make([]string, len(msgBlock.Transactions))
 	for i, tx := range msgBlock.Transactions {
 		txs[i] = tx.TxHash().String()
 	}
-
-	// Calculate actual difficulty from bits
-	// Bitcoin difficulty = max_target / current_target
-	// where max_target is the difficulty 1 target
-	difficulty := getDifficultyRatio(header.Bits, s.blockchain.ChainParams())
 
 	result := map[string]interface{}{
 		"hash":              hash.String(),
@@ -2070,12 +1772,11 @@ func (s *Server) getBlock(req *Request) *Response {
 		"time":              header.Timestamp.Unix(),
 		"nonce":             header.Nonce,
 		"bits":              fmt.Sprintf("%08x", header.Bits),
-		"difficulty":        difficulty,
+		"difficulty":        getDifficultyRatio(header.Bits, s.blockchain.ChainParams()),
 		"previousblockhash": header.PrevBlock.String(),
 		"tx":                txs,
 	}
 
-	// Add next block hash if not the best block
 	if height >= 0 && height < bestSnapshot.Height {
 		nextHash, err := s.blockchain.BlockHashByHeight(height + 1)
 		if err == nil {
@@ -2083,43 +1784,42 @@ func (s *Server) getBlock(req *Request) *Response {
 		}
 	}
 
-	return &Response{
-		Jsonrpc: "2.0",
-		Result:  result,
-		ID:      req.ID,
-	}
+	return result
 }
 
 // getBlockHash returns the block hash for a given height.
 // Parameters: [height]
 // - height (int): The block height
 func (s *Server) getBlockHash(req *Request) *Response {
-	var params []interface{}
-	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32602,
-				Message: "Invalid params: expected [height]",
-			},
-			ID: req.ID,
-		}
+	params, errResp := parseInterfaceParams(req.Params, req.ID, 1, "[height]")
+	if errResp != nil {
+		return errResp
 	}
 
-	// Parse height - handle both int and float64 from JSON
+	height, errResp := parseBlockHeightParam(params[0], req.ID)
+	if errResp != nil {
+		return errResp
+	}
+
+	if errResp := s.requireBlockchain(req.ID); errResp != nil {
+		return errResp
+	}
+
+	hash, err := s.blockchain.BlockHashByHeight(height)
+	if err != nil {
+		return errorResponse(req.ID, -8, fmt.Sprintf("Block height out of range: %v", err))
+	}
+
+	return successResponse(req.ID, hash.String())
+}
+
+// parseBlockHeightParam parses and validates a block height from a JSON parameter.
+func parseBlockHeightParam(param interface{}, reqID interface{}) (int32, *Response) {
 	var height int32
-	switch v := params[0].(type) {
+	switch v := param.(type) {
 	case float64:
-		// Check for overflow before conversion
 		if v > 2147483647 || v < -2147483648 {
-			return &Response{
-				Jsonrpc: "2.0",
-				Error: &Error{
-					Code:    -32602,
-					Message: fmt.Sprintf("Invalid params: height out of int32 range: %v", v),
-				},
-				ID: req.ID,
-			}
+			return 0, errorResponse(reqID, -32602, fmt.Sprintf("Invalid params: height out of int32 range: %v", v))
 		}
 		height = int32(v)
 	case int:
@@ -2127,58 +1827,12 @@ func (s *Server) getBlockHash(req *Request) *Response {
 	case int32:
 		height = v
 	default:
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32602,
-				Message: fmt.Sprintf("Invalid params: height must be a number, got %T", params[0]),
-			},
-			ID: req.ID,
-		}
+		return 0, errorResponse(reqID, -32602, fmt.Sprintf("Invalid params: height must be a number, got %T", param))
 	}
-
-	// Validate height is non-negative
 	if height < 0 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -8,
-				Message: "Block height out of range",
-			},
-			ID: req.ID,
-		}
+		return 0, errorResponse(reqID, -8, "Block height out of range")
 	}
-
-	// Check blockchain availability after parameter validation
-	if s.blockchain == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32603,
-				Message: "Blockchain not initialized",
-			},
-			ID: req.ID,
-		}
-	}
-
-	// Get hash by height
-	hash, err := s.blockchain.BlockHashByHeight(height)
-	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -8,
-				Message: fmt.Sprintf("Block height out of range: %v", err),
-			},
-			ID: req.ID,
-		}
-	}
-
-	return &Response{
-		Jsonrpc: "2.0",
-		Result:  hash.String(),
-		ID:      req.ID,
-	}
+	return height, nil
 }
 
 // getRawTransaction returns the raw transaction data.
@@ -2190,161 +1844,89 @@ func (s *Server) getBlockHash(req *Request) *Response {
 // Note: This implementation searches through recent blocks to find transactions.
 // It does not currently support mempool transactions or a full transaction index.
 func (s *Server) getRawTransaction(req *Request) *Response {
-	var params []interface{}
-	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32602,
-				Message: "Invalid params: expected [txid] or [txid, verbose]",
-			},
-			ID: req.ID,
-		}
+	params, errResp := parseInterfaceParams(req.Params, req.ID, 1, "[txid] or [txid, verbose]")
+	if errResp != nil {
+		return errResp
 	}
 
-	// Parse transaction ID
-	txidStr, ok := params[0].(string)
-	if !ok {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32602,
-				Message: "Invalid params: txid must be a string",
-			},
-			ID: req.ID,
-		}
+	txid, errResp := parseHashParam(params, 0, req.ID, "transaction ID")
+	if errResp != nil {
+		return errResp
 	}
 
-	txid, err := chainhash.NewHashFromStr(txidStr)
-	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -5,
-				Message: fmt.Sprintf("Invalid transaction ID: %v", err),
-			},
-			ID: req.ID,
-		}
+	verbose, errResp := parseVerboseParam(params, 1, req.ID)
+	if errResp != nil {
+		return errResp
 	}
 
-	// Parse optional verbose parameter
-	verbose := false
-	if len(params) >= 2 {
-		v, ok := params[1].(bool)
-		if !ok {
-			return &Response{
-				Jsonrpc: "2.0",
-				Error: &Error{
-					Code:    -32602,
-					Message: "Invalid params: verbose must be a boolean",
-				},
-				ID: req.ID,
-			}
-		}
-		verbose = v
+	if errResp := s.requireBlockchain(req.ID); errResp != nil {
+		return errResp
 	}
 
-	// Check blockchain availability after parameter validation
-	if s.blockchain == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32603,
-				Message: "Blockchain not initialized",
-			},
-			ID: req.ID,
-		}
+	foundTx, foundBlockHash, foundHeight, bestHeight, errResp := s.searchTransaction(txid, req.ID)
+	if errResp != nil {
+		return errResp
 	}
 
-	// Search for transaction in recent blocks
-	// We search backwards from the current best block
-	// Capture best snapshot once to avoid race conditions
-	bestSnapshot := s.blockchain.BestSnapshot()
-	bestHeight := bestSnapshot.Height
+	if !verbose {
+		return s.serializeTransactionHex(foundTx, req.ID)
+	}
 
-	// Limit search to last 1000 blocks to prevent excessive lookups
-	// For a full transaction index, use btcd's txindex
+	return successResponse(req.ID, buildVerboseTransactionResult(foundTx, foundBlockHash, foundHeight, bestHeight))
+}
+
+// searchTransaction searches recent blocks for a transaction by its hash.
+// Returns the transaction, block hash, block height, best height, and an error response if not found.
+func (s *Server) searchTransaction(txid *chainhash.Hash, reqID interface{}) (*wire.MsgTx, *chainhash.Hash, int32, int32, *Response) {
+	bestHeight := s.blockchain.BestSnapshot().Height
+
 	startHeight := bestHeight - 1000
 	if startHeight < 0 {
 		startHeight = 0
 	}
-
-	var foundTx *wire.MsgTx
-	var foundBlockHash *chainhash.Hash
-	var foundHeight int32
 
 	for height := bestHeight; height >= startHeight; height-- {
 		hash, err := s.blockchain.BlockHashByHeight(height)
 		if err != nil {
 			continue
 		}
-
 		block, err := s.blockchain.GetBlockByHash(hash)
 		if err != nil {
 			continue
 		}
-
-		// Search transactions in this block
 		for _, tx := range block.MsgBlock().Transactions {
 			txHash := tx.TxHash()
 			if txHash.IsEqual(txid) {
-				foundTx = tx
-				foundBlockHash = hash
-				foundHeight = height
-				break
+				return tx, hash, height, bestHeight, nil
 			}
 		}
-
-		if foundTx != nil {
-			break
-		}
 	}
 
-	if foundTx == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -5,
-				Message: fmt.Sprintf("Transaction not found: %s", txidStr),
-			},
-			ID: req.ID,
-		}
+	return nil, nil, 0, 0, errorResponse(reqID, -5, fmt.Sprintf("Transaction not found: %s", txid.String()))
+}
+
+// serializeTransactionHex serializes a transaction to hex-encoded string response.
+func (s *Server) serializeTransactionHex(tx *wire.MsgTx, reqID interface{}) *Response {
+	var buf bytes.Buffer
+	if err := tx.Serialize(&buf); err != nil {
+		return errorResponse(reqID, -1, fmt.Sprintf("Failed to serialize transaction: %v", err))
 	}
+	return successResponse(reqID, fmt.Sprintf("%x", buf.Bytes()))
+}
 
-	if !verbose {
-		// Return hex-encoded transaction
-		var buf bytes.Buffer
-		if err := foundTx.Serialize(&buf); err != nil {
-			return &Response{
-				Jsonrpc: "2.0",
-				Error: &Error{
-					Code:    -1,
-					Message: fmt.Sprintf("Failed to serialize transaction: %v", err),
-				},
-				ID: req.ID,
-			}
-		}
-
-		return &Response{
-			Jsonrpc: "2.0",
-			Result:  fmt.Sprintf("%x", buf.Bytes()),
-			ID:      req.ID,
-		}
-	}
-
-	// Build verbose JSON response
+// buildVerboseTransactionResult builds a verbose JSON result for a transaction.
+func buildVerboseTransactionResult(tx *wire.MsgTx, blockHash *chainhash.Hash, height, bestHeight int32) map[string]interface{} {
 	result := map[string]interface{}{
-		"txid":          foundTx.TxHash().String(),
-		"version":       foundTx.Version,
-		"locktime":      foundTx.LockTime,
-		"blockhash":     foundBlockHash.String(),
-		"blockheight":   foundHeight,
-		"confirmations": bestHeight - foundHeight + 1,
+		"txid":          tx.TxHash().String(),
+		"version":       tx.Version,
+		"locktime":      tx.LockTime,
+		"blockhash":     blockHash.String(),
+		"blockheight":   height,
+		"confirmations": bestHeight - height + 1,
 	}
 
-	// Add inputs
-	vin := make([]map[string]interface{}, len(foundTx.TxIn))
-	for i, txIn := range foundTx.TxIn {
+	vin := make([]map[string]interface{}, len(tx.TxIn))
+	for i, txIn := range tx.TxIn {
 		vin[i] = map[string]interface{}{
 			"txid":     txIn.PreviousOutPoint.Hash.String(),
 			"vout":     txIn.PreviousOutPoint.Index,
@@ -2353,11 +1935,10 @@ func (s *Server) getRawTransaction(req *Request) *Response {
 	}
 	result["vin"] = vin
 
-	// Add outputs
-	vout := make([]map[string]interface{}, len(foundTx.TxOut))
-	for i, txOut := range foundTx.TxOut {
+	vout := make([]map[string]interface{}, len(tx.TxOut))
+	for i, txOut := range tx.TxOut {
 		vout[i] = map[string]interface{}{
-			"value": float64(txOut.Value) / 1e8, // Convert satoshis to NMC
+			"value": float64(txOut.Value) / 1e8,
 			"n":     i,
 			"scriptPubKey": map[string]interface{}{
 				"hex": fmt.Sprintf("%x", txOut.PkScript),
@@ -2366,11 +1947,7 @@ func (s *Server) getRawTransaction(req *Request) *Response {
 	}
 	result["vout"] = vout
 
-	return &Response{
-		Jsonrpc: "2.0",
-		Result:  result,
-		ID:      req.ID,
-	}
+	return result
 }
 
 // sendRawTransaction broadcasts a raw transaction to the network.
@@ -2379,89 +1956,36 @@ func (s *Server) getRawTransaction(req *Request) *Response {
 //
 // Returns: transaction hash (txid) if broadcast was successful
 func (s *Server) sendRawTransaction(req *Request) *Response {
-	var params []interface{}
-	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32602,
-				Message: "Invalid params: expected [hexstring]",
-			},
-			ID: req.ID,
-		}
+	params, errResp := parseInterfaceParams(req.Params, req.ID, 1, "[hexstring]")
+	if errResp != nil {
+		return errResp
 	}
 
-	// Parse hex-encoded transaction
 	hexStr, ok := params[0].(string)
 	if !ok {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32602,
-				Message: "Invalid params: hexstring must be a string",
-			},
-			ID: req.ID,
-		}
+		return errorResponse(req.ID, -32602, "Invalid params: hexstring must be a string")
 	}
 
-	// Decode hex string to bytes
 	txBytes, err := hex.DecodeString(hexStr)
 	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -22,
-				Message: fmt.Sprintf("TX decode failed: %v", err),
-			},
-			ID: req.ID,
-		}
+		return errorResponse(req.ID, -22, fmt.Sprintf("TX decode failed: %v", err))
 	}
 
-	// Deserialize the transaction
 	var tx wire.MsgTx
 	if err := tx.Deserialize(bytes.NewReader(txBytes)); err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -22,
-				Message: fmt.Sprintf("TX decode failed: %v", err),
-			},
-			ID: req.ID,
-		}
+		return errorResponse(req.ID, -22, fmt.Sprintf("TX decode failed: %v", err))
 	}
 
-	// Check if peer manager is available for broadcasting
 	if s.peerMgr == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: "Network not available: peer manager not initialized",
-			},
-			ID: req.ID,
-		}
+		return errorResponse(req.ID, -1, "Network not available: peer manager not initialized")
 	}
 
-	// Broadcast the transaction to the network
-	// BroadcastTx adds to mempool with validation and relays to peers
 	if err := s.peerMgr.BroadcastTx(&tx); err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -25,
-				Message: fmt.Sprintf("Transaction rejected: %v", err),
-			},
-			ID: req.ID,
-		}
+		return errorResponse(req.ID, -25, fmt.Sprintf("Transaction rejected: %v", err))
 	}
 
-	// Return the transaction hash
 	txHash := tx.TxHash()
-	return &Response{
-		Jsonrpc: "2.0",
-		Result:  txHash.String(),
-		ID:      req.ID,
-	}
+	return successResponse(req.ID, txHash.String())
 }
 
 // writeError writes an error response
