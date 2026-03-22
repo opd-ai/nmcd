@@ -125,11 +125,12 @@
   go test -coverprofile=c.out ./chain && go tool cover -func=c.out | grep ValidateMempoolTransaction
   ```
 
-### Step 6: Chain Package Test Coverage — Name Database Updates
+### Step 6: Chain Package Test Coverage — Name Database Updates ✅ COMPLETE
 - **Deliverable**: Tests for `updateNameDatabase` (16.9% coverage) in `chain/blockchain.go:877`, covering NAME_FIRSTUPDATE and NAME_UPDATE paths
 - **Dependencies**: Step 5
 - **Goal Impact**: Covers critical function with CC=27
 - **Acceptance**: `updateNameDatabase` function coverage ≥60%
+- **Result**: Added `chain/update_namedb_test.go` with 11 tests covering NAME_NEW, NAME_FIRSTUPDATE, NAME_UPDATE, expired names, UTXO tracking, and input spending. Coverage improved from 16.9% to 77.5% (exceeds 60% target). Chain package coverage now 77.6%.
 - **Validation**:
   ```bash
   go test -coverprofile=c.out ./chain && go tool cover -func=c.out | grep updateNameDatabase
