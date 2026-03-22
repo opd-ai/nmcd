@@ -712,36 +712,14 @@ func (bc *BlockChain) validateNameUpdateOp(msgTx *wire.MsgTx, txOut *wire.TxOut,
 
 // validateNameOperations validates name operations in a block
 func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
-	// Determine the block height. For network blocks, we derive it from the parent
-	// block's height. For test blocks or when the blockchain index isn't available,
-	// we fall back to block.Height() if it was explicitly set.
-	var height int32 = -1 // -1 indicates height is not yet determined
-	prevHash := block.MsgBlock().Header.PrevBlock
-
-	// Try to determine height from the blockchain index
-	if bc.BlockChain != nil && !prevHash.IsEqual(&chainhash.Hash{}) {
-		parentHeight, err := bc.BlockChain.BlockHeightByHash(&prevHash)
-		if err == nil {
-			height = parentHeight + 1
-		}
+	// Determine the block height
+	height, err := bc.determineBlockHeight(block)
+	if err != nil {
+		return nil // Cannot determine height - skip validation
 	}
 
-	// Fallback: use block.Height() if it was explicitly set
-	if height < 0 {
-		height = block.Height()
-		if height < 0 {
-			// Cannot determine height - skip validation
-			return nil
-		}
-	}
-
-	// Track NAME_NEW commitment hashes seen in this block to detect duplicates.
-	// Using string conversion of byte slice as map key is idiomatic in Go.
-	seenNameNewCommits := make(map[string]bool)
-
-	// Track names seen in this block to prevent double-spending
-	// (multiple NAME_FIRSTUPDATE or NAME_UPDATE operations for the same name)
-	seenNames := make(map[string]bool)
+	// Create validation context for tracking seen names/commits
+	ctx := newNameValidationContext()
 
 	for txIdx, tx := range block.Transactions() {
 		msgTx := tx.MsgTx()
@@ -756,8 +734,7 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 			nameOpTypes[op] = struct{}{}
 		}
 
-		// Validate transaction fee for name operations.
-		// Skip coinbase transaction (no inputs to validate).
+		// Validate transaction fee for name operations (skip coinbase)
 		if len(nameOpTypes) > 0 && txIdx > 0 {
 			txHash := msgTx.TxHash()
 			for opType := range nameOpTypes {
@@ -767,129 +744,33 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 			}
 		}
 
-		// Check for name operations in transaction outputs
+		// Validate each name operation in transaction outputs
 		for _, txOut := range msgTx.TxOut {
 			op, name, value, extra, err := parseNameScriptFull(txOut.PkScript)
 			if err != nil {
 				continue // Not a name operation
 			}
 
-			// Get transaction hash for error messages
 			txHash := msgTx.TxHash()
 
 			switch op {
 			case namedb.NameNew:
-				// Validate NAME_NEW output value meets dust limit
-				// This prevents spam and uneconomical UTXO creation
-				if txOut.Value < config.DustLimit {
-					return fmt.Errorf("name_new output value %d below dust limit %d in tx %s",
-						txOut.Value, config.DustLimit, txHash)
-				}
-
-				// Check for duplicate commitment hash in this block
-				commitHashStr := string(extra)
-				if seenNameNewCommits[commitHashStr] {
-					return fmt.Errorf("duplicate name_new commitment in block (tx: %s)", txHash)
-				}
-				seenNameNewCommits[commitHashStr] = true
-
-				// Check if commitment already exists in database
-				if _, err := bc.nameDB.GetNameNew(extra); err == nil {
-					return fmt.Errorf("name_new commitment already exists (tx: %s)", txHash)
+				if err := bc.validateNameNewOp(txOut, extra, txHash, ctx); err != nil {
+					return err
 				}
 
 			case namedb.NameFirstUpdate:
-				// Validate NAME_FIRSTUPDATE output value meets dust limit
-				if txOut.Value < config.DustLimit {
-					return fmt.Errorf("name_firstupdate output value %d below dust limit %d in tx %s",
-						txOut.Value, config.DustLimit, txHash)
-				}
-
-				// Check for duplicate name operation in this block
-				if seenNames[name] {
-					return fmt.Errorf("duplicate name operation in block for name: %s (tx: %s)", name, txHash)
-				}
-				seenNames[name] = true
-
-				// Verify name doesn't exist
-				if _, err := bc.nameDB.GetName(name); err == nil {
-					return fmt.Errorf("name already exists: %s (tx: %s)", name, txHash)
-				}
-
-				// Compute the commitment hash from rand (extra), name, and chain ID
-				// This prevents cross-chain replay attacks
-				commitHash := computeCommitHash(extra, name, bc.chainParams)
-
-				// Verify NAME_NEW exists and MinBlocksBeforeFirstUpdate has passed
-				nameNewRecord, err := bc.nameDB.GetNameNew(commitHash)
-				if err != nil {
-					return fmt.Errorf("no matching name_new found for name: %s (tx: %s)", name, txHash)
-				}
-
-				// Check that enough blocks have passed since NAME_NEW
-				// Handle edge case where height < nameNewRecord.Height (e.g., during reorg)
-				if height < nameNewRecord.Height {
-					return fmt.Errorf("name_firstupdate before name_new: block %d < name_new block %d (name: '%s', tx: %s)",
-						height, nameNewRecord.Height, name, txHash)
-				}
-				blocksSinceNew := height - nameNewRecord.Height
-				if blocksSinceNew < config.MinBlocksBeforeFirstUpdate {
-					return fmt.Errorf("name_firstupdate too early: %d blocks since name_new, minimum %d required (name: '%s', tx: %s)",
-						blocksSinceNew, config.MinBlocksBeforeFirstUpdate, name, txHash)
-				}
-				// Validate maximum timing window - NAME_NEW commitment expires after MaxBlocksBeforeFirstUpdate
-				if blocksSinceNew > config.MaxBlocksBeforeFirstUpdate {
-					return fmt.Errorf("name_firstupdate too late: %d blocks since name_new, maximum %d allowed (commitment expired) (name: '%s', tx: %s)",
-						blocksSinceNew, config.MaxBlocksBeforeFirstUpdate, name, txHash)
+				if err := bc.validateNameFirstUpdateOp(txOut, name, extra, txHash, height, ctx); err != nil {
+					return err
 				}
 
 			case namedb.NameUpdate:
-				// Validate NAME_UPDATE output value meets dust limit
-				if txOut.Value < config.DustLimit {
-					return fmt.Errorf("name_update output value %d below dust limit %d in tx %s",
-						txOut.Value, config.DustLimit, txHash)
-				}
-
-				// Check for duplicate name operation in this block
-				if seenNames[name] {
-					return fmt.Errorf("duplicate name operation in block for name: %s (tx: %s)", name, txHash)
-				}
-				seenNames[name] = true
-
-				// Verify name exists and not expired
-				record, err := bc.nameDB.GetName(name)
-				if err != nil {
-					return fmt.Errorf("name not found for update: %s (tx: %s)", name, txHash)
-				}
-				if record.ExpiresAt <= height {
-					return fmt.Errorf("name expired: %s (expires at block %d, current %d, tx: %s)",
-						name, record.ExpiresAt, height, txHash)
-				}
-
-				// UTXO chain validation: Verify the transaction spends the current name UTXO
-				// This prevents name theft by ensuring only the current owner can update
-				currentUTXO := wire.OutPoint{
-					Hash:  record.TxHash,
-					Index: record.OutIndex,
-				}
-
-				// Check if any transaction input spends the current name UTXO
-				found := false
-				for _, txIn := range msgTx.TxIn {
-					if txIn.PreviousOutPoint.Hash.IsEqual(&currentUTXO.Hash) &&
-						txIn.PreviousOutPoint.Index == currentUTXO.Index {
-						found = true
-						break
-					}
-				}
-
-				if !found {
-					return fmt.Errorf("name_update does not spend current name UTXO (tx=%s, out=%d): name theft attempt for %s (tx: %s)",
-						currentUTXO.Hash.String(), currentUTXO.Index, name, txHash)
+				if err := bc.validateNameUpdateOp(msgTx, txOut, name, txHash, height, ctx); err != nil {
+					return err
 				}
 			}
 
-			// Validate name format and value size (not applicable to NAME_NEW which has no name field)
+			// Validate name format and value size (not applicable to NAME_NEW)
 			if op != namedb.NameNew {
 				if err := validateNameFormat(name, value); err != nil {
 					return fmt.Errorf("%w (name: '%s', tx: %s)", err, name, txHash)
@@ -899,6 +780,30 @@ func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 	}
 
 	return nil
+}
+
+// determineBlockHeight determines the height for a block being validated.
+func (bc *BlockChain) determineBlockHeight(block *btcutil.Block) (int32, error) {
+	var height int32 = -1
+	prevHash := block.MsgBlock().Header.PrevBlock
+
+	// Try to determine height from the blockchain index
+	if bc.BlockChain != nil && !prevHash.IsEqual(&chainhash.Hash{}) {
+		parentHeight, err := bc.BlockChain.BlockHeightByHash(&prevHash)
+		if err == nil {
+			height = parentHeight + 1
+		}
+	}
+
+	// Fallback: use block.Height() if it was explicitly set
+	if height < 0 {
+		height = block.Height()
+		if height < 0 {
+			return -1, fmt.Errorf("cannot determine block height")
+		}
+	}
+
+	return height, nil
 }
 
 // validateTransactionFee validates that a transaction with name operations
