@@ -33,38 +33,67 @@ import (
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Println("Usage: update_name <name> <new_value>")
-		fmt.Println("Examples:")
-		fmt.Println("  update_name d/mysite '{\"ip\":\"5.6.7.8\"}'")
-		fmt.Println("  update_name id/alice '{\"name\":\"Alice\",\"verified\":true}'")
+		printUsage()
 		os.Exit(1)
 	}
 
 	name := os.Args[1]
 	newValue := os.Args[2]
 
-	// Validate name format
+	validateNameAndValue(name, newValue)
+
+	nc := initEmbeddedClient()
+	defer nc.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	printInfo(nc, ctx)
+	showCurrentRecord(nc, ctx, name)
+
+	fmt.Println("\nUpdating name...")
+	fmt.Printf("  New Value: %s\n", newValue)
+
+	result, err := nc.UpdateName(ctx, name, newValue, &client.UpdateOpts{
+		WaitForConfirmation: false,
+		FeeRate:             1,
+	})
+	if err != nil {
+		handleUpdateError(err)
+	}
+
+	printUpdateResult(result)
+}
+
+func printUsage() {
+	fmt.Println("Usage: update_name <name> <new_value>")
+	fmt.Println("Examples:")
+	fmt.Println("  update_name d/mysite '{\"ip\":\"5.6.7.8\"}'")
+	fmt.Println("  update_name id/alice '{\"name\":\"Alice\",\"verified\":true}'")
+}
+
+func validateNameAndValue(name, value string) {
 	if !strings.HasPrefix(name, "d/") && !strings.HasPrefix(name, "id/") && !strings.HasPrefix(name, "p/") {
 		fmt.Println("Error: Name must start with d/, id/, or p/ namespace")
 		os.Exit(1)
 	}
 
-	// Validate value is valid JSON for d/ and id/ namespaces
 	if strings.HasPrefix(name, "d/") || strings.HasPrefix(name, "id/") {
 		var js json.RawMessage
-		if err := json.Unmarshal([]byte(newValue), &js); err != nil {
+		if err := json.Unmarshal([]byte(value), &js); err != nil {
 			fmt.Printf("Error: Value must be valid JSON for %s namespace\n", strings.Split(name, "/")[0]+"/")
 			fmt.Printf("Invalid JSON: %v\n", err)
 			os.Exit(1)
 		}
 	}
+}
 
-	// Create embedded client with wallet enabled
+func initEmbeddedClient() *client.EmbeddedClient {
 	cfg := &client.Config{
 		Mode:          client.ModeEmbedded,
-		Network:       "regtest", // Use regtest for local testing
+		Network:       "regtest",
 		DataDir:       os.TempDir() + "/nmcd-update-example",
-		DisableWallet: false, // Wallet required for updates
+		DisableWallet: false,
 	}
 
 	fmt.Println("Initializing Namecoin client...")
@@ -72,19 +101,18 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}
-	defer nc.Close()
+	return nc
+}
 
-	// Get node info
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
+func printInfo(nc *client.EmbeddedClient, ctx context.Context) {
 	info, err := nc.GetInfo(ctx)
 	if err != nil {
 		log.Fatalf("Failed to get node info: %v", err)
 	}
 	fmt.Printf("Connected to %s network (height: %d)\n\n", info.NetworkName, info.BlockHeight)
+}
 
-	// Get current name record
+func showCurrentRecord(nc *client.EmbeddedClient, ctx context.Context, name string) {
 	fmt.Printf("Looking up current record for '%s'...\n", name)
 	record, err := nc.ResolveName(ctx, name)
 	if errors.Is(err, client.ErrNameNotFound) {
@@ -105,36 +133,28 @@ func main() {
 	fmt.Printf("  Value:      %s\n", record.Value)
 	fmt.Printf("  Owner:      %s\n", record.Address)
 	fmt.Printf("  Expires In: %d blocks (~%.1f days)\n", record.ExpiresIn, float64(record.ExpiresIn)*10/60/24)
+}
 
-	// Update the name
-	fmt.Println("\nUpdating name...")
-	fmt.Printf("  New Value: %s\n", newValue)
-
-	opts := &client.UpdateOpts{
-		WaitForConfirmation: false, // Don't wait for confirmation in this example
-		FeeRate:             1,     // 1 satoshi per byte
+func handleUpdateError(err error) {
+	switch {
+	case errors.Is(err, client.ErrNameNotFound):
+		fmt.Println("✗ Name not found")
+	case errors.Is(err, client.ErrNameExpired):
+		fmt.Println("✗ Name expired while updating")
+	case errors.Is(err, client.ErrInsufficientFunds):
+		fmt.Println("✗ Insufficient funds for update")
+		fmt.Println("  The wallet needs NMC to pay for the update fee")
+	case errors.Is(err, client.ErrNoWallet):
+		fmt.Println("✗ Wallet not initialized")
+	case errors.Is(err, client.ErrInvalidValue):
+		fmt.Println("✗ Invalid value format")
+	default:
+		log.Fatalf("Failed to update name: %v", err)
 	}
+	os.Exit(1)
+}
 
-	result, err := nc.UpdateName(ctx, name, newValue, opts)
-	if err != nil {
-		switch {
-		case errors.Is(err, client.ErrNameNotFound):
-			fmt.Println("✗ Name not found")
-		case errors.Is(err, client.ErrNameExpired):
-			fmt.Println("✗ Name expired while updating")
-		case errors.Is(err, client.ErrInsufficientFunds):
-			fmt.Println("✗ Insufficient funds for update")
-			fmt.Println("  The wallet needs NMC to pay for the update fee")
-		case errors.Is(err, client.ErrNoWallet):
-			fmt.Println("✗ Wallet not initialized")
-		case errors.Is(err, client.ErrInvalidValue):
-			fmt.Println("✗ Invalid value format")
-		default:
-			log.Fatalf("Failed to update name: %v", err)
-		}
-		os.Exit(1)
-	}
-
+func printUpdateResult(result *client.TxResult) {
 	fmt.Println("\n✓ Update transaction created!")
 	fmt.Println("\nTransaction Result:")
 	fmt.Printf("  TX Hash:  %s\n", result.TxHash)

@@ -40,7 +40,6 @@ import (
 )
 
 func main() {
-	// Parse command-line flags
 	namespace := flag.String("namespace", "", "Filter by namespace (d/, id/, p/)")
 	address := flag.String("address", "", "Filter by owner address")
 	pattern := flag.String("pattern", "", "Filter by name prefix pattern")
@@ -49,43 +48,16 @@ func main() {
 	offset := flag.Int("offset", 0, "Number of results to skip (pagination)")
 	flag.Parse()
 
-	// Validate namespace if provided
-	if *namespace != "" && *namespace != "d/" && *namespace != "id/" && *namespace != "p/" {
-		fmt.Println("Error: Invalid namespace. Must be d/, id/, or p/")
-		os.Exit(1)
-	}
+	validateInputs(*namespace, *limit)
 
-	// Validate limit
-	if *limit < 1 || *limit > 10000 {
-		fmt.Println("Error: Limit must be between 1 and 10000")
-		os.Exit(1)
-	}
-
-	// Create client with auto-detection
-	cfg := &client.Config{
-		Mode:    client.ModeAuto,
-		Network: "regtest", // Use regtest for local testing
-		DataDir: os.TempDir() + "/nmcd-list-example",
-	}
-
-	fmt.Println("Initializing Namecoin client...")
-	nc, err := client.NewClient(cfg)
-	if err != nil {
-		log.Fatalf("Failed to create client: %v", err)
-	}
+	nc := initClient()
 	defer nc.Close()
 
-	// Get node info
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	info, err := nc.GetInfo(ctx)
-	if err != nil {
-		log.Fatalf("Failed to get node info: %v", err)
-	}
-	fmt.Printf("Connected to %s network in %s mode (height: %d)\n\n", info.NetworkName, info.Mode, info.BlockHeight)
+	printNodeInfo(nc, ctx)
 
-	// Build filter
 	filter := &client.ListFilter{
 		Namespace:      *namespace,
 		Address:        *address,
@@ -95,7 +67,52 @@ func main() {
 		Offset:         *offset,
 	}
 
-	// Print filter settings
+	printFilterSettings(filter)
+
+	fmt.Println("Listing names...")
+	records, err := nc.ListNames(ctx, filter)
+	if err != nil {
+		log.Fatalf("Failed to list names: %v", err)
+	}
+
+	printNameRecords(records, filter)
+}
+
+func validateInputs(namespace string, limit int) {
+	if namespace != "" && namespace != "d/" && namespace != "id/" && namespace != "p/" {
+		fmt.Println("Error: Invalid namespace. Must be d/, id/, or p/")
+		os.Exit(1)
+	}
+	if limit < 1 || limit > 10000 {
+		fmt.Println("Error: Limit must be between 1 and 10000")
+		os.Exit(1)
+	}
+}
+
+func initClient() client.NameClient {
+	cfg := &client.Config{
+		Mode:    client.ModeAuto,
+		Network: "regtest",
+		DataDir: os.TempDir() + "/nmcd-list-example",
+	}
+
+	fmt.Println("Initializing Namecoin client...")
+	nc, err := client.NewClient(cfg)
+	if err != nil {
+		log.Fatalf("Failed to create client: %v", err)
+	}
+	return nc
+}
+
+func printNodeInfo(nc client.NameClient, ctx context.Context) {
+	info, err := nc.GetInfo(ctx)
+	if err != nil {
+		log.Fatalf("Failed to get node info: %v", err)
+	}
+	fmt.Printf("Connected to %s network in %s mode (height: %d)\n\n", info.NetworkName, info.Mode, info.BlockHeight)
+}
+
+func printFilterSettings(filter *client.ListFilter) {
 	fmt.Println("Filter Settings:")
 	if filter.Namespace != "" {
 		fmt.Printf("  Namespace:       %s\n", filter.Namespace)
@@ -112,14 +129,9 @@ func main() {
 		fmt.Printf("  Offset:          %d\n", filter.Offset)
 	}
 	fmt.Println()
+}
 
-	// List names
-	fmt.Println("Listing names...")
-	records, err := nc.ListNames(ctx, filter)
-	if err != nil {
-		log.Fatalf("Failed to list names: %v", err)
-	}
-
+func printNameRecords(records []*client.NameRecord, filter *client.ListFilter) {
 	if len(records) == 0 {
 		fmt.Println("No names found matching the filter criteria.")
 		if !filter.IncludeExpired {
@@ -129,38 +141,36 @@ func main() {
 	}
 
 	fmt.Printf("Found %d name(s):\n\n", len(records))
-
-	// Display results in a formatted table
 	fmt.Printf("%-30s %-40s %-15s %s\n", "NAME", "VALUE (truncated)", "EXPIRES IN", "OWNER")
 	fmt.Printf("%-30s %-40s %-15s %s\n", "----", "-----", "----------", "-----")
 
 	for _, record := range records {
-		// Truncate value for display
-		value := record.Value
-		if len(value) > 37 {
-			value = value[:37] + "..."
-		}
-
-		// Calculate expiration status
-		var expiresStr string
-		if record.ExpiresIn <= 0 {
-			expiresStr = "EXPIRED"
-		} else {
-			days := float64(record.ExpiresIn) * 10 / 60 / 24
-			expiresStr = fmt.Sprintf("%d blocks (~%.0fd)", record.ExpiresIn, days)
-		}
-
-		// Truncate address for display
-		addr := record.Address
-		if len(addr) > 12 {
-			addr = addr[:6] + "..." + addr[len(addr)-4:]
-		}
-
-		fmt.Printf("%-30s %-40s %-15s %s\n", record.Name, value, expiresStr, addr)
+		printNameRow(record)
 	}
 
-	// Pagination info
 	if len(records) == filter.Limit {
 		fmt.Printf("\n(Showing %d results. Use --offset=%d to see more.)\n", filter.Limit, filter.Offset+filter.Limit)
 	}
+}
+
+func printNameRow(record *client.NameRecord) {
+	value := record.Value
+	if len(value) > 37 {
+		value = value[:37] + "..."
+	}
+
+	var expiresStr string
+	if record.ExpiresIn <= 0 {
+		expiresStr = "EXPIRED"
+	} else {
+		days := float64(record.ExpiresIn) * 10 / 60 / 24
+		expiresStr = fmt.Sprintf("%d blocks (~%.0fd)", record.ExpiresIn, days)
+	}
+
+	addr := record.Address
+	if len(addr) > 12 {
+		addr = addr[:6] + "..." + addr[len(addr)-4:]
+	}
+
+	fmt.Printf("%-30s %-40s %-15s %s\n", record.Name, value, expiresStr, addr)
 }

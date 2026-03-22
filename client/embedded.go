@@ -1025,44 +1025,37 @@ func (c *EmbeddedClient) GetNameHistory(ctx context.Context, name string) ([]*Na
 // - Poll interval: 10 seconds (average block time is 600 seconds)
 // - Does not handle reorganizations (assumes forward-only blockchain)
 func (c *EmbeddedClient) WaitForConfirmation(ctx context.Context, txHash string, confirmations int) error {
-	// Check context
-	select {
-	case <-ctx.Done():
-		return ErrContextCanceled
-	default:
+	if err := c.checkContextAndState(ctx); err != nil {
+		return err
 	}
 
-	// Check if client is closed
-	c.mu.RLock()
-	if c.closed {
-		c.mu.RUnlock()
-		return fmt.Errorf("client is closed")
-	}
-	c.mu.RUnlock()
-
-	// Validate confirmations
 	if confirmations < 1 {
 		return fmt.Errorf("confirmations must be at least 1, got %d", confirmations)
 	}
 
-	// Parse transaction hash
 	txHashBytes, err := chainhash.NewHashFromStr(txHash)
 	if err != nil {
 		return fmt.Errorf("invalid transaction hash: %w", err)
 	}
 
-	// Check transaction status immediately before entering polling loop
-	// This provides faster response for already-confirmed transactions
-	txHeight, currentHeight, err := c.getTransactionConfirmationStatus(txHashBytes)
-	if err == nil {
-		// Transaction found, check if it has enough confirmations
-		txConfirmations := currentHeight - txHeight + 1
-		if txConfirmations >= int32(confirmations) {
-			return nil
-		}
+	if c.hasEnoughConfirmations(txHashBytes, confirmations) {
+		return nil
 	}
 
-	// Poll for transaction confirmation
+	return c.pollForConfirmation(ctx, txHashBytes, confirmations)
+}
+
+// hasEnoughConfirmations checks if a transaction already has sufficient confirmations.
+func (c *EmbeddedClient) hasEnoughConfirmations(txHash *chainhash.Hash, required int) bool {
+	txHeight, currentHeight, err := c.getTransactionConfirmationStatus(txHash)
+	if err != nil {
+		return false
+	}
+	return currentHeight-txHeight+1 >= int32(required)
+}
+
+// pollForConfirmation polls until the transaction has enough confirmations or context is cancelled.
+func (c *EmbeddedClient) pollForConfirmation(ctx context.Context, txHash *chainhash.Hash, required int) error {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
@@ -1071,16 +1064,7 @@ func (c *EmbeddedClient) WaitForConfirmation(ctx context.Context, txHash string,
 		case <-ctx.Done():
 			return ErrContextCanceled
 		case <-ticker.C:
-			// Check if transaction is confirmed
-			txHeight, currentHeight, err := c.getTransactionConfirmationStatus(txHashBytes)
-			if err != nil {
-				// Transaction not found yet, continue waiting
-				continue
-			}
-
-			// Calculate confirmations (current height - tx height + 1)
-			txConfirmations := currentHeight - txHeight + 1
-			if txConfirmations >= int32(confirmations) {
+			if c.hasEnoughConfirmations(txHash, required) {
 				return nil
 			}
 		}

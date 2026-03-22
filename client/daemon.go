@@ -171,34 +171,50 @@ func (c *DaemonClient) Ping(ctx context.Context) error {
 
 // rpcCall performs a JSON-RPC call to the daemon with retry logic.
 func (c *DaemonClient) rpcCall(ctx context.Context, method string, params interface{}) (json.RawMessage, error) {
-	// Check if client is closed and copy retry config under lock to avoid race conditions
-	c.mu.RLock()
-	if c.closed {
-		c.mu.RUnlock()
-		return nil, fmt.Errorf("client is closed")
+	retryCfg, err := c.getRetryConfig()
+	if err != nil {
+		return nil, err
 	}
-	// Copy retry config to avoid race with SetRetryConfig
-	retryCfg := c.retryConfig
-	c.mu.RUnlock()
 
-	// Build request
+	body, err := marshalRPCRequest(method, params)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.executeWithRetry(ctx, body, retryCfg)
+}
+
+// getRetryConfig returns the retry configuration after checking client state.
+func (c *DaemonClient) getRetryConfig() (RetryConfig, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.closed {
+		return RetryConfig{}, fmt.Errorf("client is closed")
+	}
+	return c.retryConfig, nil
+}
+
+// marshalRPCRequest creates and marshals a JSON-RPC request body.
+func marshalRPCRequest(method string, params interface{}) ([]byte, error) {
 	req := &rpcRequest{
 		Jsonrpc: "2.0",
 		Method:  method,
 		Params:  params,
 		ID:      1,
 	}
-
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
+	return body, nil
+}
 
+// executeWithRetry performs the RPC call with exponential backoff retry logic.
+func (c *DaemonClient) executeWithRetry(ctx context.Context, body []byte, retryCfg RetryConfig) (json.RawMessage, error) {
 	var lastErr error
 	delay := retryCfg.InitialDelay
 
 	for attempt := 0; attempt < retryCfg.MaxAttempts; attempt++ {
-		// Check context before each attempt
 		select {
 		case <-ctx.Done():
 			return nil, ErrContextCanceled
@@ -211,29 +227,34 @@ func (c *DaemonClient) rpcCall(ctx context.Context, method string, params interf
 		}
 
 		lastErr = err
-
-		// Don't retry on non-transient errors
 		if !isTransientError(err) {
 			return nil, err
 		}
 
-		// Wait before retry (with context cancellation support)
 		if attempt < retryCfg.MaxAttempts-1 {
-			select {
-			case <-ctx.Done():
+			delay = c.waitAndBackoff(ctx, delay, retryCfg)
+			if delay < 0 {
 				return nil, ErrContextCanceled
-			case <-time.After(delay):
-			}
-
-			// Exponential backoff
-			delay = time.Duration(float64(delay) * retryCfg.Multiplier)
-			if delay > retryCfg.MaxDelay {
-				delay = retryCfg.MaxDelay
 			}
 		}
 	}
 
 	return nil, fmt.Errorf("RPC call failed after %d attempts: %w", retryCfg.MaxAttempts, lastErr)
+}
+
+// waitAndBackoff waits for the backoff delay and returns the next delay.
+// Returns -1 if context is cancelled.
+func (c *DaemonClient) waitAndBackoff(ctx context.Context, delay time.Duration, retryCfg RetryConfig) time.Duration {
+	select {
+	case <-ctx.Done():
+		return -1
+	case <-time.After(delay):
+	}
+	nextDelay := time.Duration(float64(delay) * retryCfg.Multiplier)
+	if nextDelay > retryCfg.MaxDelay {
+		nextDelay = retryCfg.MaxDelay
+	}
+	return nextDelay
 }
 
 // doRPCCall performs a single RPC call without retry
