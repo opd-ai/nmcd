@@ -216,58 +216,83 @@ type smtpSession struct {
 
 // handle processes the SMTP protocol for this session.
 func (s *smtpSession) handle() error {
-	// Send greeting
-	if err := s.writeLine("220 nmcd SMTP Relay Service Ready"); err != nil {
+	if err := s.sendGreeting(); err != nil {
 		return err
 	}
+	return s.processCommands()
+}
 
-	// Read and process commands
+// sendGreeting sends the initial SMTP greeting to the client.
+func (s *smtpSession) sendGreeting() error {
+	return s.writeLine("220 nmcd SMTP Relay Service Ready")
+}
+
+// processCommands reads and dispatches SMTP commands until the session ends.
+func (s *smtpSession) processCommands() error {
 	for {
 		line, err := s.readLine()
 		if err != nil {
 			return err
 		}
 
-		// Parse command (case-insensitive)
 		cmd := strings.ToUpper(strings.TrimSpace(line))
+		if err := s.dispatchCommand(cmd); err != nil {
+			return err
+		}
 
-		if strings.HasPrefix(cmd, "HELO ") || strings.HasPrefix(cmd, "EHLO ") {
-			if err := s.handleHelo(cmd); err != nil {
-				return err
-			}
-		} else if strings.HasPrefix(cmd, "MAIL FROM:") {
-			if err := s.handleMailFrom(cmd); err != nil {
-				return err
-			}
-		} else if strings.HasPrefix(cmd, "RCPT TO:") {
-			if err := s.handleRcptTo(cmd); err != nil {
-				return err
-			}
-		} else if cmd == "DATA" {
-			if err := s.handleData(); err != nil {
-				return err
-			}
-		} else if cmd == "QUIT" {
-			if err := s.writeLine("221 Goodbye"); err != nil {
-				return err
-			}
+		if s.shouldQuit(cmd) {
 			return nil
-		} else if cmd == "RSET" {
-			s.from = ""
-			s.to = nil
-			if err := s.writeLine("250 OK"); err != nil {
-				return err
-			}
-		} else if cmd == "NOOP" {
-			if err := s.writeLine("250 OK"); err != nil {
-				return err
-			}
-		} else {
-			if err := s.writeLine("502 Command not implemented"); err != nil {
-				return err
-			}
 		}
 	}
+}
+
+// shouldQuit checks if the session should terminate after processing the command.
+func (s *smtpSession) shouldQuit(cmd string) bool {
+	return cmd == "QUIT"
+}
+
+// dispatchCommand routes a command to its handler.
+func (s *smtpSession) dispatchCommand(cmd string) error {
+	switch {
+	case strings.HasPrefix(cmd, "HELO "), strings.HasPrefix(cmd, "EHLO "):
+		return s.handleHelo(cmd)
+	case strings.HasPrefix(cmd, "MAIL FROM:"):
+		return s.handleMailFrom(cmd)
+	case strings.HasPrefix(cmd, "RCPT TO:"):
+		return s.handleRcptTo(cmd)
+	case cmd == "DATA":
+		return s.handleData()
+	case cmd == "QUIT":
+		return s.handleQuit()
+	case cmd == "RSET":
+		return s.handleReset()
+	case cmd == "NOOP":
+		return s.handleNoop()
+	default:
+		return s.handleUnknown()
+	}
+}
+
+// handleQuit handles the QUIT command.
+func (s *smtpSession) handleQuit() error {
+	return s.writeLine("221 Goodbye")
+}
+
+// handleReset handles the RSET command.
+func (s *smtpSession) handleReset() error {
+	s.from = ""
+	s.to = nil
+	return s.writeLine("250 OK")
+}
+
+// handleNoop handles the NOOP command.
+func (s *smtpSession) handleNoop() error {
+	return s.writeLine("250 OK")
+}
+
+// handleUnknown handles unrecognized commands.
+func (s *smtpSession) handleUnknown() error {
+	return s.writeLine("502 Command not implemented")
 }
 
 // handleHelo handles HELO/EHLO commands.

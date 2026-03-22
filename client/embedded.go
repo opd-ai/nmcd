@@ -818,116 +818,123 @@ func (c *EmbeddedClient) waitForUpdateConfirmation(ctx context.Context, txHash s
 //	    IncludeExpired: false,
 //	})
 func (c *EmbeddedClient) ListNames(ctx context.Context, filter *ListFilter) ([]*NameRecord, error) {
-	// Check context
-	select {
-	case <-ctx.Done():
-		return nil, ErrContextCanceled
-	default:
+	if err := c.checkListNamesState(ctx); err != nil {
+		return nil, err
 	}
 
-	// Check if client is closed
-	c.mu.RLock()
-	if c.closed {
-		c.mu.RUnlock()
-		return nil, fmt.Errorf("client is closed")
-	}
-	c.mu.RUnlock()
+	filter = c.normalizeListFilter(filter)
 
-	// Set default filter if nil
-	if filter == nil {
-		filter = &ListFilter{
-			Limit: 100,
-		}
-	}
-
-	// Set default limit if not specified
-	if filter.Limit == 0 {
-		filter.Limit = 100
-	}
-
-	// Cap limit at maximum
-	if filter.Limit > 10000 {
-		filter.Limit = 10000
-	}
-
-	// Get all names from database
-	// nameDB.ListNames already uses RLock internally for thread safety
 	dbRecords, err := c.nameDB.ListNames()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list names: %w", err)
 	}
 
-	// Get current blockchain height for expiration calculation
-	// Use the blockchain's best snapshot to get the current tip
 	bestHeight := c.chain.BestSnapshot().Height
+	filtered := c.filterAndConvertRecords(dbRecords, filter, bestHeight)
+	return c.applyPagination(filtered, filter), nil
+}
 
-	// Apply filtering and convert to client format
-	var filtered []*NameRecord
-	for _, record := range dbRecords {
-		// Check expiration
-		// A name expires AFTER the block at ExpiresAt height, not during it
-		// So ExpiresAt == bestHeight means ExpiresIn = 0, which is still valid
-		if !filter.IncludeExpired && record.ExpiresAt < bestHeight {
-			continue
-		}
-
-		// Filter by namespace (e.g., "d/", "id/", "p/")
-		if filter.Namespace != "" {
-			if len(record.Name) < len(filter.Namespace) {
-				continue
-			}
-			if record.Name[:len(filter.Namespace)] != filter.Namespace {
-				continue
-			}
-		}
-
-		// Filter by name pattern (string prefix matching)
-		// Matches if record.Name starts with filter.NamePattern (character-by-character)
-		// More advanced pattern matching (glob, regex) can be added later if needed
-		if filter.NamePattern != "" {
-			if len(record.Name) < len(filter.NamePattern) {
-				continue // Name is shorter than pattern, cannot match
-			}
-			// String prefix matching: check if name starts with pattern
-			if record.Name[:len(filter.NamePattern)] != filter.NamePattern {
-				continue
-			}
-		}
-
-		// Filter by address
-		if filter.Address != "" && record.Address != filter.Address {
-			continue
-		}
-
-		// Convert to client NameRecord format
-		clientRecord := &NameRecord{
-			Name:      record.Name,
-			Value:     record.Value,
-			TxHash:    record.TxHash.String(),
-			Height:    record.Height,
-			ExpiresAt: record.ExpiresAt,
-			ExpiresIn: record.ExpiresAt - bestHeight,
-			Address:   record.Address,
-			UpdatedAt: record.UpdatedAt,
-		}
-
-		filtered = append(filtered, clientRecord)
+// checkListNamesState validates context and client state for ListNames.
+func (c *EmbeddedClient) checkListNamesState(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ErrContextCanceled
+	default:
 	}
 
-	// Apply offset
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.closed {
+		return fmt.Errorf("client is closed")
+	}
+	return nil
+}
+
+// normalizeListFilter applies defaults and caps to the filter.
+func (c *EmbeddedClient) normalizeListFilter(filter *ListFilter) *ListFilter {
+	if filter == nil {
+		filter = &ListFilter{Limit: 100}
+	}
+	if filter.Limit == 0 {
+		filter.Limit = 100
+	}
+	if filter.Limit > 10000 {
+		filter.Limit = 10000
+	}
+	return filter
+}
+
+// filterAndConvertRecords applies filters and converts database records to client format.
+func (c *EmbeddedClient) filterAndConvertRecords(dbRecords []*namedb.NameRecord, filter *ListFilter, bestHeight int32) []*NameRecord {
+	var filtered []*NameRecord
+	for _, record := range dbRecords {
+		if !c.matchesFilter(record, filter, bestHeight) {
+			continue
+		}
+		filtered = append(filtered, c.convertToClientRecord(record, bestHeight))
+	}
+	return filtered
+}
+
+// matchesFilter checks if a record passes all filter criteria.
+func (c *EmbeddedClient) matchesFilter(record *namedb.NameRecord, filter *ListFilter, bestHeight int32) bool {
+	if !filter.IncludeExpired && record.ExpiresAt < bestHeight {
+		return false
+	}
+	if !c.matchesNamespace(record.Name, filter.Namespace) {
+		return false
+	}
+	if !c.matchesPattern(record.Name, filter.NamePattern) {
+		return false
+	}
+	if filter.Address != "" && record.Address != filter.Address {
+		return false
+	}
+	return true
+}
+
+// matchesNamespace checks if name matches the namespace filter.
+func (c *EmbeddedClient) matchesNamespace(name, namespace string) bool {
+	if namespace == "" {
+		return true
+	}
+	return len(name) >= len(namespace) && name[:len(namespace)] == namespace
+}
+
+// matchesPattern checks if name matches the pattern filter (prefix matching).
+func (c *EmbeddedClient) matchesPattern(name, pattern string) bool {
+	if pattern == "" {
+		return true
+	}
+	return len(name) >= len(pattern) && name[:len(pattern)] == pattern
+}
+
+// convertToClientRecord converts a database record to client format.
+func (c *EmbeddedClient) convertToClientRecord(record *namedb.NameRecord, bestHeight int32) *NameRecord {
+	return &NameRecord{
+		Name:      record.Name,
+		Value:     record.Value,
+		TxHash:    record.TxHash.String(),
+		Height:    record.Height,
+		ExpiresAt: record.ExpiresAt,
+		ExpiresIn: record.ExpiresAt - bestHeight,
+		Address:   record.Address,
+		UpdatedAt: record.UpdatedAt,
+	}
+}
+
+// applyPagination applies offset and limit to the filtered results.
+func (c *EmbeddedClient) applyPagination(filtered []*NameRecord, filter *ListFilter) []*NameRecord {
 	if filter.Offset > 0 {
 		if filter.Offset >= len(filtered) {
-			return []*NameRecord{}, nil
+			return []*NameRecord{}
 		}
 		filtered = filtered[filter.Offset:]
 	}
-
-	// Apply limit
 	if len(filtered) > filter.Limit {
 		filtered = filtered[:filter.Limit]
 	}
-
-	return filtered, nil
+	return filtered
 }
 
 // GetNameHistory returns the full history of operations for a name.
