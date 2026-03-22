@@ -295,6 +295,9 @@ func (pm *PeerManager) onVerAck(p *peer.Peer, msg *wire.MsgVerAck) {
 func (pm *PeerManager) onInv(p *peer.Peer, msg *wire.MsgInv) {
 	// Handle inventory message
 	// Request blocks/transactions we don't have
+	if p == nil {
+		return
+	}
 	gdmsg := wire.NewMsgGetData()
 	for _, inv := range msg.InvList {
 		gdmsg.AddInvVect(inv)
@@ -386,19 +389,25 @@ func (pm *PeerManager) onTx(p *peer.Peer, msg *wire.MsgTx) {
 		return
 	}
 
+	// Get peer address for logging (handle nil peer)
+	peerAddr := "local"
+	if p != nil {
+		peerAddr = p.Addr()
+	}
+
 	// Add transaction to mempool (includes validation)
 	err := pm.mempool.AddTx(msg)
 	if err != nil {
 		pm.logger.Warn("rejected transaction from peer",
 			"tx_hash", txHash.String(),
-			"peer_id", p.Addr(),
+			"peer_id", peerAddr,
 			"error", err)
 		return
 	}
 
 	pm.logger.Info("accepted transaction",
 		"tx_hash", txHash.String(),
-		"peer_id", p.Addr(),
+		"peer_id", peerAddr,
 		"mempool_size", pm.mempool.Count())
 
 	// Relay transaction to other peers (transaction propagation)
@@ -445,13 +454,20 @@ func (pm *PeerManager) relayTransaction(tx *wire.MsgTx, excludePeer *peer.Peer) 
 
 func (pm *PeerManager) onGetData(p *peer.Peer, msg *wire.MsgGetData) {
 	// Handle getdata message - send requested blocks/transactions
+	if p == nil {
+		return
+	}
+
+	// Get peer address for logging
+	peerAddr := p.Addr()
+
 	for _, inv := range msg.InvList {
 		switch inv.Type {
 		case wire.InvTypeBlock:
 			// Block requests are handled but not fully implemented
 			// This would require fetching blocks from the blockchain database
 			pm.logger.Debug("received block request (not implemented)",
-				"peer_id", p.Addr(),
+				"peer_id", peerAddr,
 				"block_hash", inv.Hash.String())
 
 		case wire.InvTypeTx:
@@ -461,13 +477,13 @@ func (pm *PeerManager) onGetData(p *peer.Peer, msg *wire.MsgGetData) {
 				p.QueueMessage(tx, nil)
 				pm.logger.Debug("sent transaction to peer",
 					"tx_hash", inv.Hash.String(),
-					"peer_id", p.Addr())
+					"peer_id", peerAddr)
 			} else {
 				// Transaction not found in mempool
 				// Could also check blockchain for confirmed transactions
 				pm.logger.Debug("transaction not found in mempool",
 					"tx_hash", inv.Hash.String(),
-					"requested_by", p.Addr())
+					"requested_by", peerAddr)
 			}
 		}
 	}
