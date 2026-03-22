@@ -120,169 +120,243 @@ func (bw *BatchWriter) Commit() error {
 	defer bw.ndb.mu.Unlock()
 
 	err := bw.ndb.db.Update(func(tx *bbolt.Tx) error {
-		// Write names
-		if len(bw.names) > 0 {
-			namesBucket := tx.Bucket(namesBucket)
-			expirationBucket := tx.Bucket(expirationBucket)
-
-			for name, record := range bw.names {
-				// Check if name already exists to update expiration index
-				existingData := namesBucket.Get([]byte(name))
-				if existingData != nil {
-					// Remove old expiration index entry
-					existingRecord, decodeErr := decodeNameRecord(existingData)
-					if decodeErr == nil {
-						oldExpirationKey := makeExpirationKey(existingRecord.ExpiresAt, name)
-						expirationBucket.Delete(oldExpirationKey)
-					}
-				}
-
-				// Store name record
-				data := encodeNameRecord(record)
-				if err := namesBucket.Put([]byte(name), data); err != nil {
-					return fmt.Errorf("failed to put name %s: %w", name, err)
-				}
-
-				// Add new expiration index entry
-				expirationKey := makeExpirationKey(record.ExpiresAt, name)
-				if err := expirationBucket.Put(expirationKey, []byte{1}); err != nil {
-					return fmt.Errorf("failed to update expiration index for %s: %w", name, err)
-				}
-			}
+		if err := bw.writeNames(tx); err != nil {
+			return err
 		}
-
-		// Delete names
-		if len(bw.deletedNames) > 0 {
-			namesBucket := tx.Bucket(namesBucket)
-			expirationBucket := tx.Bucket(expirationBucket)
-
-			for name := range bw.deletedNames {
-				// Get existing record to remove from expiration index
-				existingData := namesBucket.Get([]byte(name))
-				if existingData != nil {
-					existingRecord, decodeErr := decodeNameRecord(existingData)
-					if decodeErr == nil {
-						expirationKey := makeExpirationKey(existingRecord.ExpiresAt, name)
-						expirationBucket.Delete(expirationKey)
-					}
-				}
-
-				// Delete name record
-				if err := namesBucket.Delete([]byte(name)); err != nil {
-					return fmt.Errorf("failed to delete name %s: %w", name, err)
-				}
-			}
+		if err := bw.deleteNames(tx); err != nil {
+			return err
 		}
-
-		// Write history entries
-		if len(bw.history) > 0 {
-			histBucket := tx.Bucket(historyBucket)
-			indexBucket := tx.Bucket(historyIndexBucket)
-
-			for txHash, record := range bw.history {
-				// Store history record
-				data := encodeNameRecord(record)
-				if err := histBucket.Put(txHash[:], data); err != nil {
-					return fmt.Errorf("failed to put history: %w", err)
-				}
-
-				// Update history index
-				nameKey := []byte(record.Name)
-				existing := indexBucket.Get(nameKey)
-				newIndex := append(append([]byte(nil), existing...), txHash[:]...)
-				if err := indexBucket.Put(nameKey, newIndex); err != nil {
-					return fmt.Errorf("failed to update history index: %w", err)
-				}
-			}
+		if err := bw.writeHistory(tx); err != nil {
+			return err
 		}
-
-		// Write NAME_NEW commitments
-		if len(bw.nameNews) > 0 {
-			bucket := tx.Bucket(nameNewBucket)
-			for _, entry := range bw.nameNews {
-				data := make([]byte, 4)
-				binary.LittleEndian.PutUint32(data, uint32(entry.height))
-				if err := bucket.Put(entry.commitHash, data); err != nil {
-					return fmt.Errorf("failed to put name_new: %w", err)
-				}
-			}
+		if err := bw.writeNameNews(tx); err != nil {
+			return err
 		}
-
-		// Write UTXOs
-		if len(bw.utxos) > 0 {
-			utxoBucket := tx.Bucket(utxoBucket)
-			utxoAddrBucket := tx.Bucket(utxoAddrBucket)
-
-			for _, utxo := range bw.utxos {
-				// Encode UTXO
-				data, err := encodeUTXO(utxo)
-				if err != nil {
-					return fmt.Errorf("failed to encode utxo: %w", err)
-				}
-
-				// Store in main UTXO bucket
-				key := makeUTXOKey(&utxo.TxHash, utxo.OutIndex)
-				if err := utxoBucket.Put(key, data); err != nil {
-					return fmt.Errorf("failed to put utxo: %w", err)
-				}
-
-				// Add to address index
-				addrKey := make([]byte, len(utxo.Address)+32+4)
-				copy(addrKey, []byte(utxo.Address))
-				copy(addrKey[len(utxo.Address):], utxo.TxHash[:])
-				binary.BigEndian.PutUint32(addrKey[len(utxo.Address)+32:], utxo.OutIndex)
-				if err := utxoAddrBucket.Put(addrKey, []byte{1}); err != nil {
-					return fmt.Errorf("failed to update utxo address index: %w", err)
-				}
-			}
+		if err := bw.writeUTXOs(tx); err != nil {
+			return err
 		}
-
-		// Delete UTXOs
-		if len(bw.deletedUTXOs) > 0 {
-			utxoBucket := tx.Bucket(utxoBucket)
-			utxoAddrBucket := tx.Bucket(utxoAddrBucket)
-
-			for _, uk := range bw.deletedUTXOs {
-				key := makeUTXOKey(&uk.txHash, uk.outIndex)
-
-				// Get UTXO to find address for index cleanup
-				data := utxoBucket.Get(key)
-				if data != nil {
-					utxo, err := decodeUTXO(&uk.txHash, uk.outIndex, data)
-					if err == nil {
-						// Remove from address index
-						addrKey := make([]byte, len(utxo.Address)+32+4)
-						copy(addrKey, []byte(utxo.Address))
-						copy(addrKey[len(utxo.Address):], uk.txHash[:])
-						binary.BigEndian.PutUint32(addrKey[len(utxo.Address)+32:], uk.outIndex)
-						utxoAddrBucket.Delete(addrKey)
-					}
-				}
-
-				// Delete UTXO
-				if err := utxoBucket.Delete(key); err != nil {
-					return fmt.Errorf("failed to delete utxo: %w", err)
-				}
-			}
+		if err := bw.deleteUTXOs(tx); err != nil {
+			return err
 		}
-
 		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("batch commit failed: %w", err)
 	}
 
-	// Update cache for committed names
+	bw.updateCache()
+	bw.clear()
+
+	return nil
+}
+
+// writeNames writes pending name records to the database.
+func (bw *BatchWriter) writeNames(tx *bbolt.Tx) error {
+	if len(bw.names) == 0 {
+		return nil
+	}
+
+	namesBucket := tx.Bucket(namesBucket)
+	expirationBucket := tx.Bucket(expirationBucket)
+
 	for name, record := range bw.names {
-		// Ensure Name field is set before caching
+		if err := bw.updateExpirationIndex(namesBucket, expirationBucket, name); err != nil {
+			return err
+		}
+
+		data := encodeNameRecord(record)
+		if err := namesBucket.Put([]byte(name), data); err != nil {
+			return fmt.Errorf("failed to put name %s: %w", name, err)
+		}
+
+		expirationKey := makeExpirationKey(record.ExpiresAt, name)
+		if err := expirationBucket.Put(expirationKey, []byte{1}); err != nil {
+			return fmt.Errorf("failed to update expiration index for %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// updateExpirationIndex removes old expiration index entry if name exists.
+func (bw *BatchWriter) updateExpirationIndex(namesBucket, expirationBucket *bbolt.Bucket, name string) error {
+	existingData := namesBucket.Get([]byte(name))
+	if existingData != nil {
+		existingRecord, decodeErr := decodeNameRecord(existingData)
+		if decodeErr == nil {
+			oldExpirationKey := makeExpirationKey(existingRecord.ExpiresAt, name)
+			expirationBucket.Delete(oldExpirationKey)
+		}
+	}
+	return nil
+}
+
+// deleteNames removes pending name deletions from the database.
+func (bw *BatchWriter) deleteNames(tx *bbolt.Tx) error {
+	if len(bw.deletedNames) == 0 {
+		return nil
+	}
+
+	namesBucket := tx.Bucket(namesBucket)
+	expirationBucket := tx.Bucket(expirationBucket)
+
+	for name := range bw.deletedNames {
+		if err := bw.removeExpirationIndex(namesBucket, expirationBucket, name); err != nil {
+			return err
+		}
+
+		if err := namesBucket.Delete([]byte(name)); err != nil {
+			return fmt.Errorf("failed to delete name %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// removeExpirationIndex removes expiration index entry for a name.
+func (bw *BatchWriter) removeExpirationIndex(namesBucket, expirationBucket *bbolt.Bucket, name string) error {
+	existingData := namesBucket.Get([]byte(name))
+	if existingData != nil {
+		existingRecord, decodeErr := decodeNameRecord(existingData)
+		if decodeErr == nil {
+			expirationKey := makeExpirationKey(existingRecord.ExpiresAt, name)
+			expirationBucket.Delete(expirationKey)
+		}
+	}
+	return nil
+}
+
+// writeHistory writes pending history entries to the database.
+func (bw *BatchWriter) writeHistory(tx *bbolt.Tx) error {
+	if len(bw.history) == 0 {
+		return nil
+	}
+
+	histBucket := tx.Bucket(historyBucket)
+	indexBucket := tx.Bucket(historyIndexBucket)
+
+	for txHash, record := range bw.history {
+		data := encodeNameRecord(record)
+		if err := histBucket.Put(txHash[:], data); err != nil {
+			return fmt.Errorf("failed to put history: %w", err)
+		}
+
+		nameKey := []byte(record.Name)
+		existing := indexBucket.Get(nameKey)
+		newIndex := append(append([]byte(nil), existing...), txHash[:]...)
+		if err := indexBucket.Put(nameKey, newIndex); err != nil {
+			return fmt.Errorf("failed to update history index: %w", err)
+		}
+	}
+	return nil
+}
+
+// writeNameNews writes pending NAME_NEW commitments to the database.
+func (bw *BatchWriter) writeNameNews(tx *bbolt.Tx) error {
+	if len(bw.nameNews) == 0 {
+		return nil
+	}
+
+	bucket := tx.Bucket(nameNewBucket)
+	for _, entry := range bw.nameNews {
+		data := make([]byte, 4)
+		binary.LittleEndian.PutUint32(data, uint32(entry.height))
+		if err := bucket.Put(entry.commitHash, data); err != nil {
+			return fmt.Errorf("failed to put name_new: %w", err)
+		}
+	}
+	return nil
+}
+
+// writeUTXOs writes pending UTXOs to the database.
+func (bw *BatchWriter) writeUTXOs(tx *bbolt.Tx) error {
+	if len(bw.utxos) == 0 {
+		return nil
+	}
+
+	utxoBucket := tx.Bucket(utxoBucket)
+	utxoAddrBucket := tx.Bucket(utxoAddrBucket)
+
+	for _, utxo := range bw.utxos {
+		data, err := encodeUTXO(utxo)
+		if err != nil {
+			return fmt.Errorf("failed to encode utxo: %w", err)
+		}
+
+		key := makeUTXOKey(&utxo.TxHash, utxo.OutIndex)
+		if err := utxoBucket.Put(key, data); err != nil {
+			return fmt.Errorf("failed to put utxo: %w", err)
+		}
+
+		if err := bw.addUTXOToAddressIndex(utxoAddrBucket, utxo); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// addUTXOToAddressIndex adds a UTXO to the address index.
+func (bw *BatchWriter) addUTXOToAddressIndex(utxoAddrBucket *bbolt.Bucket, utxo *UTXO) error {
+	addrKey := make([]byte, len(utxo.Address)+32+4)
+	copy(addrKey, []byte(utxo.Address))
+	copy(addrKey[len(utxo.Address):], utxo.TxHash[:])
+	binary.BigEndian.PutUint32(addrKey[len(utxo.Address)+32:], utxo.OutIndex)
+	if err := utxoAddrBucket.Put(addrKey, []byte{1}); err != nil {
+		return fmt.Errorf("failed to update utxo address index: %w", err)
+	}
+	return nil
+}
+
+// deleteUTXOs removes pending UTXO deletions from the database.
+func (bw *BatchWriter) deleteUTXOs(tx *bbolt.Tx) error {
+	if len(bw.deletedUTXOs) == 0 {
+		return nil
+	}
+
+	utxoBucket := tx.Bucket(utxoBucket)
+	utxoAddrBucket := tx.Bucket(utxoAddrBucket)
+
+	for _, uk := range bw.deletedUTXOs {
+		if err := bw.removeUTXOFromAddressIndex(utxoBucket, utxoAddrBucket, uk); err != nil {
+			return err
+		}
+
+		key := makeUTXOKey(&uk.txHash, uk.outIndex)
+		if err := utxoBucket.Delete(key); err != nil {
+			return fmt.Errorf("failed to delete utxo: %w", err)
+		}
+	}
+	return nil
+}
+
+// removeUTXOFromAddressIndex removes a UTXO from the address index.
+func (bw *BatchWriter) removeUTXOFromAddressIndex(utxoBucket, utxoAddrBucket *bbolt.Bucket, uk utxoKey) error {
+	key := makeUTXOKey(&uk.txHash, uk.outIndex)
+	data := utxoBucket.Get(key)
+	if data != nil {
+		utxo, err := decodeUTXO(&uk.txHash, uk.outIndex, data)
+		if err == nil {
+			addrKey := make([]byte, len(utxo.Address)+32+4)
+			copy(addrKey, []byte(utxo.Address))
+			copy(addrKey[len(utxo.Address):], uk.txHash[:])
+			binary.BigEndian.PutUint32(addrKey[len(utxo.Address)+32:], uk.outIndex)
+			utxoAddrBucket.Delete(addrKey)
+		}
+	}
+	return nil
+}
+
+// updateCache updates the cache with committed changes.
+func (bw *BatchWriter) updateCache() {
+	for name, record := range bw.names {
 		record.Name = name
 		bw.ndb.cache.Put(name, record)
 	}
 	for name := range bw.deletedNames {
 		bw.ndb.cache.Delete(name)
 	}
+}
 
-	// Clear batch
+// clear resets the batch writer state.
+func (bw *BatchWriter) clear() {
 	bw.names = make(map[string]*NameRecord)
 	bw.deletedNames = make(map[string]struct{})
 	bw.history = make(map[chainhash.Hash]*NameRecord)
@@ -290,8 +364,6 @@ func (bw *BatchWriter) Commit() error {
 	bw.utxos = nil
 	bw.deletedUTXOs = nil
 	bw.batchSize = 0
-
-	return nil
 }
 
 // Size returns the current number of operations in the batch.

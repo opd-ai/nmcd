@@ -12,6 +12,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/opd-ai/nmcd/chain"
 	"github.com/opd-ai/nmcd/config"
 	"github.com/opd-ai/nmcd/internal/logging"
@@ -397,42 +398,80 @@ func findNameUTXO(utxos []*namedb.UTXO, txHash *chainhash.Hash, outIndex uint32)
 //	    Confirmations:       12,    // Can request more confirmations if desired
 //	})
 func (c *EmbeddedClient) RegisterName(ctx context.Context, name, value string, opts *RegisterOpts) (*TxResult, error) {
-	// Check context
-	select {
-	case <-ctx.Done():
-		return nil, ErrContextCanceled
-	default:
+	if err := c.checkClientState(ctx); err != nil {
+		return nil, err
 	}
 
-	// Check if client is closed
-	c.mu.RLock()
-	if c.closed {
-		c.mu.RUnlock()
-		return nil, fmt.Errorf("client is closed")
-	}
-	c.mu.RUnlock()
-
-	// Check if wallet is available
-	if c.wallet == nil {
-		return nil, ErrNoWallet
-	}
-
-	// Validate inputs
 	if err := c.validateRegistrationInputs(name, value); err != nil {
 		return nil, err
 	}
 
-	// Check if name already exists
-	existing, err := c.nameDB.GetName(name)
-	if err == nil {
-		// Name exists, check if it's expired
-		bestHeight := c.chain.BestSnapshot().Height
-		if existing.ExpiresAt > bestHeight {
-			return nil, fmt.Errorf("%w: %s", ErrNameExists, name)
-		}
+	if err := c.checkNameAvailability(name); err != nil {
+		return nil, err
 	}
 
-	// Set default options
+	opts = c.normalizeRegisterOpts(opts)
+
+	ownerAddr, walletUTXOs, ownerBtcAddr, err := c.prepareWalletResources(opts.FromAddress)
+	if err != nil {
+		return nil, err
+	}
+
+	nameNewTx, randUsed, err := c.createAndBroadcastNameNew(name, walletUTXOs, opts.FeeRate, ownerBtcAddr)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &TxResult{
+		TxHash:        nameNewTx.TxHash().String(),
+		Name:          name,
+		Status:        TxStatusPending,
+		Confirmations: 0,
+		BlockHeight:   0,
+		BlockHash:     "",
+	}
+
+	if !opts.WaitForConfirmation {
+		return result, nil
+	}
+
+	return c.completeRegistration(ctx, name, value, nameNewTx.TxHash(), randUsed, ownerAddr, ownerBtcAddr, opts, result)
+}
+
+// checkClientState verifies the client is ready to process requests.
+func (c *EmbeddedClient) checkClientState(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ErrContextCanceled
+	default:
+	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.closed {
+		return fmt.Errorf("client is closed")
+	}
+	if c.wallet == nil {
+		return ErrNoWallet
+	}
+	return nil
+}
+
+// checkNameAvailability verifies the name doesn't already exist.
+func (c *EmbeddedClient) checkNameAvailability(name string) error {
+	existing, err := c.nameDB.GetName(name)
+	if err == nil {
+		bestHeight := c.chain.BestSnapshot().Height
+		if existing.ExpiresAt > bestHeight {
+			return fmt.Errorf("%w: %s", ErrNameExists, name)
+		}
+	}
+	return nil
+}
+
+// normalizeRegisterOpts applies defaults to registration options.
+func (c *EmbeddedClient) normalizeRegisterOpts(opts *RegisterOpts) *RegisterOpts {
 	if opts == nil {
 		opts = &RegisterOpts{
 			Confirmations: 1,
@@ -445,50 +484,52 @@ func (c *EmbeddedClient) RegisterName(ctx context.Context, name, value string, o
 	if opts.Confirmations == 0 {
 		opts.Confirmations = 1
 	}
+	return opts
+}
 
-	// Get or create wallet address
-	ownerAddr, err := c.resolveOwnerAddress(opts.FromAddress)
+// prepareWalletResources resolves the owner address and retrieves UTXOs and keys.
+func (c *EmbeddedClient) prepareWalletResources(fromAddress string) (string, []wallet.UTXO, *wallet.KeyPair, error) {
+	ownerAddr, err := c.resolveOwnerAddress(fromAddress)
 	if err != nil {
-		return nil, err
+		return "", nil, nil, err
 	}
 
-	// Get UTXOs for funding the transaction
 	utxos, err := c.chain.GetUTXOsForAddress(ownerAddr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get UTXOs: %w", err)
+		return "", nil, nil, fmt.Errorf("failed to get UTXOs: %w", err)
 	}
 	if len(utxos) == 0 {
-		return nil, fmt.Errorf("%w: no UTXOs available for address %s", ErrInsufficientFunds, ownerAddr)
+		return "", nil, nil, fmt.Errorf("%w: no UTXOs available for address %s", ErrInsufficientFunds, ownerAddr)
 	}
 
-	// Convert namedb UTXOs to wallet UTXOs
 	walletUTXOs := convertToWalletUTXOs(utxos)
 
-	// Parse owner address for transaction creation
 	ownerBtcAddr, err := c.wallet.GetKey(ownerAddr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get owner key: %w", err)
+		return "", nil, nil, fmt.Errorf("failed to get owner key: %w", err)
 	}
 
-	// Generate random bytes for NAME_NEW commitment
+	return ownerAddr, walletUTXOs, ownerBtcAddr, nil
+}
+
+// createAndBroadcastNameNew creates and broadcasts a NAME_NEW transaction.
+func (c *EmbeddedClient) createAndBroadcastNameNew(name string, walletUTXOs []wallet.UTXO, feeRate int64, ownerBtcAddr *wallet.KeyPair) (*wire.MsgTx, []byte, error) {
 	randBytes, err := wallet.GenerateRand()
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate random bytes: %w", err)
+		return nil, nil, fmt.Errorf("failed to generate random bytes: %w", err)
 	}
 
-	// Create NAME_NEW transaction
 	nameNewTx, randUsed, err := c.wallet.CreateNameNewTx(
 		randBytes,
 		name,
 		walletUTXOs,
-		opts.FeeRate,
+		feeRate,
 		ownerBtcAddr.Address,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create NAME_NEW transaction: %w", err)
+		return nil, nil, fmt.Errorf("failed to create NAME_NEW transaction: %w", err)
 	}
 
-	// Broadcast NAME_NEW transaction to network
 	nameNewTxHash := nameNewTx.TxHash()
 	if c.peerMgr != nil {
 		if err := c.peerMgr.BroadcastTx(nameNewTx); err != nil {
@@ -499,61 +540,25 @@ func (c *EmbeddedClient) RegisterName(ctx context.Context, name, value string, o
 		}
 	}
 
-	result := &TxResult{
-		TxHash:        nameNewTxHash.String(),
-		Name:          name,
-		Status:        TxStatusPending,
-		Confirmations: 0,
-		BlockHeight:   0,
-		BlockHash:     "",
-	}
+	return nameNewTx, randUsed, nil
+}
 
-	// If WaitForConfirmation is false, return immediately with NAME_NEW tx hash
-	if !opts.WaitForConfirmation {
-		return result, nil
-	}
-
-	// Wait for NAME_NEW confirmation (minimum 12 blocks as per protocol)
+// completeRegistration waits for NAME_NEW confirmation and creates NAME_FIRSTUPDATE.
+func (c *EmbeddedClient) completeRegistration(ctx context.Context, name, value string, nameNewTxHash chainhash.Hash, randUsed []byte, ownerAddr string, ownerBtcAddr *wallet.KeyPair, opts *RegisterOpts, result *TxResult) (*TxResult, error) {
 	confirmations := opts.Confirmations
 	if confirmations < 12 {
-		confirmations = 12 // Protocol requires at least 12 blocks
+		confirmations = 12
 	}
 
 	if err := c.WaitForConfirmation(ctx, nameNewTxHash.String(), confirmations); err != nil {
 		return nil, fmt.Errorf("failed to wait for NAME_NEW confirmation: %w", err)
 	}
 
-	// After waiting for 12+ confirmations, automatically create and broadcast NAME_FIRSTUPDATE
-	utxosForFirstUpdate, err := c.chain.GetUTXOsForAddress(ownerAddr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get UTXOs for NAME_FIRSTUPDATE: %w", err)
-	}
-
-	// Find the NAME_NEW UTXO
-	nameNewUtxoIndex, err := findNameNewUTXO(utxosForFirstUpdate, &nameNewTxHash)
+	nameFirstUpdateTx, err := c.createNameFirstUpdate(name, value, &nameNewTxHash, randUsed, ownerAddr, ownerBtcAddr, opts.FeeRate)
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert namedb UTXOs to wallet UTXOs for NAME_FIRSTUPDATE
-	walletUTXOsForFirstUpdate := convertToWalletUTXOs(utxosForFirstUpdate)
-
-	// Create NAME_FIRSTUPDATE transaction
-	randUsedHex := fmt.Sprintf("%x", randUsed)
-	nameFirstUpdateTx, err := c.wallet.CreateNameFirstUpdateTx(
-		name,
-		randUsedHex,
-		value,
-		walletUTXOsForFirstUpdate,
-		nameNewUtxoIndex,
-		opts.FeeRate,
-		ownerBtcAddr.Address,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create NAME_FIRSTUPDATE transaction: %w", err)
-	}
-
-	// Broadcast NAME_FIRSTUPDATE transaction
 	nameFirstUpdateTxHash := nameFirstUpdateTx.TxHash()
 	if c.peerMgr != nil {
 		if err := c.peerMgr.BroadcastTx(nameFirstUpdateTx); err != nil {
@@ -564,12 +569,42 @@ func (c *EmbeddedClient) RegisterName(ctx context.Context, name, value string, o
 		}
 	}
 
-	// Update result with NAME_FIRSTUPDATE transaction info
 	result.TxHash = nameFirstUpdateTxHash.String()
 	result.Status = TxStatusPending
 	result.Confirmations = 0
 
 	return result, nil
+}
+
+// createNameFirstUpdate creates a NAME_FIRSTUPDATE transaction.
+func (c *EmbeddedClient) createNameFirstUpdate(name, value string, nameNewTxHash *chainhash.Hash, randUsed []byte, ownerAddr string, ownerBtcAddr *wallet.KeyPair, feeRate int64) (*wire.MsgTx, error) {
+	utxosForFirstUpdate, err := c.chain.GetUTXOsForAddress(ownerAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get UTXOs for NAME_FIRSTUPDATE: %w", err)
+	}
+
+	nameNewUtxoIndex, err := findNameNewUTXO(utxosForFirstUpdate, nameNewTxHash)
+	if err != nil {
+		return nil, err
+	}
+
+	walletUTXOsForFirstUpdate := convertToWalletUTXOs(utxosForFirstUpdate)
+	randUsedHex := fmt.Sprintf("%x", randUsed)
+
+	nameFirstUpdateTx, err := c.wallet.CreateNameFirstUpdateTx(
+		name,
+		randUsedHex,
+		value,
+		walletUTXOsForFirstUpdate,
+		nameNewUtxoIndex,
+		feeRate,
+		ownerBtcAddr.Address,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create NAME_FIRSTUPDATE transaction: %w", err)
+	}
+
+	return nameFirstUpdateTx, nil
 }
 
 // UpdateName updates the value of an existing name using a NAME_UPDATE operation.
@@ -596,114 +631,30 @@ func (c *EmbeddedClient) RegisterName(ctx context.Context, name, value string, o
 //	    FeeRate: 1,
 //	})
 func (c *EmbeddedClient) UpdateName(ctx context.Context, name, value string, opts *UpdateOpts) (*TxResult, error) {
-	// Check context
-	select {
-	case <-ctx.Done():
-		return nil, ErrContextCanceled
-	default:
+	if err := c.checkClientState(ctx); err != nil {
+		return nil, err
 	}
 
-	// Check if client is closed
-	c.mu.RLock()
-	if c.closed {
-		c.mu.RUnlock()
-		return nil, fmt.Errorf("client is closed")
-	}
-	c.mu.RUnlock()
-
-	// Check if wallet is available
-	if c.wallet == nil {
-		return nil, ErrNoWallet
-	}
-
-	// Validate inputs
 	if err := c.validateRegistrationInputs(name, value); err != nil {
 		return nil, err
 	}
 
-	// Check if name exists and get current record
-	nameRecord, err := c.nameDB.GetName(name)
-	if err != nil {
-		if errors.Is(err, namedb.ErrNameNotFound) {
-			return nil, fmt.Errorf("%w: %s", ErrNameNotFound, name)
-		}
-		return nil, fmt.Errorf("failed to get name record: %w", err)
-	}
-
-	// Check if name is expired
-	bestHeight := c.chain.BestSnapshot().Height
-	if nameRecord.ExpiresAt < bestHeight {
-		return nil, fmt.Errorf("%w: %s (expired at height %d, current height %d)",
-			ErrNameExpired, name, nameRecord.ExpiresAt, bestHeight)
-	}
-
-	// Verify wallet has key for the current owner address
-	if !c.wallet.HasKey(nameRecord.Address) {
-		return nil, fmt.Errorf("wallet does not have key for name owner address: %s", nameRecord.Address)
-	}
-
-	// Set default options
-	if opts == nil {
-		opts = &UpdateOpts{
-			Confirmations: 1,
-			FeeRate:       1,
-		}
-	}
-	if opts.FeeRate == 0 {
-		opts.FeeRate = 1
-	}
-	if opts.Confirmations == 0 {
-		opts.Confirmations = 1
-	}
-
-	// Get UTXOs for the current owner address
-	utxos, err := c.chain.GetUTXOsForAddress(nameRecord.Address)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get UTXOs: %w", err)
-	}
-	if len(utxos) == 0 {
-		return nil, fmt.Errorf("%w: no UTXOs available for address %s", ErrInsufficientFunds, nameRecord.Address)
-	}
-
-	// Find the name UTXO
-	nameUTXOIndex, err := findNameUTXO(utxos, &nameRecord.TxHash, nameRecord.OutIndex)
+	nameRecord, err := c.getAndValidateNameRecord(name)
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert namedb UTXOs to wallet UTXOs
-	walletUTXOs := convertToWalletUTXOs(utxos)
-
-	// Parse destination address if transfer is requested
-	var destAddr btcutil.Address
-	if opts.TransferTo != "" {
-		if opts.TransferTo == nameRecord.Address {
-			c.logger.Warn("TransferTo address matches current owner - transfer is redundant",
-				"address", opts.TransferTo,
-				"name", name)
-			destAddr = nil
-		} else {
-			destAddr, err = btcutil.DecodeAddress(opts.TransferTo, c.chain.ChainParams())
-			if err != nil {
-				return nil, fmt.Errorf("invalid TransferTo address %q: %w", opts.TransferTo, err)
-			}
-		}
+	if !c.wallet.HasKey(nameRecord.Address) {
+		return nil, fmt.Errorf("wallet does not have key for name owner address: %s", nameRecord.Address)
 	}
 
-	// Create NAME_UPDATE transaction
-	updateTx, err := c.wallet.CreateNameUpdateTx(
-		name,
-		value,
-		walletUTXOs,
-		nameUTXOIndex,
-		opts.FeeRate,
-		destAddr,
-	)
+	opts = c.normalizeUpdateOpts(opts)
+
+	updateTx, err := c.createUpdateTransaction(name, value, nameRecord, opts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create NAME_UPDATE transaction: %w", err)
+		return nil, err
 	}
 
-	// Broadcast NAME_UPDATE transaction to network
 	updateTxHash := updateTx.TxHash()
 	if c.peerMgr != nil {
 		if err := c.peerMgr.BroadcastTx(updateTx); err != nil {
@@ -723,23 +674,117 @@ func (c *EmbeddedClient) UpdateName(ctx context.Context, name, value string, opt
 		BlockHash:     "",
 	}
 
-	// If WaitForConfirmation is false, return immediately with NAME_UPDATE tx hash
 	if !opts.WaitForConfirmation {
 		return result, nil
 	}
 
-	// Wait for NAME_UPDATE confirmation
-	// Use default confirmations if not specified
-	confirmations := opts.Confirmations
+	return c.waitForUpdateConfirmation(ctx, updateTxHash.String(), opts.Confirmations, result)
+}
+
+// getAndValidateNameRecord retrieves and validates a name record for updates.
+func (c *EmbeddedClient) getAndValidateNameRecord(name string) (*namedb.NameRecord, error) {
+	nameRecord, err := c.nameDB.GetName(name)
+	if err != nil {
+		if errors.Is(err, namedb.ErrNameNotFound) {
+			return nil, fmt.Errorf("%w: %s", ErrNameNotFound, name)
+		}
+		return nil, fmt.Errorf("failed to get name record: %w", err)
+	}
+
+	bestHeight := c.chain.BestSnapshot().Height
+	if nameRecord.ExpiresAt < bestHeight {
+		return nil, fmt.Errorf("%w: %s (expired at height %d, current height %d)",
+			ErrNameExpired, name, nameRecord.ExpiresAt, bestHeight)
+	}
+
+	return nameRecord, nil
+}
+
+// normalizeUpdateOpts applies defaults to update options.
+func (c *EmbeddedClient) normalizeUpdateOpts(opts *UpdateOpts) *UpdateOpts {
+	if opts == nil {
+		opts = &UpdateOpts{
+			Confirmations: 1,
+			FeeRate:       1,
+		}
+	}
+	if opts.FeeRate == 0 {
+		opts.FeeRate = 1
+	}
+	if opts.Confirmations == 0 {
+		opts.Confirmations = 1
+	}
+	return opts
+}
+
+// createUpdateTransaction creates a NAME_UPDATE transaction.
+func (c *EmbeddedClient) createUpdateTransaction(name, value string, nameRecord *namedb.NameRecord, opts *UpdateOpts) (*wire.MsgTx, error) {
+	utxos, err := c.chain.GetUTXOsForAddress(nameRecord.Address)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get UTXOs: %w", err)
+	}
+	if len(utxos) == 0 {
+		return nil, fmt.Errorf("%w: no UTXOs available for address %s", ErrInsufficientFunds, nameRecord.Address)
+	}
+
+	nameUTXOIndex, err := findNameUTXO(utxos, &nameRecord.TxHash, nameRecord.OutIndex)
+	if err != nil {
+		return nil, err
+	}
+
+	walletUTXOs := convertToWalletUTXOs(utxos)
+
+	destAddr, err := c.parseTransferAddress(opts.TransferTo, nameRecord.Address, name)
+	if err != nil {
+		return nil, err
+	}
+
+	updateTx, err := c.wallet.CreateNameUpdateTx(
+		name,
+		value,
+		walletUTXOs,
+		nameUTXOIndex,
+		opts.FeeRate,
+		destAddr,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create NAME_UPDATE transaction: %w", err)
+	}
+
+	return updateTx, nil
+}
+
+// parseTransferAddress parses and validates the transfer address if provided.
+func (c *EmbeddedClient) parseTransferAddress(transferTo, currentOwner, name string) (btcutil.Address, error) {
+	if transferTo == "" {
+		return nil, nil
+	}
+
+	if transferTo == currentOwner {
+		c.logger.Warn("TransferTo address matches current owner - transfer is redundant",
+			"address", transferTo,
+			"name", name)
+		return nil, nil
+	}
+
+	destAddr, err := btcutil.DecodeAddress(transferTo, c.chain.ChainParams())
+	if err != nil {
+		return nil, fmt.Errorf("invalid TransferTo address %q: %w", transferTo, err)
+	}
+
+	return destAddr, nil
+}
+
+// waitForUpdateConfirmation waits for NAME_UPDATE confirmation and updates result.
+func (c *EmbeddedClient) waitForUpdateConfirmation(ctx context.Context, txHash string, confirmations int, result *TxResult) (*TxResult, error) {
 	if confirmations == 0 {
 		confirmations = 1
 	}
 
-	if err := c.WaitForConfirmation(ctx, updateTxHash.String(), confirmations); err != nil {
+	if err := c.WaitForConfirmation(ctx, txHash, confirmations); err != nil {
 		return nil, fmt.Errorf("failed to wait for NAME_UPDATE confirmation: %w", err)
 	}
 
-	// Update result with confirmation status
 	result.Status = TxStatusConfirmed
 	result.Confirmations = confirmations
 

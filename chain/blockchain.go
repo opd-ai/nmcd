@@ -912,192 +912,232 @@ func (bc *BlockChain) validateTransactionFee(tx *wire.MsgTx, opType namedb.NameO
 // updateNameDatabase updates the name database with operations from a block
 func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 	height := block.Height()
-	// Use block timestamp for deterministic replay and historical accuracy
 	blockTime := block.MsgBlock().Header.Timestamp
 
-	// Handle expired names
+	if err := bc.handleExpiredNames(height); err != nil {
+		return err
+	}
+
+	if err := bc.processBlockTransactions(block, height, blockTime); err != nil {
+		return err
+	}
+
+	bc.cleanupSpentUTXOsIfNeeded(height)
+
+	return nil
+}
+
+// handleExpiredNames deletes expired names and their history at given height.
+func (bc *BlockChain) handleExpiredNames(height int32) error {
 	expired, err := bc.nameDB.GetExpiredNames(height)
 	if err != nil {
 		return err
 	}
+
 	for _, name := range expired {
-		// Delete the name record
 		if err := bc.nameDB.DeleteName(name); err != nil {
 			return err
 		}
-		// Clean up history entries for the expired name to prevent storage waste
 		if err := bc.nameDB.DeleteHistory(name); err != nil {
 			return err
 		}
-		// Record name expiration metric
 		metrics.Get().RecordNameExpired()
 	}
+	return nil
+}
 
-	// Process name operations and track UTXOs
+// processBlockTransactions processes all transactions in a block for UTXO and name operations.
+func (bc *BlockChain) processBlockTransactions(block *btcutil.Block, height int32, blockTime time.Time) error {
 	for txIdx, tx := range block.Transactions() {
-		msgTx := tx.MsgTx()
-		txHash := tx.Hash()
-
-		// Skip coinbase transaction for input processing
 		if txIdx > 0 {
-			// Process spent UTXOs (inputs)
-			// Store spent UTXOs before removing them for potential restoration during reorg
-			for _, txIn := range msgTx.TxIn {
-				// Try to get the UTXO before removing it
-				utxo, err := bc.nameDB.GetUTXO(&txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index)
-				if err == nil && utxo != nil {
-					// Store the spent UTXO for potential restoration during reorgs.
-					// This is best-effort storage: failures are logged but do not block
-					// block processing to avoid stalling the chain on bookkeeping issues.
-					if err := bc.nameDB.StoreSpentUTXO(utxo, height); err != nil {
-						log.Printf("Warning: Failed to store spent UTXO %s:%d at height %d: %v",
-							txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index, height, err)
-					}
-				}
-
-				// Remove the UTXO from active set
-				if err := bc.nameDB.RemoveUTXO(&txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index); err != nil {
-					// UTXO might not exist (e.g., old block before UTXO tracking was implemented)
-					// This is normal and not an error condition
-					log.Printf("Info: Could not remove UTXO %s:%d (may not exist): %v",
-						txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index, err)
-				}
+			if err := bc.processTransactionInputs(tx.MsgTx(), height); err != nil {
+				return err
 			}
 		}
 
-		// Add new UTXOs and process name operations (process outputs)
-		for outIdx, txOut := range msgTx.TxOut {
-			// Try to extract address from the script for UTXO tracking
-			_, addresses, _, err := txscript.ExtractPkScriptAddrs(txOut.PkScript, bc.chainParams)
-			var address string
-			if err == nil && len(addresses) > 0 {
-				address = addresses[0].EncodeAddress()
-			}
-
-			// Create UTXO entry
-			utxo := &namedb.UTXO{
-				TxHash:   *txHash,
-				OutIndex: uint32(outIdx),
-				Value:    txOut.Value,
-				Address:  address,
-				PkScript: txOut.PkScript,
-				Height:   height,
-			}
-			if err := bc.nameDB.AddUTXO(utxo); err != nil {
-				return fmt.Errorf("failed to add UTXO %s:%d: %w", txHash, outIdx, err)
-			}
-
-			// Parse and process name operations
-			op, name, value, extra, err := parseNameScriptFull(txOut.PkScript)
-			if err != nil {
-				continue
-			}
-
-			switch op {
-			case namedb.NameNew:
-				// Store the commitment hash with block height
-				// extra contains the commitment hash from the script
-				if err := bc.nameDB.PutNameNew(extra, height); err != nil {
-					return err
-				}
-				// Record name operation metric
-				metrics.Get().RecordNameOperation("NAME_NEW")
-
-			case namedb.NameFirstUpdate:
-				// Extract the owner address from the script
-				address := extractAddressFromNameScript(txOut.PkScript, bc.chainParams)
-
-				// Retrieve the NAME_NEW record before deleting it so we can store
-				// the original height for accurate reorg handling
-				commitHash := computeCommitHash(extra, name, bc.chainParams)
-				nameNewRecord, err := bc.nameDB.GetNameNew(commitHash)
-				var nameNewHeight int32
-				if err == nil && nameNewRecord != nil {
-					// Use the exact NAME_NEW height from the database
-					nameNewHeight = nameNewRecord.Height
-				} else {
-					// Fallback estimation for cases where NAME_NEW record is not found.
-					// This can occur during database upgrades or if processing old blocks
-					// where NAME_NEW was not properly tracked. Uses conservative estimate
-					// based on minimum timing requirement.
-					nameNewHeight = height - config.MinBlocksBeforeFirstUpdate
-					if nameNewHeight < 0 {
-						nameNewHeight = 0
-					}
-				}
-
-				record := &namedb.NameRecord{
-					Name:          name,
-					Value:         value,
-					TxHash:        *txHash,
-					OutIndex:      uint32(outIdx),
-					Height:        height,
-					ExpiresAt:     safeCalcExpiresAt(height),
-					Address:       address,
-					UpdatedAt:     blockTime,
-					NameNewHeight: nameNewHeight, // Store for accurate rollback
-				}
-				if err := bc.nameDB.PutName(name, record); err != nil {
-					return err
-				}
-				if err := bc.nameDB.AddHistory(*txHash, record); err != nil {
-					return err
-				}
-				// Clean up the NAME_NEW commitment after successful registration
-				if err := bc.nameDB.DeleteNameNew(commitHash); err != nil {
-					return err
-				}
-				// Record name operation metric
-				metrics.Get().RecordNameOperation("NAME_FIRSTUPDATE")
-
-			case namedb.NameUpdate:
-				// Extract the owner address from the script
-				address := extractAddressFromNameScript(txOut.PkScript, bc.chainParams)
-
-				// Preserve the NameNewHeight from the previous record (if available)
-				// This is needed for accurate rollback if this update is later rolled back
-				var nameNewHeight int32
-				prevRecord, err := bc.nameDB.GetName(name)
-				if err == nil && prevRecord != nil {
-					nameNewHeight = prevRecord.NameNewHeight
-				}
-
-				record := &namedb.NameRecord{
-					Name:          name,
-					Value:         value,
-					TxHash:        *txHash,
-					OutIndex:      uint32(outIdx),
-					Height:        height,
-					ExpiresAt:     safeCalcExpiresAt(height),
-					Address:       address,
-					UpdatedAt:     blockTime,
-					NameNewHeight: nameNewHeight, // Preserve from previous record
-				}
-				if err := bc.nameDB.PutName(name, record); err != nil {
-					return err
-				}
-				if err := bc.nameDB.AddHistory(*txHash, record); err != nil {
-					return err
-				}
-				// Record name operation metric
-				metrics.Get().RecordNameOperation("NAME_UPDATE")
-			}
+		if err := bc.processTransactionOutputs(tx, height, blockTime); err != nil {
+			return err
 		}
 	}
+	return nil
+}
 
-	// Cleanup old spent UTXOs periodically
-	// Keep spent UTXOs for the last 1000 blocks to handle potential reorgs
-	// This prevents unbounded growth of the spent UTXO bucket
+// processTransactionInputs processes spent UTXOs from transaction inputs.
+func (bc *BlockChain) processTransactionInputs(msgTx *wire.MsgTx, height int32) error {
+	for _, txIn := range msgTx.TxIn {
+		utxo, err := bc.nameDB.GetUTXO(&txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index)
+		if err == nil && utxo != nil {
+			if err := bc.nameDB.StoreSpentUTXO(utxo, height); err != nil {
+				log.Printf("Warning: Failed to store spent UTXO %s:%d at height %d: %v",
+					txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index, height, err)
+			}
+		}
+
+		if err := bc.nameDB.RemoveUTXO(&txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index); err != nil {
+			log.Printf("Info: Could not remove UTXO %s:%d (may not exist): %v",
+				txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index, err)
+		}
+	}
+	return nil
+}
+
+// processTransactionOutputs processes new UTXOs and name operations from transaction outputs.
+func (bc *BlockChain) processTransactionOutputs(tx *btcutil.Tx, height int32, blockTime time.Time) error {
+	msgTx := tx.MsgTx()
+	txHash := tx.Hash()
+
+	for outIdx, txOut := range msgTx.TxOut {
+		if err := bc.addUTXO(txHash, outIdx, txOut, height); err != nil {
+			return err
+		}
+
+		if err := bc.processNameOperation(txHash, outIdx, txOut, height, blockTime); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// addUTXO creates and stores a UTXO entry for a transaction output.
+func (bc *BlockChain) addUTXO(txHash *chainhash.Hash, outIdx int, txOut *wire.TxOut, height int32) error {
+	_, addresses, _, err := txscript.ExtractPkScriptAddrs(txOut.PkScript, bc.chainParams)
+	var address string
+	if err == nil && len(addresses) > 0 {
+		address = addresses[0].EncodeAddress()
+	}
+
+	utxo := &namedb.UTXO{
+		TxHash:   *txHash,
+		OutIndex: uint32(outIdx),
+		Value:    txOut.Value,
+		Address:  address,
+		PkScript: txOut.PkScript,
+		Height:   height,
+	}
+	if err := bc.nameDB.AddUTXO(utxo); err != nil {
+		return fmt.Errorf("failed to add UTXO %s:%d: %w", txHash, outIdx, err)
+	}
+	return nil
+}
+
+// processNameOperation parses and handles name operations from transaction outputs.
+func (bc *BlockChain) processNameOperation(txHash *chainhash.Hash, outIdx int, txOut *wire.TxOut, height int32, blockTime time.Time) error {
+	op, name, value, extra, err := parseNameScriptFull(txOut.PkScript)
+	if err != nil {
+		return nil // Not a name operation
+	}
+
+	switch op {
+	case namedb.NameNew:
+		return bc.processNameNew(extra, height)
+	case namedb.NameFirstUpdate:
+		return bc.processNameFirstUpdate(txHash, outIdx, txOut, name, value, extra, height, blockTime)
+	case namedb.NameUpdate:
+		return bc.processNameUpdate(txHash, outIdx, txOut, name, value, height, blockTime)
+	}
+	return nil
+}
+
+// processNameNew handles NAME_NEW operations.
+func (bc *BlockChain) processNameNew(commitHash []byte, height int32) error {
+	if err := bc.nameDB.PutNameNew(commitHash, height); err != nil {
+		return err
+	}
+	metrics.Get().RecordNameOperation("NAME_NEW")
+	return nil
+}
+
+// processNameFirstUpdate handles NAME_FIRSTUPDATE operations.
+func (bc *BlockChain) processNameFirstUpdate(txHash *chainhash.Hash, outIdx int, txOut *wire.TxOut, name, value string, extra []byte, height int32, blockTime time.Time) error {
+	address := extractAddressFromNameScript(txOut.PkScript, bc.chainParams)
+	nameNewHeight := bc.getNameNewHeight(extra, name, height)
+
+	record := &namedb.NameRecord{
+		Name:          name,
+		Value:         value,
+		TxHash:        *txHash,
+		OutIndex:      uint32(outIdx),
+		Height:        height,
+		ExpiresAt:     safeCalcExpiresAt(height),
+		Address:       address,
+		UpdatedAt:     blockTime,
+		NameNewHeight: nameNewHeight,
+	}
+
+	if err := bc.nameDB.PutName(name, record); err != nil {
+		return err
+	}
+	if err := bc.nameDB.AddHistory(*txHash, record); err != nil {
+		return err
+	}
+
+	commitHash := computeCommitHash(extra, name, bc.chainParams)
+	if err := bc.nameDB.DeleteNameNew(commitHash); err != nil {
+		return err
+	}
+
+	metrics.Get().RecordNameOperation("NAME_FIRSTUPDATE")
+	return nil
+}
+
+// getNameNewHeight retrieves the NAME_NEW height or estimates it.
+func (bc *BlockChain) getNameNewHeight(extra []byte, name string, currentHeight int32) int32 {
+	commitHash := computeCommitHash(extra, name, bc.chainParams)
+	nameNewRecord, err := bc.nameDB.GetNameNew(commitHash)
+	if err == nil && nameNewRecord != nil {
+		return nameNewRecord.Height
+	}
+
+	// Fallback estimation for missing NAME_NEW records
+	nameNewHeight := currentHeight - config.MinBlocksBeforeFirstUpdate
+	if nameNewHeight < 0 {
+		nameNewHeight = 0
+	}
+	return nameNewHeight
+}
+
+// processNameUpdate handles NAME_UPDATE operations.
+func (bc *BlockChain) processNameUpdate(txHash *chainhash.Hash, outIdx int, txOut *wire.TxOut, name, value string, height int32, blockTime time.Time) error {
+	address := extractAddressFromNameScript(txOut.PkScript, bc.chainParams)
+
+	var nameNewHeight int32
+	prevRecord, err := bc.nameDB.GetName(name)
+	if err == nil && prevRecord != nil {
+		nameNewHeight = prevRecord.NameNewHeight
+	}
+
+	record := &namedb.NameRecord{
+		Name:          name,
+		Value:         value,
+		TxHash:        *txHash,
+		OutIndex:      uint32(outIdx),
+		Height:        height,
+		ExpiresAt:     safeCalcExpiresAt(height),
+		Address:       address,
+		UpdatedAt:     blockTime,
+		NameNewHeight: nameNewHeight,
+	}
+
+	if err := bc.nameDB.PutName(name, record); err != nil {
+		return err
+	}
+	if err := bc.nameDB.AddHistory(*txHash, record); err != nil {
+		return err
+	}
+
+	metrics.Get().RecordNameOperation("NAME_UPDATE")
+	return nil
+}
+
+// cleanupSpentUTXOsIfNeeded periodically removes old spent UTXOs to prevent unbounded growth.
+func (bc *BlockChain) cleanupSpentUTXOsIfNeeded(height int32) {
 	const spentUtxoRetentionDepth = 1000
-	if height > spentUtxoRetentionDepth && height%100 == 0 { // Cleanup every 100 blocks
+	if height > spentUtxoRetentionDepth && height%100 == 0 {
 		cleanupHeight := height - spentUtxoRetentionDepth
 		if err := bc.nameDB.CleanupOldSpentUTXOs(cleanupHeight); err != nil {
-			// Log but don't fail the block - cleanup is best-effort
 			log.Printf("Warning: Failed to cleanup old spent UTXOs at height %d: %v", height, err)
 		}
 	}
-
-	return nil
 }
 
 // GetName retrieves a name from the database
@@ -1830,11 +1870,25 @@ func (bc *BlockChain) ValidateMempoolTransaction(tx *wire.MsgTx) error {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
 
-	// Get current blockchain height for validation
 	bestSnapshot := bc.BlockChain.BestSnapshot()
 	currentHeight := bestSnapshot.Height
 
-	// Scan transaction outputs for name operations
+	hasNameOp, err := bc.validateNameOperationsInTx(tx, currentHeight)
+	if err != nil {
+		return err
+	}
+
+	if !hasNameOp {
+		if err := bc.validateRegularTransaction(tx); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateNameOperationsInTx validates all name operations in a transaction.
+func (bc *BlockChain) validateNameOperationsInTx(tx *wire.MsgTx, currentHeight int32) (bool, error) {
 	var hasNameOp bool
 
 	for i, txOut := range tx.TxOut {
@@ -1842,124 +1896,125 @@ func (bc *BlockChain) ValidateMempoolTransaction(tx *wire.MsgTx) error {
 			continue
 		}
 
-		// Try to parse as name operation
 		op, name, value, extra, err := parseNameScriptFull(txOut.PkScript)
 		if err != nil {
-			// Not a name operation, skip
 			continue
 		}
 
-		// Found a name operation
 		if hasNameOp {
-			return fmt.Errorf("transaction has multiple name operations (not allowed)")
+			return false, fmt.Errorf("transaction has multiple name operations (not allowed)")
 		}
 		hasNameOp = true
 
-		// Validate output value meets dust limit
 		if txOut.Value < config.DustLimit {
-			return fmt.Errorf("name operation output index %d has value %d below dust limit %d",
+			return false, fmt.Errorf("name operation output index %d has value %d below dust limit %d",
 				i, txOut.Value, config.DustLimit)
 		}
 
-		// Validate name operation based on type
-		switch op {
-		case namedb.NameNew:
-			// NAME_NEW validation
-			// Check if commitment already exists in database
-			if _, err := bc.nameDB.GetNameNew(extra); err == nil {
-				return fmt.Errorf("name_new commitment already exists")
-			}
-			// NAME_NEW is valid - commitment will be stored when transaction is mined
-
-		case namedb.NameFirstUpdate:
-			// NAME_FIRSTUPDATE validation
-			// Verify name doesn't already exist
-			if existingRecord, err := bc.nameDB.GetName(name); err == nil {
-				// Name exists - check if it's expired
-				if existingRecord.ExpiresAt > currentHeight {
-					return fmt.Errorf("name already exists and not expired: %s (expires at block %d)",
-						name, existingRecord.ExpiresAt)
-				}
-				// Name exists but is expired - can be re-registered
-			}
-
-			// Verify NAME_NEW commitment exists
-			commitHash := computeCommitHash(extra, name, bc.chainParams)
-			nameNewRecord, err := bc.nameDB.GetNameNew(commitHash)
-			if err != nil {
-				return fmt.Errorf("no matching name_new found for name: %s", name)
-			}
-
-			// Note: We can't validate the block delay here because we don't know
-			// when this transaction will be mined. The miner will validate this
-			// when including in a block. We only check that the NAME_NEW exists.
-			_ = nameNewRecord // Mark as used
-
-			// Validate name format and value
-			if err := validateNameFormat(name, value); err != nil {
-				return fmt.Errorf("invalid name format: %w", err)
-			}
-
-		case namedb.NameUpdate:
-			// NAME_UPDATE validation
-			// Verify name exists and not expired
-			record, err := bc.nameDB.GetName(name)
-			if err != nil {
-				return fmt.Errorf("name not found for update: %s", name)
-			}
-			if record.ExpiresAt <= currentHeight {
-				return fmt.Errorf("name expired: %s (expired at block %d, current %d)",
-					name, record.ExpiresAt, currentHeight)
-			}
-
-			// UTXO chain validation: Verify transaction spends the current name UTXO
-			currentUTXO := wire.OutPoint{
-				Hash:  record.TxHash,
-				Index: record.OutIndex,
-			}
-
-			found := false
-			for _, txIn := range tx.TxIn {
-				if txIn.PreviousOutPoint.Hash.IsEqual(&currentUTXO.Hash) &&
-					txIn.PreviousOutPoint.Index == currentUTXO.Index {
-					found = true
-					break
-				}
-			}
-
-			if !found {
-				return fmt.Errorf("name_update does not spend current name UTXO: name theft attempt for %s", name)
-			}
-
-			// Validate name format and value
-			if err := validateNameFormat(name, value); err != nil {
-				return fmt.Errorf("invalid name format: %w", err)
-			}
+		if err := bc.validateNameOperation(op, name, value, extra, tx, currentHeight); err != nil {
+			return false, err
 		}
 
-		// Validate transaction fee for name operations
 		if err := bc.validateTransactionFee(tx, op, currentHeight); err != nil {
-			return fmt.Errorf("fee validation failed: %w", err)
+			return false, fmt.Errorf("fee validation failed: %w", err)
 		}
 	}
 
-	// If this is a regular transaction (no name operations), apply basic validation
-	if !hasNameOp {
-		// Basic transaction validation
-		// Check that transaction has at least one output
-		if len(tx.TxOut) == 0 {
-			return fmt.Errorf("transaction has no outputs")
-		}
+	return hasNameOp, nil
+}
 
-		// Check that transaction has at least one input (not a coinbase)
-		if len(tx.TxIn) == 0 {
-			return fmt.Errorf("transaction has no inputs")
-		}
+// validateNameOperation validates a specific name operation type.
+func (bc *BlockChain) validateNameOperation(op namedb.NameOperation, name, value string, extra []byte, tx *wire.MsgTx, currentHeight int32) error {
+	switch op {
+	case namedb.NameNew:
+		return bc.validateNameNew(extra)
+	case namedb.NameFirstUpdate:
+		return bc.validateNameFirstUpdate(name, value, extra, currentHeight)
+	case namedb.NameUpdate:
+		return bc.validateNameUpdate(name, value, tx, currentHeight)
+	}
+	return nil
+}
 
-		// Check for coinbase transaction (not allowed in mempool)
-		if tx.TxIn[0].PreviousOutPoint.Hash.IsEqual(&chainhash.Hash{}) {
-			return fmt.Errorf("coinbase transactions not allowed in mempool")
+// validateNameNew validates NAME_NEW operations.
+func (bc *BlockChain) validateNameNew(commitHash []byte) error {
+	if _, err := bc.nameDB.GetNameNew(commitHash); err == nil {
+		return fmt.Errorf("name_new commitment already exists")
+	}
+	return nil
+}
+
+// validateNameFirstUpdate validates NAME_FIRSTUPDATE operations.
+func (bc *BlockChain) validateNameFirstUpdate(name, value string, extra []byte, currentHeight int32) error {
+	if existingRecord, err := bc.nameDB.GetName(name); err == nil {
+		if existingRecord.ExpiresAt > currentHeight {
+			return fmt.Errorf("name already exists and not expired: %s (expires at block %d)",
+				name, existingRecord.ExpiresAt)
 		}
+	}
+
+	commitHash := computeCommitHash(extra, name, bc.chainParams)
+	nameNewRecord, err := bc.nameDB.GetNameNew(commitHash)
+	if err != nil {
+		return fmt.Errorf("no matching name_new found for name: %s", name)
+	}
+	_ = nameNewRecord
+
+	if err := validateNameFormat(name, value); err != nil {
+		return fmt.Errorf("invalid name format: %w", err)
+	}
+
+	return nil
+}
+
+// validateNameUpdate validates NAME_UPDATE operations.
+func (bc *BlockChain) validateNameUpdate(name, value string, tx *wire.MsgTx, currentHeight int32) error {
+	record, err := bc.nameDB.GetName(name)
+	if err != nil {
+		return fmt.Errorf("name not found for update: %s", name)
+	}
+	if record.ExpiresAt <= currentHeight {
+		return fmt.Errorf("name expired: %s (expired at block %d, current %d)",
+			name, record.ExpiresAt, currentHeight)
+	}
+
+	currentUTXO := wire.OutPoint{
+		Hash:  record.TxHash,
+		Index: record.OutIndex,
+	}
+
+	found := false
+	for _, txIn := range tx.TxIn {
+		if txIn.PreviousOutPoint.Hash.IsEqual(&currentUTXO.Hash) &&
+			txIn.PreviousOutPoint.Index == currentUTXO.Index {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("name_update does not spend current name UTXO: name theft attempt for %s", name)
+	}
+
+	if err := validateNameFormat(name, value); err != nil {
+		return fmt.Errorf("invalid name format: %w", err)
+	}
+
+	return nil
+}
+
+// validateRegularTransaction validates non-name transactions.
+func (bc *BlockChain) validateRegularTransaction(tx *wire.MsgTx) error {
+	if len(tx.TxOut) == 0 {
+		return fmt.Errorf("transaction has no outputs")
+	}
+
+	if len(tx.TxIn) == 0 {
+		return fmt.Errorf("transaction has no inputs")
+	}
+
+	if tx.TxIn[0].PreviousOutPoint.Hash.IsEqual(&chainhash.Hash{}) {
+		return fmt.Errorf("coinbase transactions not allowed in mempool")
 	}
 
 	return nil
