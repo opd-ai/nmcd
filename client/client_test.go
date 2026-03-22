@@ -9,6 +9,50 @@ import (
 	"testing"
 )
 
+// mockRPCHandler is a function that handles RPC requests for testing
+type mockRPCHandler func(method string, params json.RawMessage) (interface{}, *rpcError)
+
+// setupMockRPCServer creates a test HTTP server that simulates an RPC daemon
+func setupMockRPCServer(t *testing.T, handler mockRPCHandler) *httptest.Server {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req rpcRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Bad request", http.StatusBadRequest)
+			return
+		}
+
+		var paramsRaw json.RawMessage
+		if req.Params != nil {
+			paramsRaw, _ = json.Marshal(req.Params)
+		}
+		result, rpcErr := handler(req.Method, paramsRaw)
+
+		resp := rpcResponse{
+			Jsonrpc: "2.0",
+			ID:      req.ID,
+		}
+
+		if rpcErr != nil {
+			resp.Error = rpcErr
+		} else {
+			resultBytes, _ := json.Marshal(result)
+			resp.Result = resultBytes
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+
+	return server
+}
+
 func TestNewClient_ModeSelection(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -182,39 +226,7 @@ func TestNewClient_AutoMode_UsesDaemonWhenAvailable(t *testing.T) {
 		return nil, &rpcError{Code: -32601, Message: "Method not found"}
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		var req rpcRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Bad request", http.StatusBadRequest)
-			return
-		}
-
-		var paramsRaw json.RawMessage
-		if req.Params != nil {
-			paramsRaw, _ = json.Marshal(req.Params)
-		}
-		result, rpcErr := handler(req.Method, paramsRaw)
-
-		resp := rpcResponse{
-			Jsonrpc: "2.0",
-			ID:      req.ID,
-		}
-
-		if rpcErr != nil {
-			resp.Error = rpcErr
-		} else {
-			resultBytes, _ := json.Marshal(result)
-			resp.Result = resultBytes
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-	}))
+	server := setupMockRPCServer(t, handler)
 	defer server.Close()
 
 	// With ModeAuto and daemon available, should use daemon
