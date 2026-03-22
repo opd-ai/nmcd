@@ -393,7 +393,6 @@ func (c *DaemonClient) RegisterName(ctx context.Context, name, value string, opt
 
 // UpdateName updates an existing name's value.
 func (c *DaemonClient) UpdateName(ctx context.Context, name, value string, opts *UpdateOpts) (*TxResult, error) {
-	// Validate inputs
 	if len(name) == 0 || len(name) > 255 {
 		return nil, fmt.Errorf("%w: length %d (must be 1-255)", ErrInvalidName, len(name))
 	}
@@ -401,34 +400,39 @@ func (c *DaemonClient) UpdateName(ctx context.Context, name, value string, opts 
 		return nil, fmt.Errorf("%w: length %d (max 1023)", ErrInvalidValue, len(value))
 	}
 
-	// Build params for name_update RPC
 	params := []string{name, value}
-
-	// Add destination address if transfer is requested
 	if opts != nil && opts.TransferTo != "" {
 		params = append(params, opts.TransferTo)
 	}
 
 	result, err := c.rpcCall(ctx, "name_update", params)
 	if err != nil {
-		// Map RPC errors to client errors
-		if rpcErr, ok := err.(*rpcError); ok {
-			switch rpcErr.Code {
-			case -4, -5:
-				if strings.Contains(rpcErr.Message, "not found") {
-					return nil, fmt.Errorf("%w: %s", ErrNameNotFound, name)
-				}
-				if strings.Contains(rpcErr.Message, "expired") {
-					return nil, fmt.Errorf("%w: %s", ErrNameExpired, name)
-				}
-			case -13:
-				return nil, fmt.Errorf("wallet does not have private key for name owner: %s", rpcErr.Message)
-			}
-		}
-		return nil, fmt.Errorf("failed to update name: %w", err)
+		return nil, mapUpdateNameError(err, name)
 	}
 
-	// Parse response
+	return c.parseUpdateResponse(ctx, result, opts)
+}
+
+// mapUpdateNameError converts RPC errors to client-specific errors for name_update.
+func mapUpdateNameError(err error, name string) error {
+	if rpcErr, ok := err.(*rpcError); ok {
+		switch rpcErr.Code {
+		case -4, -5:
+			if strings.Contains(rpcErr.Message, "not found") {
+				return fmt.Errorf("%w: %s", ErrNameNotFound, name)
+			}
+			if strings.Contains(rpcErr.Message, "expired") {
+				return fmt.Errorf("%w: %s", ErrNameExpired, name)
+			}
+		case -13:
+			return fmt.Errorf("wallet does not have private key for name owner: %s", rpcErr.Message)
+		}
+	}
+	return fmt.Errorf("failed to update name: %w", err)
+}
+
+// parseUpdateResponse parses the name_update RPC response and optionally waits for confirmation.
+func (c *DaemonClient) parseUpdateResponse(ctx context.Context, result json.RawMessage, opts *UpdateOpts) (*TxResult, error) {
 	var resp struct {
 		TxID    string `json:"txid"`
 		Name    string `json:"name"`
@@ -442,15 +446,11 @@ func (c *DaemonClient) UpdateName(ctx context.Context, name, value string, opts 
 	}
 
 	txResult := &TxResult{
-		TxHash:        resp.TxID,
-		Name:          resp.Name,
-		Status:        TxStatusPending, // Transactions start as pending
-		Confirmations: 0,
-		BlockHeight:   0,
-		BlockHash:     "",
+		TxHash: resp.TxID,
+		Name:   resp.Name,
+		Status: TxStatusPending,
 	}
 
-	// If WaitForConfirmation is requested
 	if opts != nil && opts.WaitForConfirmation {
 		confirmations := opts.Confirmations
 		if confirmations == 0 {
@@ -473,7 +473,6 @@ func (c *DaemonClient) ListNames(ctx context.Context, filter *ListFilter) ([]*Na
 		return nil, fmt.Errorf("failed to list names: %w", err)
 	}
 
-	// Parse response
 	var resp []struct {
 		Name      string `json:"name"`
 		Value     string `json:"value"`
@@ -487,9 +486,30 @@ func (c *DaemonClient) ListNames(ctx context.Context, filter *ListFilter) ([]*Na
 		return nil, fmt.Errorf("failed to parse name_list response: %w", err)
 	}
 
-	// Apply client-side filtering
+	filter = normalizeListFilter(filter)
+
+	var records []*NameRecord
+	for _, item := range resp {
+		if !matchesListFilter(item.Name, item.Address, item.ExpiresIn, filter) {
+			continue
+		}
+		records = append(records, &NameRecord{
+			Name:      item.Name,
+			Value:     item.Value,
+			TxHash:    item.TxID,
+			Height:    item.Height,
+			ExpiresIn: item.ExpiresIn,
+			Address:   item.Address,
+		})
+	}
+
+	return applyPagination(records, filter), nil
+}
+
+// normalizeListFilter applies default values to a list filter.
+func normalizeListFilter(filter *ListFilter) *ListFilter {
 	if filter == nil {
-		filter = &ListFilter{Limit: 100}
+		return &ListFilter{Limit: 100}
 	}
 	if filter.Limit == 0 {
 		filter.Limit = 100
@@ -497,64 +517,38 @@ func (c *DaemonClient) ListNames(ctx context.Context, filter *ListFilter) ([]*Na
 	if filter.Limit > 10000 {
 		filter.Limit = 10000
 	}
+	return filter
+}
 
-	var records []*NameRecord
-	for _, item := range resp {
-		// Filter by expiration (ExpiresIn < 0 means expired, 0 means expires at current block which is still valid)
-		if !filter.IncludeExpired && item.ExpiresIn < 0 {
-			continue
-		}
-
-		// Filter by namespace
-		if filter.Namespace != "" {
-			if len(item.Name) < len(filter.Namespace) {
-				continue
-			}
-			if item.Name[:len(filter.Namespace)] != filter.Namespace {
-				continue
-			}
-		}
-
-		// Filter by name pattern (simple prefix matching)
-		if filter.NamePattern != "" {
-			if len(item.Name) < len(filter.NamePattern) {
-				continue
-			}
-			if item.Name[:len(filter.NamePattern)] != filter.NamePattern {
-				continue
-			}
-		}
-
-		// Filter by address
-		if filter.Address != "" && item.Address != filter.Address {
-			continue
-		}
-
-		record := &NameRecord{
-			Name:      item.Name,
-			Value:     item.Value,
-			TxHash:    item.TxID,
-			Height:    item.Height,
-			ExpiresIn: item.ExpiresIn,
-			Address:   item.Address,
-		}
-		records = append(records, record)
+// matchesListFilter checks whether a name record passes the filter criteria.
+func matchesListFilter(name, address string, expiresIn int32, filter *ListFilter) bool {
+	if !filter.IncludeExpired && expiresIn < 0 {
+		return false
 	}
+	if filter.Namespace != "" && !strings.HasPrefix(name, filter.Namespace) {
+		return false
+	}
+	if filter.NamePattern != "" && !strings.HasPrefix(name, filter.NamePattern) {
+		return false
+	}
+	if filter.Address != "" && address != filter.Address {
+		return false
+	}
+	return true
+}
 
-	// Apply offset
+// applyPagination applies offset and limit to a slice of name records.
+func applyPagination(records []*NameRecord, filter *ListFilter) []*NameRecord {
 	if filter.Offset > 0 {
 		if filter.Offset >= len(records) {
-			return []*NameRecord{}, nil
+			return []*NameRecord{}
 		}
 		records = records[filter.Offset:]
 	}
-
-	// Apply limit
 	if len(records) > filter.Limit {
 		records = records[:filter.Limit]
 	}
-
-	return records, nil
+	return records
 }
 
 // GetNameHistory returns the full history of operations for a name.

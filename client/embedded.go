@@ -81,129 +81,45 @@ func NewEmbeddedClient(cfg *Config) (*EmbeddedClient, error) {
 		cfg = defaultConfig()
 	}
 
-	// Set defaults
-	if cfg.DataDir == "" {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get home directory: %w", err)
-		}
-		cfg.DataDir = filepath.Join(homeDir, ".nmcd")
+	if err := applyConfigDefaults(cfg); err != nil {
+		return nil, err
 	}
 
-	if cfg.Network == "" {
-		cfg.Network = "mainnet"
-	}
-
-	// Create data directory if it doesn't exist
-	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
-		return nil, fmt.Errorf("failed to create data directory: %w", err)
-	}
-
-	// Get network parameters
-	var chainParams *chaincfg.Params
-	switch cfg.Network {
-	case "mainnet":
-		chainParams = &config.NamecoinMainNetParams
-	case "testnet":
-		chainParams = &config.NamecoinTestNetParams
-	case "regtest":
-		chainParams = &config.NamecoinRegTestParams
-	default:
-		return nil, fmt.Errorf("unknown network: %s", cfg.Network)
-	}
-
-	// Initialize blockchain with name database support
-	// The blockchain provides block validation, name operation tracking,
-	// and serves as the authoritative source for blockchain state.
-	chainCfg := &chain.Config{
-		ChainParams: chainParams,
-		NameDBPath:  filepath.Join(cfg.DataDir, "names.db"),
-		DataDir:     cfg.DataDir,
-	}
-
-	bc, err := chain.NewBlockChain(chainCfg, nil)
+	chainParams, err := resolveChainParams(cfg.Network)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create blockchain: %w", err)
+		return nil, err
 	}
 
-	// Initialize wallet (if not disabled)
-	var w *wallet.Wallet
-	if !cfg.DisableWallet {
-		w, err = wallet.NewWallet(cfg.DataDir, chainParams)
-		if err != nil {
-			bc.Close()
-			return nil, fmt.Errorf("failed to initialize wallet: %w", err)
-		}
+	bc, err := initBlockchain(cfg, chainParams)
+	if err != nil {
+		return nil, err
 	}
 
-	// Get name database from blockchain for consistent access
-	nameDB := bc.GetNameDB()
-
-	// Set MaxPeers default if not configured
-	if cfg.MaxPeers == 0 {
-		cfg.MaxPeers = 8
+	w, err := initWallet(cfg, chainParams)
+	if err != nil {
+		bc.Close()
+		return nil, err
 	}
 
-	// Resolve bootstrap peers for automatic network connectivity
-	// If BootstrapPeers is empty, use DNS seed discovery to find peers
-	bootstrapPeers := cfg.BootstrapPeers
-	if len(bootstrapPeers) == 0 && cfg.MaxPeers > 0 {
-		// Automatically discover peers via DNS seeds
-		dnsSeeds := config.DNSSeeds(cfg.Network)
-		defaultPort := config.DefaultPort(cfg.Network)
-		bootstrapPeers = network.ResolveSeedNodes(dnsSeeds, defaultPort)
+	bootstrapPeers := resolveBootstrapPeers(cfg)
 
-		logger := logging.GetDefault()
-		if len(bootstrapPeers) > 0 {
-			logger.Info("resolved bootstrap peers from DNS seeds",
-				"count", len(bootstrapPeers),
-				"network", cfg.Network,
-			)
-		} else if len(dnsSeeds) > 0 {
-			// DNS seeds are configured but resolution returned no peers.
-			// With MaxPeers > 0 this likely means the client will not sync.
-			logger.Warn("no peers resolved from DNS seeds; client may not sync",
-				"network", cfg.Network,
-				"max_peers", cfg.MaxPeers,
-			)
-		} else {
-			// No DNS seeds configured for this network; automatic
-			// peer discovery is effectively disabled.
-			logger.Info("no DNS seeds configured; skipping automatic peer discovery",
-				"network", cfg.Network,
-				"max_peers", cfg.MaxPeers,
-			)
-		}
-	}
-
-	// Initialize peer manager for network connectivity
-	// ListenAddrs is empty for embedded clients (no incoming connections by default)
-	netCfg := &network.Config{
+	peerMgr, err := network.NewPeerManager(&network.Config{
 		ChainParams: chainParams,
 		Blockchain:  bc,
-		ListenAddrs: []string{}, // Embedded clients don't listen for incoming connections
+		ListenAddrs: []string{},
 		MaxPeers:    cfg.MaxPeers,
 		AddPeers:    bootstrapPeers,
-	}
-
-	peerMgr, err := network.NewPeerManager(netCfg)
+	})
 	if err != nil {
 		bc.Close()
 		return nil, fmt.Errorf("failed to create peer manager: %w", err)
 	}
 
-	// Initialize logger (use provided or default)
-	var logger *logging.Logger
-	if cfg.Logger != nil {
-		logger = cfg.Logger
-	} else {
-		logger = logging.GetDefault()
-	}
-	logger = logger.WithComponent("embedded-client")
+	logger := resolveLogger(cfg)
 
-	client := &EmbeddedClient{
+	return &EmbeddedClient{
 		chain:   bc,
-		nameDB:  nameDB,
+		nameDB:  bc.GetNameDB(),
 		wallet:  w,
 		peerMgr: peerMgr,
 		network: cfg.Network,
@@ -211,9 +127,97 @@ func NewEmbeddedClient(cfg *Config) (*EmbeddedClient, error) {
 		logger:  logger,
 		stopCh:  make(chan struct{}),
 		closed:  false,
-	}
+	}, nil
+}
 
-	return client, nil
+// applyConfigDefaults fills in default values for DataDir, Network, and MaxPeers.
+func applyConfigDefaults(cfg *Config) error {
+	if cfg.DataDir == "" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to get home directory: %w", err)
+		}
+		cfg.DataDir = filepath.Join(homeDir, ".nmcd")
+	}
+	if cfg.Network == "" {
+		cfg.Network = "mainnet"
+	}
+	if cfg.MaxPeers == 0 {
+		cfg.MaxPeers = 8
+	}
+	return os.MkdirAll(cfg.DataDir, 0o700)
+}
+
+// resolveChainParams maps a network name to its chain parameters.
+func resolveChainParams(network string) (*chaincfg.Params, error) {
+	switch network {
+	case "mainnet":
+		return &config.NamecoinMainNetParams, nil
+	case "testnet":
+		return &config.NamecoinTestNetParams, nil
+	case "regtest":
+		return &config.NamecoinRegTestParams, nil
+	default:
+		return nil, fmt.Errorf("unknown network: %s", network)
+	}
+}
+
+// initBlockchain creates and returns a new blockchain instance.
+func initBlockchain(cfg *Config, chainParams *chaincfg.Params) (*chain.BlockChain, error) {
+	chainCfg := &chain.Config{
+		ChainParams: chainParams,
+		NameDBPath:  filepath.Join(cfg.DataDir, "names.db"),
+		DataDir:     cfg.DataDir,
+	}
+	bc, err := chain.NewBlockChain(chainCfg, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create blockchain: %w", err)
+	}
+	return bc, nil
+}
+
+// initWallet initializes the wallet unless disabled in config.
+func initWallet(cfg *Config, chainParams *chaincfg.Params) (*wallet.Wallet, error) {
+	if cfg.DisableWallet {
+		return nil, nil
+	}
+	w, err := wallet.NewWallet(cfg.DataDir, chainParams)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize wallet: %w", err)
+	}
+	return w, nil
+}
+
+// resolveBootstrapPeers determines bootstrap peers from config or DNS seeds.
+func resolveBootstrapPeers(cfg *Config) []string {
+	if len(cfg.BootstrapPeers) > 0 || cfg.MaxPeers == 0 {
+		return cfg.BootstrapPeers
+	}
+	dnsSeeds := config.DNSSeeds(cfg.Network)
+	defaultPort := config.DefaultPort(cfg.Network)
+	peers := network.ResolveSeedNodes(dnsSeeds, defaultPort)
+
+	logger := logging.GetDefault()
+	switch {
+	case len(peers) > 0:
+		logger.Info("resolved bootstrap peers from DNS seeds", "count", len(peers), "network", cfg.Network)
+	case len(dnsSeeds) > 0:
+		logger.Warn("no peers resolved from DNS seeds; client may not sync", "network", cfg.Network, "max_peers", cfg.MaxPeers)
+	default:
+		logger.Info("no DNS seeds configured; skipping automatic peer discovery", "network", cfg.Network, "max_peers", cfg.MaxPeers)
+	}
+	return peers
+}
+
+// resolveLogger returns the configured or default logger with component tag.
+func resolveLogger(cfg *Config) *logging.Logger {
+	var logger *logging.Logger
+	if cfg.Logger != nil {
+		logger = cfg.Logger
+	} else {
+		logger = logging.GetDefault()
+	}
+	return logger.WithComponent("embedded-client")
 }
 
 // checkContextAndState validates context and client state.
