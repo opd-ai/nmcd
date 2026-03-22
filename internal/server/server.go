@@ -51,7 +51,9 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	rpcServer, err := initRPCServer(cfg, bc, peerMgr, w)
 	if err != nil {
 		peerMgr.Stop()
-		bc.Close()
+		if closeErr := bc.Close(); closeErr != nil {
+			err = fmt.Errorf("failed to initialize RPC server: %w (additionally failed to close blockchain: %v)", err, closeErr)
+		}
 		return nil, err
 	}
 
