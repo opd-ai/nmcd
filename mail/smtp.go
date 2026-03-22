@@ -477,7 +477,10 @@ func (s *smtpSession) sendBody(client *smtp.Client, body []byte) error {
 	if err := w.Close(); err != nil {
 		return fmt.Errorf("close message failed: %w", err)
 	}
-	return client.Quit()
+	if err := client.Quit(); err != nil {
+		return fmt.Errorf("QUIT command failed: %w", err)
+	}
+	return nil
 }
 
 // readLine reads a single line from the connection.
