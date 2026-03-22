@@ -406,7 +406,6 @@ func (s *smtpSession) handleData() error {
 
 // forwardMessage resolves the .bit address and forwards the message to the upstream SMTP server.
 func (s *smtpSession) forwardMessage(ctx context.Context, from, to string, body []byte) error {
-	// Resolve .bit address to real email
 	realAddr, err := s.relay.router.Route(ctx, to)
 	if err != nil {
 		return fmt.Errorf("routing failed: %w", err)
@@ -414,40 +413,60 @@ func (s *smtpSession) forwardMessage(ctx context.Context, from, to string, body 
 
 	s.logger.Printf("Forwarding message from %s to %s (resolved from %s)", from, realAddr, to)
 
-	// Connect to upstream SMTP server
-	addr := fmt.Sprintf("%s:%d", s.relay.config.UpstreamHost, s.relay.config.UpstreamPort)
-	client, err := smtp.Dial(addr)
+	client, err := s.connectUpstream()
 	if err != nil {
-		return fmt.Errorf("failed to connect to upstream SMTP: %w", err)
+		return err
 	}
 	defer client.Close()
 
-	// Upgrade to TLS if on port 587 (submission port)
+	if err := s.sendEnvelope(client, from, realAddr); err != nil {
+		return err
+	}
+
+	return s.sendBody(client, body)
+}
+
+// connectUpstream connects to the upstream SMTP server, optionally upgrading to TLS and authenticating.
+func (s *smtpSession) connectUpstream() (*smtp.Client, error) {
+	addr := fmt.Sprintf("%s:%d", s.relay.config.UpstreamHost, s.relay.config.UpstreamPort)
+	client, err := smtp.Dial(addr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to upstream SMTP: %w", err)
+	}
+
 	if s.relay.config.UpstreamPort == 587 {
 		tlsConfig := &tls.Config{
 			ServerName: s.relay.config.UpstreamHost,
 		}
 		if err := client.StartTLS(tlsConfig); err != nil {
-			return fmt.Errorf("STARTTLS failed: %w", err)
+			client.Close()
+			return nil, fmt.Errorf("STARTTLS failed: %w", err)
 		}
 	}
 
-	// Authenticate if credentials provided
 	if s.relay.config.UpstreamAuth != nil {
 		if err := client.Auth(s.relay.config.UpstreamAuth); err != nil {
-			return fmt.Errorf("upstream authentication failed: %w", err)
+			client.Close()
+			return nil, fmt.Errorf("upstream authentication failed: %w", err)
 		}
 	}
 
-	// Send envelope
+	return client, nil
+}
+
+// sendEnvelope sends the SMTP envelope (MAIL FROM and RCPT TO).
+func (s *smtpSession) sendEnvelope(client *smtp.Client, from, to string) error {
 	if err := client.Mail(from); err != nil {
 		return fmt.Errorf("MAIL FROM failed: %w", err)
 	}
-	if err := client.Rcpt(realAddr); err != nil {
+	if err := client.Rcpt(to); err != nil {
 		return fmt.Errorf("RCPT TO failed: %w", err)
 	}
+	return nil
+}
 
-	// Send message body
+// sendBody sends the message body and issues QUIT.
+func (s *smtpSession) sendBody(client *smtp.Client, body []byte) error {
 	w, err := client.Data()
 	if err != nil {
 		return fmt.Errorf("DATA command failed: %w", err)
@@ -458,13 +477,7 @@ func (s *smtpSession) forwardMessage(ctx context.Context, from, to string, body 
 	if err := w.Close(); err != nil {
 		return fmt.Errorf("close message failed: %w", err)
 	}
-
-	// Quit
-	if err := client.Quit(); err != nil {
-		return fmt.Errorf("QUIT failed: %w", err)
-	}
-
-	return nil
+	return client.Quit()
 }
 
 // readLine reads a single line from the connection.
