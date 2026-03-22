@@ -232,62 +232,69 @@ func (score *PeerScore) invalidateScore() {
 // Score ranges from 0 (worst) to 100 (best).
 // Must be called with score.mu locked (write lock)
 func (score *PeerScore) calculateScore() {
-	baseScore := 50.0
+	bonuses := score.calcDataBonus() + score.calcLongevityBonus()
+	penalties := score.calcFailurePenalty() + score.calcConsecutiveFailurePenalty() +
+		score.calcLatencyPenalty() + score.calcIdlePenalty()
 
-	// Bonus for providing blocks/transactions (+20 max)
-	dataBonus := float64(score.blocksProvided+score.txsProvided) * 0.5
-	if dataBonus > 20.0 {
-		dataBonus = 20.0
-	}
-
-	// Penalty for failed requests (-30 max)
-	failurePenalty := float64(score.failedRequests) * 2.0
-	if failurePenalty > 30.0 {
-		failurePenalty = 30.0
-	}
-
-	// Penalty for consecutive failures (-20 max)
-	consecutivePenalty := float64(score.consecutiveFailures) * 5.0
-	if consecutivePenalty > 20.0 {
-		consecutivePenalty = 20.0
-	}
-
-	// Penalty for slow response times (-15 max)
-	// Fast: < 1s (no penalty), Medium: 1-5s (small penalty), Slow: >5s (large penalty)
-	var latencyPenalty float64
-	if score.avgResponseTime > 5.0 {
-		latencyPenalty = 15.0
-	} else if score.avgResponseTime > 1.0 {
-		latencyPenalty = (score.avgResponseTime - 1.0) * 3.0 // Linear scale 0-12
-	}
-
-	// Bonus for longevity (stable connection) (+15 max)
-	connectionMinutes := time.Since(score.connectedAt).Minutes()
-	longevityBonus := connectionMinutes * 0.1
-	if longevityBonus > 15.0 {
-		longevityBonus = 15.0
-	}
-
-	// Penalty if peer hasn't been seen recently (-20 max)
-	idleMinutes := time.Since(score.lastSeen).Minutes()
-	var idlePenalty float64
-	if idleMinutes > 60 {
-		idlePenalty = 20.0
-	} else if idleMinutes > 10 {
-		idlePenalty = (idleMinutes - 10.0) * 0.4
-	}
-
-	// Calculate final score
-	finalScore := baseScore + dataBonus + longevityBonus - failurePenalty - consecutivePenalty - latencyPenalty - idlePenalty
-
-	// Clamp to 0-100 range
-	if finalScore < 0 {
-		finalScore = 0
-	}
-	if finalScore > 100 {
-		finalScore = 100
-	}
-
-	score.score = finalScore
+	finalScore := 50.0 + bonuses - penalties
+	score.score = clampScore(finalScore)
 	score.scoreTime = time.Now()
+}
+
+// calcDataBonus returns a bonus (max 20) for providing blocks and transactions.
+func (score *PeerScore) calcDataBonus() float64 {
+	return clampScore(float64(score.blocksProvided+score.txsProvided)*0.5, 20.0)
+}
+
+// calcFailurePenalty returns a penalty (max 30) for failed requests.
+func (score *PeerScore) calcFailurePenalty() float64 {
+	return clampScore(float64(score.failedRequests)*2.0, 30.0)
+}
+
+// calcConsecutiveFailurePenalty returns a penalty (max 20) for consecutive failures.
+func (score *PeerScore) calcConsecutiveFailurePenalty() float64 {
+	return clampScore(float64(score.consecutiveFailures)*5.0, 20.0)
+}
+
+// calcLatencyPenalty returns a penalty (max 15) based on average response time.
+func (score *PeerScore) calcLatencyPenalty() float64 {
+	if score.avgResponseTime > 5.0 {
+		return 15.0
+	}
+	if score.avgResponseTime > 1.0 {
+		return (score.avgResponseTime - 1.0) * 3.0
+	}
+	return 0
+}
+
+// calcLongevityBonus returns a bonus (max 15) for connection stability.
+func (score *PeerScore) calcLongevityBonus() float64 {
+	return clampScore(time.Since(score.connectedAt).Minutes()*0.1, 15.0)
+}
+
+// calcIdlePenalty returns a penalty (max 20) for idle peers.
+func (score *PeerScore) calcIdlePenalty() float64 {
+	idleMinutes := time.Since(score.lastSeen).Minutes()
+	if idleMinutes > 60 {
+		return 20.0
+	}
+	if idleMinutes > 10 {
+		return (idleMinutes - 10.0) * 0.4
+	}
+	return 0
+}
+
+// clampScore clamps a value to [0, max]. If no max is given, clamps to [0, 100].
+func clampScore(value float64, maxValues ...float64) float64 {
+	maxVal := 100.0
+	if len(maxValues) > 0 {
+		maxVal = maxValues[0]
+	}
+	if value < 0 {
+		return 0
+	}
+	if value > maxVal {
+		return maxVal
+	}
+	return value
 }

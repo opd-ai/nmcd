@@ -555,52 +555,48 @@ func (ndb *NameDatabase) RemoveLastHistoryEntry(name string) (*NameRecord, error
 		histBucket := tx.Bucket(historyBucket)
 
 		indexData := indexBucket.Get([]byte(name))
-		if indexData == nil || len(indexData) == 0 {
-			return nil // No history to remove
+		if len(indexData) == 0 {
+			return nil
 		}
 
 		if len(indexData)%txHashSize != 0 {
 			return fmt.Errorf("corrupt history index for name: %s", name)
 		}
 
-		numEntries := len(indexData) / txHashSize
-		if numEntries == 0 {
-			return nil
-		}
-
-		// Get the last txHash to remove from history bucket
-		lastTxHash := indexData[len(indexData)-txHashSize:]
-		if err := histBucket.Delete(lastTxHash); err != nil {
+		if err := histBucket.Delete(indexData[len(indexData)-txHashSize:]); err != nil {
 			return err
 		}
 
-		// Remove the last txHash from the index
-		newIndexData := indexData[:len(indexData)-txHashSize]
-		if len(newIndexData) == 0 {
-			// No more entries, delete the index
-			if err := indexBucket.Delete([]byte(name)); err != nil {
-				return err
-			}
-		} else {
-			if err := indexBucket.Put([]byte(name), newIndexData); err != nil {
-				return err
-			}
-
-			// Get the previous record (now the last one)
-			prevTxHash := newIndexData[len(newIndexData)-txHashSize:]
-			data := histBucket.Get(prevTxHash)
-			if data != nil {
-				var decodeErr error
-				prevRecord, decodeErr = decodeNameRecord(data)
-				if decodeErr != nil {
-					return fmt.Errorf("failed to decode previous record: %w", decodeErr)
-				}
-				prevRecord.Name = name
-			}
-		}
-		return nil
+		var err error
+		prevRecord, err = truncateHistoryIndex(indexBucket, histBucket, name, indexData)
+		return err
 	})
 	return prevRecord, err
+}
+
+// truncateHistoryIndex removes the last entry from the history index and returns the new last record.
+func truncateHistoryIndex(indexBucket, histBucket *bbolt.Bucket, name string, indexData []byte) (*NameRecord, error) {
+	newIndexData := indexData[:len(indexData)-txHashSize]
+	if len(newIndexData) == 0 {
+		return nil, indexBucket.Delete([]byte(name))
+	}
+
+	if err := indexBucket.Put([]byte(name), newIndexData); err != nil {
+		return nil, err
+	}
+
+	prevTxHash := newIndexData[len(newIndexData)-txHashSize:]
+	data := histBucket.Get(prevTxHash)
+	if data == nil {
+		return nil, nil
+	}
+
+	record, err := decodeNameRecord(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode previous record: %w", err)
+	}
+	record.Name = name
+	return record, nil
 }
 
 // encodeNameRecord serializes a name record.
@@ -667,80 +663,95 @@ func decodeNameRecord(data []byte) (*NameRecord, error) {
 		return nil, fmt.Errorf("corrupt record: empty data")
 	}
 
-	offset := 0
-
-	// Check version byte
-	version := data[offset]
+	version := data[0]
 	if version != 2 && version != 3 {
 		return nil, fmt.Errorf("unsupported record version: %d (expected 2 or 3)", version)
 	}
-	offset++
 
+	r := &recordReader{data: data, offset: 1}
 	record := &NameRecord{}
 
-	// Value
-	if offset+4 > len(data) {
-		return nil, fmt.Errorf("corrupt record: truncated at value length")
+	var err error
+	record.Value, err = r.readString("value")
+	if err != nil {
+		return nil, err
 	}
-	valLen := binary.LittleEndian.Uint32(data[offset : offset+4])
-	offset += 4
-	if offset+int(valLen) > len(data) {
-		return nil, fmt.Errorf("corrupt record: truncated at value data")
-	}
-	record.Value = string(data[offset : offset+int(valLen)])
-	offset += int(valLen)
 
-	// TxHash
-	if offset+32 > len(data) {
-		return nil, fmt.Errorf("corrupt record: truncated at txhash")
+	if err := r.readFixedBytes(record.TxHash[:], 32, "txhash"); err != nil {
+		return nil, err
 	}
-	copy(record.TxHash[:], data[offset:offset+32])
-	offset += 32
 
-	// OutIndex (required for UTXO chain validation)
-	if offset+4 > len(data) {
-		return nil, fmt.Errorf("corrupt record: truncated at outindex")
+	record.OutIndex, err = r.readUint32("outindex")
+	if err != nil {
+		return nil, err
 	}
-	record.OutIndex = binary.LittleEndian.Uint32(data[offset : offset+4])
-	offset += 4
 
-	// Height
-	if offset+4 > len(data) {
-		return nil, fmt.Errorf("corrupt record: truncated at height")
+	heightU32, err := r.readUint32("height")
+	if err != nil {
+		return nil, err
 	}
-	record.Height = int32(binary.LittleEndian.Uint32(data[offset : offset+4]))
-	offset += 4
+	record.Height = int32(heightU32)
 
-	// ExpiresAt
-	if offset+4 > len(data) {
-		return nil, fmt.Errorf("corrupt record: truncated at expires_at")
+	expiresU32, err := r.readUint32("expires_at")
+	if err != nil {
+		return nil, err
 	}
-	record.ExpiresAt = int32(binary.LittleEndian.Uint32(data[offset : offset+4]))
-	offset += 4
+	record.ExpiresAt = int32(expiresU32)
 
-	// Address
-	if offset+4 > len(data) {
-		return nil, fmt.Errorf("corrupt record: truncated at address length")
+	record.Address, err = r.readString("address")
+	if err != nil {
+		return nil, err
 	}
-	addrLen := binary.LittleEndian.Uint32(data[offset : offset+4])
-	offset += 4
-	if offset+int(addrLen) > len(data) {
-		return nil, fmt.Errorf("corrupt record: truncated at address data")
-	}
-	record.Address = string(data[offset : offset+int(addrLen)])
-	offset += int(addrLen)
 
-	// Timestamp
-	if offset+8 <= len(data) {
-		ts := binary.LittleEndian.Uint64(data[offset : offset+8])
+	if r.offset+8 <= len(r.data) {
+		ts := binary.LittleEndian.Uint64(r.data[r.offset : r.offset+8])
 		record.UpdatedAt = time.Unix(int64(ts), 0)
-		offset += 8
+		r.offset += 8
 	}
 
-	// NameNewHeight (new in v3, optional for backward compatibility)
-	if version >= 3 && offset+4 <= len(data) {
-		record.NameNewHeight = int32(binary.LittleEndian.Uint32(data[offset : offset+4]))
+	if version >= 3 && r.offset+4 <= len(r.data) {
+		record.NameNewHeight = int32(binary.LittleEndian.Uint32(r.data[r.offset : r.offset+4]))
 	}
 
 	return record, nil
+}
+
+// recordReader provides sequential reading from a byte slice with bounds checking.
+type recordReader struct {
+	data   []byte
+	offset int
+}
+
+// readUint32 reads a uint32 at the current offset.
+func (r *recordReader) readUint32(field string) (uint32, error) {
+	if r.offset+4 > len(r.data) {
+		return 0, fmt.Errorf("corrupt record: truncated at %s", field)
+	}
+	v := binary.LittleEndian.Uint32(r.data[r.offset : r.offset+4])
+	r.offset += 4
+	return v, nil
+}
+
+// readString reads a length-prefixed string at the current offset.
+func (r *recordReader) readString(field string) (string, error) {
+	strLen, err := r.readUint32(field + " length")
+	if err != nil {
+		return "", err
+	}
+	if r.offset+int(strLen) > len(r.data) {
+		return "", fmt.Errorf("corrupt record: truncated at %s data", field)
+	}
+	s := string(r.data[r.offset : r.offset+int(strLen)])
+	r.offset += int(strLen)
+	return s, nil
+}
+
+// readFixedBytes reads exactly n bytes into dst.
+func (r *recordReader) readFixedBytes(dst []byte, n int, field string) error {
+	if r.offset+n > len(r.data) {
+		return fmt.Errorf("corrupt record: truncated at %s", field)
+	}
+	copy(dst, r.data[r.offset:r.offset+n])
+	r.offset += n
+	return nil
 }

@@ -42,7 +42,6 @@ import (
 const version = "0.1.0"
 
 func main() {
-	// Parse command-line flags
 	rpcURL := flag.String("rpcurl", "http://localhost:8336", "RPC endpoint URL")
 	rpcUser := flag.String("rpcuser", "", "RPC username")
 	rpcPass := flag.String("rpcpass", "", "RPC password")
@@ -60,110 +59,126 @@ func main() {
 		os.Exit(0)
 	}
 
-	fmt.Printf("=== nmcd Load & Stress Testing v%s ===\n", version)
-	fmt.Printf("RPC URL:      %s\n", *rpcURL)
-	fmt.Printf("Duration:     %v\n", *duration)
-	fmt.Printf("Concurrency:  %d\n", *concurrency)
-	fmt.Printf("Rate Limit:   %d req/s\n", *rateLimit)
-	fmt.Printf("Test Type:    %s\n\n", *testType)
+	printBanner(*rpcURL, *duration, *concurrency, *rateLimit, *testType)
 
-	// Run requested tests
+	cfg := loadtest.LoadTestConfig{
+		RPCURL:      *rpcURL,
+		RPCUser:     *rpcUser,
+		RPCPassword: *rpcPass,
+		Duration:    *duration,
+		Concurrency: *concurrency,
+		RateLimit:   *rateLimit,
+	}
+
 	var allResults []*loadtest.TestResult
 	var hasFailure bool
 
 	if *testType == "rpc" || *testType == "all" {
-		fmt.Println("Running RPC Load Test...")
-		result, err := loadtest.RPCLoadTest(loadtest.LoadTestConfig{
-			RPCURL:      *rpcURL,
-			RPCUser:     *rpcUser,
-			RPCPassword: *rpcPass,
-			Duration:    *duration,
-			Concurrency: *concurrency,
-			RateLimit:   *rateLimit,
-		})
-		if err != nil {
-			fmt.Printf("ERROR: RPC load test failed: %v\n", err)
-			hasFailure = true
-		} else {
-			loadtest.PrintResult(result)
-			allResults = append(allResults, result)
-
-			// Check performance criteria
-			if result.ThroughputRPS < 1000 {
-				fmt.Printf("⚠️  WARNING: Throughput %.2f req/s is below target 1000 req/s\n\n", result.ThroughputRPS)
-			}
-			if result.RequestCount > 0 && result.FailureCount > result.RequestCount/100 {
-				fmt.Printf("⚠️  WARNING: Failure rate %.2f%% is above 1%% threshold\n\n",
-					float64(result.FailureCount)/float64(result.RequestCount)*100)
-			}
-		}
+		result, failed := runRPCTest(cfg)
+		allResults = appendResult(allResults, result)
+		hasFailure = hasFailure || failed
 	}
 
 	if *testType == "memory" || *testType == "all" {
-		fmt.Println("Running Memory Leak Detection Test...")
-		memCheckInterval := *duration / 20 // 20 samples during test
-		if memCheckInterval < 10*time.Second {
-			memCheckInterval = 10 * time.Second
-		}
-
-		result, err := loadtest.MemoryLeakTest(loadtest.LoadTestConfig{
-			RPCURL:      *rpcURL,
-			RPCUser:     *rpcUser,
-			RPCPassword: *rpcPass,
-			Duration:    *duration,
-		}, memCheckInterval)
-
-		if err != nil {
-			fmt.Printf("ERROR: Memory leak test failed: %v\n", err)
-			hasFailure = true
-		} else {
-			loadtest.PrintResult(result)
-			allResults = append(allResults, result)
-
-			// Check memory growth criteria
-			durationHours := result.Duration.Hours()
-			if durationHours >= 24 {
-				growthPerHour := float64(result.MemoryGrowth) / durationHours
-				growthMBPerHour := growthPerHour / (1024 * 1024)
-
-				if growthMBPerHour > 10 {
-					fmt.Printf("⚠️  WARNING: Memory growth %.2f MB/hour exceeds 10 MB/hour threshold\n\n", growthMBPerHour)
-				} else {
-					fmt.Printf("✅ PASS: Memory growth %.2f MB/hour is within acceptable range\n\n", growthMBPerHour)
-				}
-			}
-		}
+		result, failed := runMemoryTest(cfg)
+		allResults = appendResult(allResults, result)
+		hasFailure = hasFailure || failed
 	}
 
 	if *testType == "continuous" || *testType == "all" {
-		fmt.Println("Running Continuous Operation Test...")
-		result, err := loadtest.ContinuousOperationTest(loadtest.ContinuousOperationConfig{
-			RPCURL:        *rpcURL,
-			RPCUser:       *rpcUser,
-			RPCPassword:   *rpcPass,
-			Duration:      *duration,
-			NameCount:     *nameCount,
-			CheckInterval: 30 * time.Second,
-		})
-
-		if err != nil {
-			fmt.Printf("ERROR: Continuous operation test failed: %v\n", err)
-			hasFailure = true
-		} else {
-			loadtest.PrintResult(result)
-			allResults = append(allResults, result)
-
-			// Check reliability criteria
-			successRate := float64(result.SuccessCount) / float64(result.RequestCount) * 100
-			if successRate < 99.9 {
-				fmt.Printf("⚠️  WARNING: Success rate %.2f%% is below 99.9%% threshold\n\n", successRate)
-			} else {
-				fmt.Printf("✅ PASS: Success rate %.2f%% meets reliability requirements\n\n", successRate)
-			}
-		}
+		result, failed := runContinuousTest(cfg, *nameCount)
+		allResults = appendResult(allResults, result)
+		hasFailure = hasFailure || failed
 	}
 
-	// Print summary
+	printSummary(allResults, hasFailure)
+}
+
+func printBanner(rpcURL string, duration time.Duration, concurrency, rateLimit int, testType string) {
+	fmt.Printf("=== nmcd Load & Stress Testing v%s ===\n", version)
+	fmt.Printf("RPC URL:      %s\n", rpcURL)
+	fmt.Printf("Duration:     %v\n", duration)
+	fmt.Printf("Concurrency:  %d\n", concurrency)
+	fmt.Printf("Rate Limit:   %d req/s\n", rateLimit)
+	fmt.Printf("Test Type:    %s\n\n", testType)
+}
+
+func appendResult(results []*loadtest.TestResult, r *loadtest.TestResult) []*loadtest.TestResult {
+	if r != nil {
+		return append(results, r)
+	}
+	return results
+}
+
+func runRPCTest(cfg loadtest.LoadTestConfig) (*loadtest.TestResult, bool) {
+	fmt.Println("Running RPC Load Test...")
+	result, err := loadtest.RPCLoadTest(cfg)
+	if err != nil {
+		fmt.Printf("ERROR: RPC load test failed: %v\n", err)
+		return nil, true
+	}
+	loadtest.PrintResult(result)
+	if result.ThroughputRPS < 1000 {
+		fmt.Printf("⚠️  WARNING: Throughput %.2f req/s is below target 1000 req/s\n\n", result.ThroughputRPS)
+	}
+	if result.RequestCount > 0 && result.FailureCount > result.RequestCount/100 {
+		fmt.Printf("⚠️  WARNING: Failure rate %.2f%% is above 1%% threshold\n\n",
+			float64(result.FailureCount)/float64(result.RequestCount)*100)
+	}
+	return result, false
+}
+
+func runMemoryTest(cfg loadtest.LoadTestConfig) (*loadtest.TestResult, bool) {
+	fmt.Println("Running Memory Leak Detection Test...")
+	memCheckInterval := cfg.Duration / 20
+	if memCheckInterval < 10*time.Second {
+		memCheckInterval = 10 * time.Second
+	}
+
+	result, err := loadtest.MemoryLeakTest(cfg, memCheckInterval)
+	if err != nil {
+		fmt.Printf("ERROR: Memory leak test failed: %v\n", err)
+		return nil, true
+	}
+	loadtest.PrintResult(result)
+
+	if durationHours := result.Duration.Hours(); durationHours >= 24 {
+		growthMBPerHour := float64(result.MemoryGrowth) / durationHours / (1024 * 1024)
+		if growthMBPerHour > 10 {
+			fmt.Printf("⚠️  WARNING: Memory growth %.2f MB/hour exceeds 10 MB/hour threshold\n\n", growthMBPerHour)
+		} else {
+			fmt.Printf("✅ PASS: Memory growth %.2f MB/hour is within acceptable range\n\n", growthMBPerHour)
+		}
+	}
+	return result, false
+}
+
+func runContinuousTest(cfg loadtest.LoadTestConfig, nameCount int) (*loadtest.TestResult, bool) {
+	fmt.Println("Running Continuous Operation Test...")
+	result, err := loadtest.ContinuousOperationTest(loadtest.ContinuousOperationConfig{
+		RPCURL:        cfg.RPCURL,
+		RPCUser:       cfg.RPCUser,
+		RPCPassword:   cfg.RPCPassword,
+		Duration:      cfg.Duration,
+		NameCount:     nameCount,
+		CheckInterval: 30 * time.Second,
+	})
+	if err != nil {
+		fmt.Printf("ERROR: Continuous operation test failed: %v\n", err)
+		return nil, true
+	}
+	loadtest.PrintResult(result)
+
+	successRate := float64(result.SuccessCount) / float64(result.RequestCount) * 100
+	if successRate < 99.9 {
+		fmt.Printf("⚠️  WARNING: Success rate %.2f%% is below 99.9%% threshold\n\n", successRate)
+	} else {
+		fmt.Printf("✅ PASS: Success rate %.2f%% meets reliability requirements\n\n", successRate)
+	}
+	return result, false
+}
+
+func printSummary(allResults []*loadtest.TestResult, hasFailure bool) {
 	fmt.Println("=== Test Summary ===")
 	fmt.Printf("Tests Run:        %d\n", len(allResults))
 
@@ -179,11 +194,9 @@ func main() {
 	fmt.Printf("Total Failures:   %d\n", totalFailures)
 
 	if totalRequests > 0 {
-		successRate := float64(totalSuccess) / float64(totalRequests) * 100
-		fmt.Printf("Overall Success:  %.2f%%\n", successRate)
+		fmt.Printf("Overall Success:  %.2f%%\n", float64(totalSuccess)/float64(totalRequests)*100)
 	}
 
-	// Exit with appropriate code
 	if hasFailure {
 		fmt.Println("\n❌ FAILED: One or more tests encountered errors")
 		os.Exit(1)

@@ -99,39 +99,44 @@ func (w *Wallet) load() error {
 		return fmt.Errorf("failed to parse wallet: %w", err)
 	}
 
-	// Handle wallet version
+	normalizeWalletVersion(&wd)
+
+	if err := w.applyEncryptionState(&wd); err != nil {
+		return err
+	}
+
+	if !w.encrypted {
+		return w.loadKeys(&wd)
+	}
+	return nil
+}
+
+// normalizeWalletVersion handles legacy wallet format without version field.
+func normalizeWalletVersion(wd *walletData) {
 	if wd.Version == 0 {
-		// Legacy format (no version field) - treat as version 1
 		wd.Version = 1
 		wd.Encrypted = false
 	}
+}
 
-	// Set wallet encryption state
+// applyEncryptionState sets the wallet's encryption fields from wallet data.
+func (w *Wallet) applyEncryptionState(wd *walletData) error {
 	w.encrypted = wd.Encrypted
-	if w.encrypted {
-		// Encrypted wallet starts locked
-		w.locked = true
-		w.passwordHash, err = hex.DecodeString(wd.PasswordHash)
-		if err != nil {
-			return fmt.Errorf("failed to decode password hash: %w", err)
-		}
-		w.passwordSalt, err = hex.DecodeString(wd.PasswordSalt)
-		if err != nil {
-			return fmt.Errorf("failed to decode password salt: %w", err)
-		}
-	} else {
-		// Unencrypted wallet is always unlocked
-		w.locked = false
-	}
-
-	// For encrypted wallets, we cannot load keys until unlocked
-	// For unencrypted wallets, load keys immediately
 	if !w.encrypted {
-		if err := w.loadKeys(&wd); err != nil {
-			return err
-		}
+		w.locked = false
+		return nil
 	}
 
+	w.locked = true
+	var err error
+	w.passwordHash, err = hex.DecodeString(wd.PasswordHash)
+	if err != nil {
+		return fmt.Errorf("failed to decode password hash: %w", err)
+	}
+	w.passwordSalt, err = hex.DecodeString(wd.PasswordSalt)
+	if err != nil {
+		return fmt.Errorf("failed to decode password salt: %w", err)
+	}
 	return nil
 }
 
@@ -139,28 +144,9 @@ func (w *Wallet) load() error {
 // For encrypted wallets, this must be called after unlock with the password.
 func (w *Wallet) loadKeys(wd *walletData) error {
 	for _, kd := range wd.Keys {
-		var privKeyBytes []byte
-		var err error
-
-		if w.encrypted && w.unlockPassword != "" {
-			// Decrypt the private key
-			encData, err := decodeEncryptedData(kd.PrivateKeyHex)
-			if err != nil {
-				return fmt.Errorf("failed to decode encrypted private key: %w", err)
-			}
-			privKeyBytes, err = decrypt(encData, w.unlockPassword)
-			if err != nil {
-				return fmt.Errorf("failed to decrypt private key: %w", err)
-			}
-		} else if !w.encrypted {
-			// Unencrypted wallet - decode hex directly
-			privKeyBytes, err = hex.DecodeString(kd.PrivateKeyHex)
-			if err != nil {
-				return fmt.Errorf("failed to decode private key: %w", err)
-			}
-		} else {
-			// Encrypted but not unlocked - should not happen
-			return fmt.Errorf("cannot load keys from encrypted wallet without password")
+		privKeyBytes, err := w.decodePrivateKey(kd.PrivateKeyHex)
+		if err != nil {
+			return err
 		}
 
 		privKey, pubKey := btcec.PrivKeyFromBytes(privKeyBytes)
@@ -176,8 +162,30 @@ func (w *Wallet) loadKeys(wd *walletData) error {
 			Address:    addr,
 		}
 	}
-
 	return nil
+}
+
+// decodePrivateKey decodes a private key from its stored format based on encryption state.
+func (w *Wallet) decodePrivateKey(keyHex string) ([]byte, error) {
+	if w.encrypted && w.unlockPassword != "" {
+		encData, err := decodeEncryptedData(keyHex)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode encrypted private key: %w", err)
+		}
+		privKeyBytes, err := decrypt(encData, w.unlockPassword)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt private key: %w", err)
+		}
+		return privKeyBytes, nil
+	}
+	if !w.encrypted {
+		privKeyBytes, err := hex.DecodeString(keyHex)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode private key: %w", err)
+		}
+		return privKeyBytes, nil
+	}
+	return nil, fmt.Errorf("cannot load keys from encrypted wallet without password")
 }
 
 // save writes the wallet to disk.
@@ -196,23 +204,10 @@ func (w *Wallet) save() error {
 	}
 
 	for addr, kp := range w.keys {
-		var privKeyHex string
-
-		if w.encrypted {
-			if w.unlockPassword == "" {
-				return fmt.Errorf("cannot save encrypted wallet while locked")
-			}
-			// Encrypt the private key
-			encData, err := encrypt(kp.PrivateKey.Serialize(), w.unlockPassword)
-			if err != nil {
-				return fmt.Errorf("failed to encrypt private key: %w", err)
-			}
-			privKeyHex = encodeEncryptedData(encData)
-		} else {
-			// Unencrypted wallet - encode as hex
-			privKeyHex = hex.EncodeToString(kp.PrivateKey.Serialize())
+		privKeyHex, err := w.encodePrivateKey(kp)
+		if err != nil {
+			return err
 		}
-
 		wd.Keys = append(wd.Keys, keyData{
 			PrivateKeyHex: privKeyHex,
 			Address:       addr,
@@ -224,17 +219,30 @@ func (w *Wallet) save() error {
 		return fmt.Errorf("failed to serialize wallet: %w", err)
 	}
 
-	// Ensure directory exists
 	if err := os.MkdirAll(w.dataDir, 0o700); err != nil {
 		return fmt.Errorf("failed to create wallet directory: %w", err)
 	}
 
-	// Write with restricted permissions
-	if err := os.WriteFile(w.walletPath(), data, 0o600); err != nil {
-		return fmt.Errorf("failed to write wallet: %w", err)
+	path := w.walletPath()
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("failed to write wallet file %s: %w", path, err)
 	}
-
 	return nil
+}
+
+// encodePrivateKey encodes a private key for storage based on encryption state.
+func (w *Wallet) encodePrivateKey(kp *KeyPair) (string, error) {
+	if !w.encrypted {
+		return hex.EncodeToString(kp.PrivateKey.Serialize()), nil
+	}
+	if w.unlockPassword == "" {
+		return "", fmt.Errorf("cannot save encrypted wallet while locked")
+	}
+	encData, err := encrypt(kp.PrivateKey.Serialize(), w.unlockPassword)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt private key: %w", err)
+	}
+	return encodeEncryptedData(encData), nil
 }
 
 // GenerateKey creates a new key pair and returns its address.
@@ -827,110 +835,97 @@ func (w *Wallet) CreateNameNewTx(
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 
-	// Validate inputs
-	if len(name) == 0 || len(name) > 255 {
-		return nil, nil, fmt.Errorf("invalid name length: %d (must be 1-255)", len(name))
-	}
-	if len(randBytes) == 0 {
-		return nil, nil, fmt.Errorf("random bytes cannot be empty")
-	}
-	if len(utxos) == 0 {
-		return nil, nil, fmt.Errorf("no UTXOs provided")
+	if err := validateNameNewInputs(name, randBytes, utxos); err != nil {
+		return nil, nil, err
 	}
 
-	// Get owner's pubkey hash
-	var pubKeyHash []byte
-	switch addr := ownerAddress.(type) {
-	case *btcutil.AddressPubKeyHash:
-		pubKeyHash = addr.ScriptAddress()
-	default:
-		return nil, nil, fmt.Errorf("unsupported address type: %T", ownerAddress)
+	pubKeyHash, err := extractPubKeyHash(ownerAddress)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	// Compute commitment hash
 	commitHash := ComputeNameNewHash(randBytes, name, w.chainParams)
-
-	// Build NAME_NEW output script
 	nameScript, err := BuildNameNewScript(commitHash, pubKeyHash)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to build NAME_NEW script: %w", err)
 	}
 
-	// Calculate total input value
+	nameOutValue := int64(1000)
+	tx, err := w.buildNameTransaction(utxos, nameScript, nameOutValue, feeRate, ownerAddress, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if err := w.signTransactionInputs(tx, utxos); err != nil {
+		return nil, nil, err
+	}
+
+	return tx, randBytes, nil
+}
+
+// validateNameNewInputs validates the inputs for a NAME_NEW transaction.
+func validateNameNewInputs(name string, randBytes []byte, utxos []UTXO) error {
+	if len(name) == 0 || len(name) > 255 {
+		return fmt.Errorf("invalid name length: %d (must be 1-255)", len(name))
+	}
+	if len(randBytes) == 0 {
+		return fmt.Errorf("random bytes cannot be empty")
+	}
+	if len(utxos) == 0 {
+		return fmt.Errorf("no UTXOs provided")
+	}
+	return nil
+}
+
+// extractPubKeyHash extracts the public key hash from a P2PKH address.
+func extractPubKeyHash(addr btcutil.Address) ([]byte, error) {
+	switch a := addr.(type) {
+	case *btcutil.AddressPubKeyHash:
+		return a.ScriptAddress(), nil
+	default:
+		return nil, fmt.Errorf("unsupported address type: %T", addr)
+	}
+}
+
+// buildNameTransaction creates a transaction with a name output, optional change output, and fee.
+// minBurnFee specifies a minimum protocol-mandated burn fee (0 for standard fee-rate only).
+func (w *Wallet) buildNameTransaction(
+	utxos []UTXO, nameScript []byte, nameOutValue, feeRate int64,
+	ownerAddress btcutil.Address, minBurnFee int64,
+) (*wire.MsgTx, error) {
 	var totalIn int64
 	for _, utxo := range utxos {
 		totalIn += utxo.Value
 	}
 
-	// Estimate transaction size
-	// Inputs: ~148 bytes each, Outputs: NAME_NEW + change
 	estimatedSize := int64(10 + len(utxos)*148 + len(nameScript) + 34)
 	fee := feeRate * estimatedSize
+	if fee < minBurnFee {
+		fee = minBurnFee
+	}
 
-	// NAME_NEW output value (just above dust)
-	nameOutValue := int64(1000)
-
-	// Change calculation
 	changeValue := totalIn - nameOutValue - fee
 	if changeValue < 0 {
-		return nil, nil, fmt.Errorf("insufficient funds: need %d, have %d", nameOutValue+fee, totalIn)
+		return nil, fmt.Errorf("insufficient funds: need %d, have %d", nameOutValue+fee, totalIn)
 	}
 
-	// Create transaction
 	tx := wire.NewMsgTx(wire.TxVersion)
-
-	// Add inputs
 	for _, utxo := range utxos {
 		outPoint := wire.NewOutPoint(&utxo.TxHash, utxo.Vout)
-		txIn := wire.NewTxIn(outPoint, nil, nil)
-		tx.AddTxIn(txIn)
+		tx.AddTxIn(wire.NewTxIn(outPoint, nil, nil))
 	}
 
-	// Add NAME_NEW output
 	tx.AddTxOut(wire.NewTxOut(nameOutValue, nameScript))
 
-	// Add change output if above dust
 	if changeValue >= config.DustLimit {
 		changeScript, err := txscript.PayToAddrScript(ownerAddress)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to create change script: %w", err)
+			return nil, fmt.Errorf("failed to create change script: %w", err)
 		}
 		tx.AddTxOut(wire.NewTxOut(changeValue, changeScript))
 	}
 
-	// Sign all inputs
-	for i, utxo := range utxos {
-		inputKp, ok := w.keys[utxo.Address]
-		if !ok {
-			return nil, nil, fmt.Errorf("no key for input address: %s", utxo.Address)
-		}
-
-		sigHash, err := txscript.CalcSignatureHash(
-			utxo.PkScript,
-			txscript.SigHashAll,
-			tx,
-			i,
-		)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to calculate signature hash: %w", err)
-		}
-
-		sig := ecdsa.Sign(inputKp.PrivateKey, sigHash)
-		sigWithHashType := append(sig.Serialize(), byte(txscript.SigHashAll))
-		pubKeyBytes := inputKp.PublicKey.SerializeCompressed()
-
-		sigScript, err := txscript.NewScriptBuilder().
-			AddData(sigWithHashType).
-			AddData(pubKeyBytes).
-			Script()
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to build sig script: %w", err)
-		}
-
-		tx.TxIn[i].SignatureScript = sigScript
-	}
-
-	return tx, randBytes, nil
+	return tx, nil
 }
 
 // CreateNameFirstUpdateTx creates a NAME_FIRSTUPDATE transaction to complete name registration.
@@ -960,108 +955,55 @@ func (w *Wallet) CreateNameFirstUpdateTx(
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 
-	// Validate inputs
-	if len(name) == 0 || len(name) > 255 {
-		return nil, fmt.Errorf("invalid name length: %d (must be 1-255)", len(name))
-	}
-	if len(randHex) == 0 {
-		return nil, fmt.Errorf("randHex cannot be empty")
-	}
-	// Validate randHex is valid hex
-	if _, err := hex.DecodeString(randHex); err != nil {
-		return nil, fmt.Errorf("invalid randHex: must be valid hex string: %w", err)
-	}
-	if len(value) > 1023 {
-		return nil, fmt.Errorf("value too large: %d bytes (max 1023)", len(value))
-	}
-	if nameNewUtxoIndex < 0 || nameNewUtxoIndex >= len(utxos) {
-		return nil, fmt.Errorf("invalid NAME_NEW UTXO index: %d", nameNewUtxoIndex)
+	if err := validateNameFirstUpdateInputs(name, randHex, value, utxos, nameNewUtxoIndex); err != nil {
+		return nil, err
 	}
 
-	nameNewUtxo := utxos[nameNewUtxoIndex]
-
-	// Verify we have the key for the NAME_NEW UTXO (needed for signing)
-	if _, ok := w.keys[nameNewUtxo.Address]; !ok {
-		return nil, fmt.Errorf("no key for NAME_NEW address: %s", nameNewUtxo.Address)
+	if _, ok := w.keys[utxos[nameNewUtxoIndex].Address]; !ok {
+		return nil, fmt.Errorf("no key for NAME_NEW address: %s", utxos[nameNewUtxoIndex].Address)
 	}
 
-	// Get owner's pubkey hash
-	var pubKeyHash []byte
-	switch addr := ownerAddress.(type) {
-	case *btcutil.AddressPubKeyHash:
-		pubKeyHash = addr.ScriptAddress()
-	default:
-		return nil, fmt.Errorf("unsupported address type: %T", ownerAddress)
+	pubKeyHash, err := extractPubKeyHash(ownerAddress)
+	if err != nil {
+		return nil, err
 	}
 
-	// Build NAME_FIRSTUPDATE output script
 	nameScript, err := BuildNameFirstUpdateScript(name, randHex, value, pubKeyHash)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build NAME_FIRSTUPDATE script: %w", err)
 	}
 
-	// Calculate total input value
-	var totalIn int64
-	for _, utxo := range utxos {
-		totalIn += utxo.Value
-	}
-
-	// Estimate transaction size
-	estimatedSize := int64(10 + len(utxos)*148 + len(nameScript) + 34)
-
-	// Miner fee based on fee rate and estimated size
-	minerFee := feeRate * estimatedSize
-
-	// Name output value (just above dust)
 	nameOutValue := int64(1000)
-
-	// Protocol-mandated burned fee for NAME_FIRSTUPDATE: at least MinNameOperationFee (0.01 NMC = 1,000,000 satoshis)
-	// This fee is destroyed (burned) as the difference between total inputs and total outputs.
-	// Miners receive this burned amount, but it must meet the minimum protocol requirement.
-	// If the calculated miner fee exceeds the minimum burn fee, use the larger amount.
-	burnFee := int64(config.MinNameOperationFee)
-	if minerFee > burnFee {
-		burnFee = minerFee
+	tx, err := w.buildNameTransaction(utxos, nameScript, nameOutValue, feeRate, ownerAddress, config.MinNameOperationFee)
+	if err != nil {
+		return nil, err
 	}
 
-	// Total required: name output + burn fee
-	// The burn fee implicitly includes the miner's reward
-	totalRequired := nameOutValue + burnFee
-
-	// Change calculation (inputs minus name output and burn fee)
-	changeValue := totalIn - totalRequired
-	if changeValue < 0 {
-		return nil, fmt.Errorf("insufficient funds: need %d, have %d", totalRequired, totalIn)
-	}
-
-	// Create transaction
-	tx := wire.NewMsgTx(wire.TxVersion)
-
-	// Add inputs
-	for _, utxo := range utxos {
-		outPoint := wire.NewOutPoint(&utxo.TxHash, utxo.Vout)
-		txIn := wire.NewTxIn(outPoint, nil, nil)
-		tx.AddTxIn(txIn)
-	}
-
-	// Add NAME_FIRSTUPDATE output
-	tx.AddTxOut(wire.NewTxOut(nameOutValue, nameScript))
-
-	// Add change output if above dust
-	if changeValue >= config.DustLimit {
-		changeScript, err := txscript.PayToAddrScript(ownerAddress)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create change script: %w", err)
-		}
-		tx.AddTxOut(wire.NewTxOut(changeValue, changeScript))
-	}
-
-	// Sign all inputs
 	if err := w.signTransactionInputs(tx, utxos); err != nil {
 		return nil, err
 	}
 
 	return tx, nil
+}
+
+// validateNameFirstUpdateInputs validates the inputs for a NAME_FIRSTUPDATE transaction.
+func validateNameFirstUpdateInputs(name, randHex, value string, utxos []UTXO, nameNewUtxoIndex int) error {
+	if len(name) == 0 || len(name) > 255 {
+		return fmt.Errorf("invalid name length: %d (must be 1-255)", len(name))
+	}
+	if len(randHex) == 0 {
+		return fmt.Errorf("randHex cannot be empty")
+	}
+	if _, err := hex.DecodeString(randHex); err != nil {
+		return fmt.Errorf("invalid randHex: must be valid hex string: %w", err)
+	}
+	if len(value) > 1023 {
+		return fmt.Errorf("value too large: %d bytes (max 1023)", len(value))
+	}
+	if nameNewUtxoIndex < 0 || nameNewUtxoIndex >= len(utxos) {
+		return fmt.Errorf("invalid NAME_NEW UTXO index: %d", nameNewUtxoIndex)
+	}
+	return nil
 }
 
 // SignTransaction signs all inputs in a transaction.

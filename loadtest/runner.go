@@ -137,126 +137,132 @@ func RPCLoadTest(config LoadTestConfig) (*TestResult, error) {
 	client := NewRPCClient(config.RPCURL, config.RPCUser, config.RPCPassword)
 	ctx := context.Background()
 
-	// Test connectivity first
-	_, err := client.Call(ctx, "getinfo", nil)
-	if err != nil {
+	if _, err := client.Call(ctx, "getinfo", nil); err != nil {
 		return nil, fmt.Errorf("initial connectivity check failed: %w", err)
 	}
 
-	var requestCount, successCount, failureCount int64
-	var wg sync.WaitGroup
-	latencies := make([]time.Duration, 0, 10000)
-	var latencyMutex sync.Mutex
-	var errorMutex sync.Mutex
-
-	// Rate limiter (if needed) - create per-worker tickers
-	var tickers []*time.Ticker
-	if config.RateLimit > 0 {
-		requestsPerWorker := config.RateLimit / config.Concurrency
-		if requestsPerWorker < 1 {
-			requestsPerWorker = 1
-		}
-		for i := 0; i < config.Concurrency; i++ {
-			ticker := time.NewTicker(time.Second / time.Duration(requestsPerWorker))
-			tickers = append(tickers, ticker)
-			defer ticker.Stop()
-		}
+	counters := &loadTestCounters{}
+	tickers := createRateLimitTickers(config)
+	for _, t := range tickers {
+		defer t.Stop()
 	}
 
 	start := time.Now()
 	stopChan := make(chan struct{})
 
-	// Start worker goroutines
+	var wg sync.WaitGroup
 	for i := 0; i < config.Concurrency; i++ {
 		wg.Add(1)
-		go func(workerID int) {
-			defer wg.Done()
-
-			methods := []string{"getinfo", "getblockcount", "getbestblockhash"}
-			methodIdx := 0
-
-			// Get this worker's ticker if rate limiting is enabled
-			var myTicker *time.Ticker
-			if len(tickers) > 0 {
-				myTicker = tickers[workerID]
-			}
-
-			for {
-				select {
-				case <-stopChan:
-					return
-				default:
-					if myTicker != nil {
-						<-myTicker.C
-					}
-
-					reqStart := time.Now()
-					method := methods[methodIdx%len(methods)]
-					methodIdx++
-
-					_, err := client.Call(ctx, method, nil)
-					latency := time.Since(reqStart)
-
-					atomic.AddInt64(&requestCount, 1)
-
-					if err != nil {
-						atomic.AddInt64(&failureCount, 1)
-						errorMutex.Lock()
-						if len(result.ErrorDetails) < 100 {
-							result.ErrorDetails = append(result.ErrorDetails, err.Error())
-						}
-						errorMutex.Unlock()
-					} else {
-						atomic.AddInt64(&successCount, 1)
-						latencyMutex.Lock()
-						if len(latencies) < 10000 {
-							latencies = append(latencies, latency)
-						}
-						latencyMutex.Unlock()
-					}
-				}
-			}
-		}(i)
+		go runLoadWorker(&wg, client, ctx, stopChan, tickers, i, result, counters)
 	}
 
-	// Run for specified duration
 	time.Sleep(config.Duration)
 	close(stopChan)
 	wg.Wait()
 
-	duration := time.Since(start)
+	populateLoadTestResult(result, counters, time.Since(start))
+	return result, nil
+}
 
-	// Calculate statistics
-	result.Duration = duration
-	result.RequestCount = atomic.LoadInt64(&requestCount)
-	result.SuccessCount = atomic.LoadInt64(&successCount)
-	result.FailureCount = atomic.LoadInt64(&failureCount)
-	result.ThroughputRPS = float64(result.RequestCount) / duration.Seconds()
+// loadTestCounters holds thread-safe counters and latency samples for a load test.
+type loadTestCounters struct {
+	requestCount int64
+	successCount int64
+	failureCount int64
+	latencies    []time.Duration
+	latencyMu    sync.Mutex
+	errorMu      sync.Mutex
+}
 
-	if len(latencies) > 0 {
-		var total time.Duration
-		for _, l := range latencies {
-			total += l
-		}
-		result.AvgLatency = total / time.Duration(len(latencies))
+// createRateLimitTickers creates per-worker rate limit tickers if rate limiting is enabled.
+func createRateLimitTickers(config LoadTestConfig) []*time.Ticker {
+	if config.RateLimit <= 0 {
+		return nil
+	}
+	rpw := config.RateLimit / config.Concurrency
+	if rpw < 1 {
+		rpw = 1
+	}
+	tickers := make([]*time.Ticker, config.Concurrency)
+	for i := range tickers {
+		tickers[i] = time.NewTicker(time.Second / time.Duration(rpw))
+	}
+	return tickers
+}
 
-		// Calculate percentiles - need to sort first
-		if len(latencies) >= 20 {
-			// Sort latencies for accurate percentile calculation using sort.Slice
-			sortedLatencies := make([]time.Duration, len(latencies))
-			copy(sortedLatencies, latencies)
+// runLoadWorker runs a single load test worker goroutine.
+func runLoadWorker(wg *sync.WaitGroup, client *RPCClient, ctx context.Context, stopChan chan struct{}, tickers []*time.Ticker, workerID int, result *TestResult, counters *loadTestCounters) {
+	defer wg.Done()
 
-			// Use standard library sort for O(n log n) performance
-			sort.Slice(sortedLatencies, func(i, j int) bool {
-				return sortedLatencies[i] < sortedLatencies[j]
-			})
+	methods := []string{"getinfo", "getblockcount", "getbestblockhash"}
+	methodIdx := 0
 
-			result.P95Latency = sortedLatencies[int(float64(len(sortedLatencies))*0.95)]
-			result.P99Latency = sortedLatencies[int(float64(len(sortedLatencies))*0.99)]
-		}
+	var myTicker *time.Ticker
+	if len(tickers) > workerID {
+		myTicker = tickers[workerID]
 	}
 
-	return result, nil
+	for {
+		select {
+		case <-stopChan:
+			return
+		default:
+			if myTicker != nil {
+				<-myTicker.C
+			}
+
+			reqStart := time.Now()
+			method := methods[methodIdx%len(methods)]
+			methodIdx++
+
+			_, err := client.Call(ctx, method, nil)
+			latency := time.Since(reqStart)
+			atomic.AddInt64(&counters.requestCount, 1)
+
+			if err != nil {
+				atomic.AddInt64(&counters.failureCount, 1)
+				counters.errorMu.Lock()
+				if len(result.ErrorDetails) < 100 {
+					result.ErrorDetails = append(result.ErrorDetails, err.Error())
+				}
+				counters.errorMu.Unlock()
+			} else {
+				atomic.AddInt64(&counters.successCount, 1)
+				counters.latencyMu.Lock()
+				if len(counters.latencies) < 10000 {
+					counters.latencies = append(counters.latencies, latency)
+				}
+				counters.latencyMu.Unlock()
+			}
+		}
+	}
+}
+
+// populateLoadTestResult fills in the test result with calculated statistics.
+func populateLoadTestResult(result *TestResult, counters *loadTestCounters, duration time.Duration) {
+	result.Duration = duration
+	result.RequestCount = atomic.LoadInt64(&counters.requestCount)
+	result.SuccessCount = atomic.LoadInt64(&counters.successCount)
+	result.FailureCount = atomic.LoadInt64(&counters.failureCount)
+	result.ThroughputRPS = float64(result.RequestCount) / duration.Seconds()
+
+	if len(counters.latencies) == 0 {
+		return
+	}
+
+	var total time.Duration
+	for _, l := range counters.latencies {
+		total += l
+	}
+	result.AvgLatency = total / time.Duration(len(counters.latencies))
+
+	if len(counters.latencies) >= 20 {
+		sorted := make([]time.Duration, len(counters.latencies))
+		copy(sorted, counters.latencies)
+		sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+		result.P95Latency = sorted[int(float64(len(sorted))*0.95)]
+		result.P99Latency = sorted[int(float64(len(sorted))*0.99)]
+	}
 }
 
 // MemoryLeakTest monitors memory growth over time
@@ -374,34 +380,58 @@ func ContinuousOperationTest(config ContinuousOperationConfig) (*TestResult, err
 	ctx := context.Background()
 
 	start := time.Now()
-	var requestCount, successCount, failureCount int64
-	var errorMutex sync.Mutex
+	counters := &loadTestCounters{}
 
-	// Health check goroutine
 	stopChan := make(chan struct{})
-	healthErrors := make([]string, 0)
-	var healthMutex sync.Mutex
+	healthErrors := runHealthChecker(client, ctx, config.CheckInterval, stopChan)
 
+	runContinuousLoop(client, ctx, config, result, counters)
+
+	close(stopChan)
+
+	healthErrors.mu.Lock()
+	result.ErrorDetails = append(result.ErrorDetails, healthErrors.errors...)
+	healthErrors.mu.Unlock()
+
+	result.Duration = time.Since(start)
+	result.RequestCount = atomic.LoadInt64(&counters.requestCount)
+	result.SuccessCount = atomic.LoadInt64(&counters.successCount)
+	result.FailureCount = atomic.LoadInt64(&counters.failureCount)
+	result.ThroughputRPS = float64(result.RequestCount) / time.Since(start).Seconds()
+
+	return result, nil
+}
+
+// healthCheckResult holds health check errors collected by the health checker goroutine.
+type healthCheckResult struct {
+	errors []string
+	mu     sync.Mutex
+}
+
+// runHealthChecker starts a background health check goroutine and returns its results.
+func runHealthChecker(client *RPCClient, ctx context.Context, interval time.Duration, stopChan <-chan struct{}) *healthCheckResult {
+	result := &healthCheckResult{}
 	go func() {
-		ticker := time.NewTicker(config.CheckInterval)
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-
 		for {
 			select {
 			case <-stopChan:
 				return
 			case <-ticker.C:
-				_, err := client.Call(ctx, "getinfo", nil)
-				if err != nil {
-					healthMutex.Lock()
-					healthErrors = append(healthErrors, fmt.Sprintf("[%s] health check failed: %v", time.Now().Format(time.RFC3339), err))
-					healthMutex.Unlock()
+				if _, err := client.Call(ctx, "getinfo", nil); err != nil {
+					result.mu.Lock()
+					result.errors = append(result.errors, fmt.Sprintf("[%s] health check failed: %v", time.Now().Format(time.RFC3339), err))
+					result.mu.Unlock()
 				}
 			}
 		}
 	}()
+	return result
+}
 
-	// Main test loop
+// runContinuousLoop executes the main continuous operation loop.
+func runContinuousLoop(client *RPCClient, ctx context.Context, config ContinuousOperationConfig, result *TestResult, counters *loadTestCounters) {
 	endTime := time.Now().Add(config.Duration)
 	operations := []string{"getinfo", "getblockcount", "getbestblockhash", "name_list"}
 	opIdx := 0
@@ -411,41 +441,25 @@ func ContinuousOperationTest(config ContinuousOperationConfig) (*TestResult, err
 		opIdx++
 
 		_, err := client.Call(ctx, operation, nil)
-		atomic.AddInt64(&requestCount, 1)
+		atomic.AddInt64(&counters.requestCount, 1)
 
 		if err != nil {
-			atomic.AddInt64(&failureCount, 1)
-			errorMutex.Lock()
+			atomic.AddInt64(&counters.failureCount, 1)
+			counters.errorMu.Lock()
 			if len(result.ErrorDetails) < 100 {
 				result.ErrorDetails = append(result.ErrorDetails, err.Error())
 			}
-			errorMutex.Unlock()
+			counters.errorMu.Unlock()
 		} else {
-			atomic.AddInt64(&successCount, 1)
+			atomic.AddInt64(&counters.successCount, 1)
 		}
 
-		// Small delay between requests
 		time.Sleep(10 * time.Millisecond)
 
-		// Check if we've reached name count limit
-		if config.NameCount > 0 && int(atomic.LoadInt64(&successCount)) >= config.NameCount {
+		if config.NameCount > 0 && int(atomic.LoadInt64(&counters.successCount)) >= config.NameCount {
 			break
 		}
 	}
-
-	close(stopChan)
-
-	healthMutex.Lock()
-	result.ErrorDetails = append(result.ErrorDetails, healthErrors...)
-	healthMutex.Unlock()
-
-	result.Duration = time.Since(start)
-	result.RequestCount = atomic.LoadInt64(&requestCount)
-	result.SuccessCount = atomic.LoadInt64(&successCount)
-	result.FailureCount = atomic.LoadInt64(&failureCount)
-	result.ThroughputRPS = float64(result.RequestCount) / time.Since(start).Seconds()
-
-	return result, nil
 }
 
 // PrintResult outputs test results in a readable format

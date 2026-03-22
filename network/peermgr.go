@@ -112,32 +112,36 @@ func NewPeerManager(cfg *Config) (*PeerManager, error) {
 func (pm *PeerManager) listenLoop(listener net.Listener) {
 	defer pm.wg.Done()
 
-	// Use buffered channels to prevent goroutine leaks when the main loop exits
-	// via the quit signal before the accept goroutine sends.
 	acceptCh := make(chan net.Conn, 1)
 	errCh := make(chan error, 1)
 
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				select {
-				case errCh <- err:
-				case <-pm.quit:
-					// Main loop has exited, stop sending
-				}
-				return
-			}
-			select {
-			case acceptCh <- conn:
-			case <-pm.quit:
-				// Main loop has exited, close the connection
-				conn.Close()
-				return
-			}
-		}
-	}()
+	go pm.acceptConnections(listener, acceptCh, errCh)
 
+	pm.dispatchConnections(acceptCh, errCh)
+}
+
+// acceptConnections runs in a goroutine, accepting connections and sending them on channels.
+func (pm *PeerManager) acceptConnections(listener net.Listener, acceptCh chan<- net.Conn, errCh chan<- error) {
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			select {
+			case errCh <- err:
+			case <-pm.quit:
+			}
+			return
+		}
+		select {
+		case acceptCh <- conn:
+		case <-pm.quit:
+			conn.Close()
+			return
+		}
+	}
+}
+
+// dispatchConnections receives accepted connections or errors and handles them.
+func (pm *PeerManager) dispatchConnections(acceptCh <-chan net.Conn, errCh <-chan error) {
 	for {
 		select {
 		case <-pm.quit:
@@ -146,8 +150,6 @@ func (pm *PeerManager) listenLoop(listener net.Listener) {
 			pm.wg.Add(1)
 			go pm.handleInboundPeer(conn)
 		case err := <-errCh:
-			// Accept error, likely due to listener closure.
-			// The accept goroutine has already stopped, so we should exit too.
 			pm.logger.Warn("accept error, listener closing", "error", err)
 			return
 		}
@@ -308,31 +310,17 @@ func (pm *PeerManager) onInv(p *peer.Peer, msg *wire.MsgInv) {
 }
 
 func (pm *PeerManager) onBlock(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
-	// Check if blockchain is available for processing
 	if pm.blockchain == nil {
 		pm.logger.Warn("cannot process block: blockchain not initialized",
 			"block_hash", msg.BlockHash().String())
 		return
 	}
 
-	// Convert wire.MsgBlock to btcutil.Block for processing
 	block := btcutil.NewBlock(msg)
 	blockHash := block.Hash()
 
-	// If buf is provided and block has AuxPow version bit, parse AuxPow data
-	// The buf parameter contains the complete serialized block including AuxPow (if present).
-	// We need to extract and store the AuxPow for later validation.
-	if buf != nil && len(buf) > 0 {
-		if err := pm.blockchain.SetBlockAuxPowFromBytes(blockHash, buf); err != nil {
-			pm.logger.Warn("failed to parse AuxPow data, continuing anyway",
-				"block_hash", msg.BlockHash().String(),
-				"error", err)
-			// Don't return - continue with validation, which will catch AuxPow issues
-		}
-	}
+	pm.parseAuxPowIfPresent(blockHash, msg, buf)
 
-	// Process the block through the blockchain
-	// BFNone means no special behavior flags
 	isMainChain, isOrphan, err := pm.blockchain.ProcessBlock(block, blockchain.BFNone)
 	if err != nil {
 		pm.logger.Error("failed to process block",
@@ -342,36 +330,47 @@ func (pm *PeerManager) onBlock(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
 		return
 	}
 
-	// Notify sync manager that block was received
 	if pm.syncManager != nil {
 		pm.syncManager.BlockReceived(blockHash)
 	}
 
-	// If block was accepted on the main chain, remove confirmed transactions from mempool
 	if isMainChain {
-		// Collect transaction hashes from the block
-		txHashes := make([]chainhash.Hash, 0, len(msg.Transactions))
-		for _, tx := range msg.Transactions {
-			txHashes = append(txHashes, tx.TxHash())
-		}
-
-		// Remove confirmed transactions from mempool
-		pm.mempool.RemoveTxs(txHashes)
+		pm.removeConfirmedTransactions(msg)
 	}
 
-	// Log the result for debugging
-	if isOrphan {
-		pm.logger.Debug("received orphan block",
+	pm.logBlockResult(msg.BlockHash().String(), p.Addr(), isMainChain, isOrphan)
+}
+
+// parseAuxPowIfPresent parses AuxPow data from the raw block bytes if present.
+func (pm *PeerManager) parseAuxPowIfPresent(blockHash *chainhash.Hash, msg *wire.MsgBlock, buf []byte) {
+	if len(buf) == 0 {
+		return
+	}
+	if err := pm.blockchain.SetBlockAuxPowFromBytes(blockHash, buf); err != nil {
+		pm.logger.Warn("failed to parse AuxPow data, continuing anyway",
 			"block_hash", msg.BlockHash().String(),
-			"peer_id", p.Addr())
-	} else if isMainChain {
-		pm.logger.Info("accepted block on main chain",
-			"block_hash", msg.BlockHash().String(),
-			"peer_id", p.Addr())
-	} else {
-		pm.logger.Info("accepted block on side chain",
-			"block_hash", msg.BlockHash().String(),
-			"peer_id", p.Addr())
+			"error", err)
+	}
+}
+
+// removeConfirmedTransactions removes transactions confirmed in a block from the mempool.
+func (pm *PeerManager) removeConfirmedTransactions(msg *wire.MsgBlock) {
+	txHashes := make([]chainhash.Hash, 0, len(msg.Transactions))
+	for _, tx := range msg.Transactions {
+		txHashes = append(txHashes, tx.TxHash())
+	}
+	pm.mempool.RemoveTxs(txHashes)
+}
+
+// logBlockResult logs the outcome of processing a block.
+func (pm *PeerManager) logBlockResult(blockHash, peerAddr string, isMainChain, isOrphan bool) {
+	switch {
+	case isOrphan:
+		pm.logger.Debug("received orphan block", "block_hash", blockHash, "peer_id", peerAddr)
+	case isMainChain:
+		pm.logger.Info("accepted block on main chain", "block_hash", blockHash, "peer_id", peerAddr)
+	default:
+		pm.logger.Info("accepted block on side chain", "block_hash", blockHash, "peer_id", peerAddr)
 	}
 }
 

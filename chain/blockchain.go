@@ -492,79 +492,70 @@ func (bc *BlockChain) validateBlockVersion(block *btcutil.Block) error {
 //   - nil if validation succeeds or block doesn't require AuxPow
 //   - error if AuxPow is missing or validation fails
 func (bc *BlockChain) validateAuxPow(block *btcutil.Block) error {
-	// Determine block height
-	var height int32 = -1
-	prevHash := block.MsgBlock().Header.PrevBlock
-
-	if bc.BlockChain != nil && !prevHash.IsEqual(&chainhash.Hash{}) {
-		parentHeight, err := bc.BlockChain.BlockHeightByHash(&prevHash)
-		if err == nil {
-			height = parentHeight + 1
-		}
-	}
-
+	height := bc.resolveBlockHeight(block)
 	if height < 0 {
-		height = block.Height()
-		if height < 0 {
-			// Cannot determine height - skip AuxPow validation
-			return nil
-		}
-	}
-
-	// Check if this block should have AuxPow
-	auxPowActivationHeight := config.GetAuxPowActivationHeight(bc.chainParams)
-	if height < auxPowActivationHeight {
-		// Pre-AuxPow block - no validation needed
 		return nil
 	}
 
-	// Block requires AuxPow validation
-	version := block.MsgBlock().Header.Version
-	hasAuxPowBit := (version & config.AuxPowVersionBit) != 0
-
-	if !hasAuxPowBit {
-		// Block version validation should have caught this, but double-check
-		return fmt.Errorf("block at height %d requires AuxPow version bit but it's not set", height)
+	if height < config.GetAuxPowActivationHeight(bc.chainParams) {
+		return nil
 	}
 
-	// Retrieve cached AuxPow data
+	if err := bc.verifyAuxPowVersionBit(block, height); err != nil {
+		return err
+	}
+
 	blockHash := block.Hash()
 	auxPow := bc.getBlockAuxPow(blockHash)
-
-	// Ensure we clean up the cache entry when done (success or failure)
 	defer bc.clearBlockAuxPow(blockHash)
 
 	if auxPow == nil {
 		return fmt.Errorf("block at height %d requires AuxPow but no AuxPow data was provided", height)
 	}
 
-	// Get the target difficulty for the parent block
-	// For merged mining, the parent block (Bitcoin) must meet a difficulty target.
-	// We use the current block's difficulty target from its Bits field.
-	targetDifficulty := blockchain.CompactToBig(block.MsgBlock().Header.Bits)
+	if err := bc.verifyChainID(block, height); err != nil {
+		return err
+	}
 
-	// Validate chain ID from block version
-	// Chain ID is in bits 16+ of the Namecoin block version
-	blockChainID := ExtractChainIDFromVersion(version)
+	return bc.verifyAuxPowProof(block, auxPow, blockHash, height)
+}
+
+// resolveBlockHeight resolves the height of a block from its parent or metadata for AuxPow validation.
+func (bc *BlockChain) resolveBlockHeight(block *btcutil.Block) int32 {
+	prevHash := block.MsgBlock().Header.PrevBlock
+	if bc.BlockChain != nil && !prevHash.IsEqual(&chainhash.Hash{}) {
+		if parentHeight, err := bc.BlockChain.BlockHeightByHash(&prevHash); err == nil {
+			return parentHeight + 1
+		}
+	}
+	return block.Height()
+}
+
+// verifyAuxPowVersionBit checks that the AuxPow version bit is set on the block.
+func (bc *BlockChain) verifyAuxPowVersionBit(block *btcutil.Block, height int32) error {
+	version := block.MsgBlock().Header.Version
+	if (version & config.AuxPowVersionBit) == 0 {
+		return fmt.Errorf("block at height %d requires AuxPow version bit but it's not set", height)
+	}
+	return nil
+}
+
+// verifyChainID checks that the block's chain ID matches Namecoin's chain ID.
+func (bc *BlockChain) verifyChainID(block *btcutil.Block, height int32) error {
+	blockChainID := ExtractChainIDFromVersion(block.MsgBlock().Header.Version)
 	if blockChainID != NamecoinChainID {
 		return fmt.Errorf("block at height %d has invalid chain ID %d (expected %d)",
 			height, blockChainID, NamecoinChainID)
 	}
+	return nil
+}
 
-	// Validate the AuxPow proof
-	// This checks:
-	// 1. Parent block hash meets difficulty target
-	// 2. Coinbase merkle branch proves coinbase is in parent block
-	// 3. Chain merkle branch proves aux block hash is committed in coinbase
-	//
-	// Note: Chain ID is validated above from the block version (not in ValidateAuxPow).
-	// Note: We need to convert targetDifficulty (big.Int) to a Hash for ValidateAuxPow.
-	// blockchain.HashToBig treats hash bytes as little-endian, so we must reverse
-	// the big-endian bytes from big.Int.
+// verifyAuxPowProof validates the AuxPow proof-of-work against the target difficulty.
+func (bc *BlockChain) verifyAuxPowProof(block *btcutil.Block, auxPow *AuxPow, blockHash *chainhash.Hash, height int32) error {
+	targetDifficulty := blockchain.CompactToBig(block.MsgBlock().Header.Bits)
+
 	var targetHash chainhash.Hash
 	targetBytes := targetDifficulty.Bytes()
-
-	// Reverse bytes: big.Int is big-endian, Hash (for HashToBig) is little-endian
 	for i := 0; i < len(targetBytes); i++ {
 		targetHash[len(targetBytes)-1-i] = targetBytes[i]
 	}
@@ -574,7 +565,6 @@ func (bc *BlockChain) validateAuxPow(block *btcutil.Block) error {
 			blockHash.String(), height, err)
 	}
 
-	// All AuxPow validations passed
 	log.Printf("Successfully validated AuxPow for block %s at height %d", blockHash.String(), height)
 	return nil
 }
@@ -846,79 +836,73 @@ func (bc *BlockChain) determineBlockHeight(block *btcutil.Block) (int32, error) 
 // UTXO tracking in this implementation. Strict validation applies for blocks
 // at or above UTXOTrackingStartHeight.
 func (bc *BlockChain) validateTransactionFee(tx *wire.MsgTx, opType namedb.NameOperation, height int32) error {
-	// Handle edge case: transactions with no inputs
 	if len(tx.TxIn) == 0 {
 		return fmt.Errorf("transaction has no inputs (cannot validate fee)")
 	}
 
-	// Calculate total input value by looking up previous outputs
-	var totalInputValue int64
-	var missingUTXOs bool
-
-	for _, txIn := range tx.TxIn {
-		// Look up the UTXO being spent
-		utxo, err := bc.nameDB.GetUTXO(&txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index)
-		if err != nil {
-			// UTXO not found in our database. This could happen for:
-			// 1. Historical blocks before UTXO tracking started
-			// 2. Blocks being validated before they're added to our UTXO set
-			// 3. Database inconsistencies
-
-			// For historical blocks (before UTXO tracking), allow missing UTXOs
-			if height < config.UTXOTrackingStartHeight {
-				missingUTXOs = true
-				break // Cannot validate fee without all input values
-			}
-
-			// For recent blocks, missing UTXOs indicate a problem
-			log.Printf("Warning: Cannot validate transaction fee at height %d - UTXO not found: %s:%d",
-				height, txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index)
-			return fmt.Errorf("cannot validate transaction fee: UTXO %s:%d not found at height %d: %w",
-				txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index, height, err)
-		}
-
-		// Check for overflow when adding input values
-		// This prevents integer overflow attacks where sum of inputs wraps around
-		if totalInputValue > 0 && utxo.Value > 0 && totalInputValue > (1<<63-1)-utxo.Value {
-			return fmt.Errorf("transaction input value overflow: %d + %d", totalInputValue, utxo.Value)
-		}
-		totalInputValue += utxo.Value
+	totalInputValue, skip, err := bc.sumInputValues(tx, height)
+	if err != nil {
+		return err
 	}
-
-	// If we're dealing with a historical block and missing UTXOs, skip validation
-	// This allows syncing of old blocks without complete UTXO data
-	if missingUTXOs {
+	if skip {
 		log.Printf("Info: Skipping fee validation for historical block %d due to missing UTXO data", height)
 		return nil
 	}
 
-	// Calculate total output value
+	totalOutputValue, err := sumOutputValues(tx)
+	if err != nil {
+		return err
+	}
+
+	return validateMinFee(totalInputValue-totalOutputValue, opType)
+}
+
+// sumInputValues calculates the total input value for a transaction.
+// Returns the total value, whether to skip fee validation (historical blocks), and any error.
+func (bc *BlockChain) sumInputValues(tx *wire.MsgTx, height int32) (int64, bool, error) {
+	var totalInputValue int64
+	for _, txIn := range tx.TxIn {
+		utxo, err := bc.nameDB.GetUTXO(&txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index)
+		if err != nil {
+			if height < config.UTXOTrackingStartHeight {
+				return 0, true, nil
+			}
+			return 0, false, fmt.Errorf("cannot validate transaction fee: UTXO %s:%d not found at height %d: %w",
+				txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index, height, err)
+		}
+		if totalInputValue > 0 && utxo.Value > 0 && totalInputValue > (1<<63-1)-utxo.Value {
+			return 0, false, fmt.Errorf("transaction input value overflow: %d + %d", totalInputValue, utxo.Value)
+		}
+		totalInputValue += utxo.Value
+	}
+	return totalInputValue, false, nil
+}
+
+// sumOutputValues calculates the total output value for a transaction.
+func sumOutputValues(tx *wire.MsgTx) (int64, error) {
 	var totalOutputValue int64
 	for _, txOut := range tx.TxOut {
-		// Check for overflow when adding output values
 		if totalOutputValue > 0 && txOut.Value > 0 && totalOutputValue > (1<<63-1)-txOut.Value {
-			return fmt.Errorf("transaction output value overflow: %d + %d", totalOutputValue, txOut.Value)
+			return 0, fmt.Errorf("transaction output value overflow: %d + %d", totalOutputValue, txOut.Value)
 		}
 		totalOutputValue += txOut.Value
 	}
+	return totalOutputValue, nil
+}
 
-	// Calculate fee (inputs - outputs)
-	fee := totalInputValue - totalOutputValue
+// validateMinFee checks that the transaction fee meets the minimum for the operation type.
+func validateMinFee(fee int64, opType namedb.NameOperation) error {
 	if fee < 0 {
 		return fmt.Errorf("transaction fee cannot be negative: %d satoshis", fee)
 	}
 
-	// Validate minimum fee based on operation type
 	var minFee int64
 	switch opType {
 	case namedb.NameNew:
-		// NAME_NEW requires standard minimum relay fee
 		minFee = config.MinRelayTxFee
 	case namedb.NameFirstUpdate, namedb.NameUpdate:
-		// NAME_FIRSTUPDATE and NAME_UPDATE require 0.01 NMC network fee
 		minFee = config.MinNameOperationFee
 	default:
-		// Unknown operation type - should not happen
 		return fmt.Errorf("unknown name operation type: %d", opType)
 	}
 
@@ -926,7 +910,6 @@ func (bc *BlockChain) validateTransactionFee(tx *wire.MsgTx, opType namedb.NameO
 		return fmt.Errorf("transaction fee %d satoshis below minimum %d satoshis for %s",
 			fee, minFee, opType)
 	}
-
 	return nil
 }
 
@@ -1460,65 +1443,69 @@ func extractAddressFromNameScript(script []byte, chainParams *chaincfg.Params) s
 		return ""
 	}
 
-	var offset int
-	switch script[0] {
-	case opNameNew:
-		// NAME_NEW: OP_NAME_NEW <hash> OP_2DROP <P2PKH>
-		_, newOffset, err := readPushData(script, 1)
-		if err != nil {
-			return ""
-		}
-		offset = newOffset
-		// Skip OP_2DROP (0x6d)
-		if offset < len(script) && script[offset] == 0x6d {
-			offset++
-		}
-
-	case opNameFirstUpdate:
-		// NAME_FIRSTUPDATE: OP_NAME_FIRSTUPDATE <name> <rand> <value> OP_2DROP OP_2DROP <P2PKH>
-		var err error
-		offset, err = skipPushDataFields(script, 1, 3)
-		if err != nil {
-			return ""
-		}
-		// Skip OP_2DROP OP_2DROP (0x6d 0x6d)
-		for i := 0; i < 2 && offset < len(script) && script[offset] == 0x6d; i++ {
-			offset++
-		}
-
-	case opNameUpdate:
-		// NAME_UPDATE: OP_NAME_UPDATE <name> <value> OP_2DROP OP_DROP <P2PKH>
-		var err error
-		offset, err = skipPushDataFields(script, 1, 2)
-		if err != nil {
-			return ""
-		}
-		// Skip OP_2DROP (0x6d)
-		if offset < len(script) && script[offset] == 0x6d {
-			offset++
-		}
-		// Skip OP_DROP (0x75)
-		if offset < len(script) && script[offset] == 0x75 {
-			offset++
-		}
-
-	default:
+	offset, err := skipNameScriptPrefix(script)
+	if err != nil || offset >= len(script) {
 		return ""
 	}
 
-	// Extract the P2PKH script portion
-	if offset >= len(script) {
-		return ""
-	}
-	p2pkhScript := script[offset:]
-
-	// Use txscript to extract the address from the P2PKH portion
-	_, addrs, _, err := txscript.ExtractPkScriptAddrs(p2pkhScript, chainParams)
+	_, addrs, _, err := txscript.ExtractPkScriptAddrs(script[offset:], chainParams)
 	if err != nil || len(addrs) == 0 {
 		return ""
 	}
-
 	return addrs[0].EncodeAddress()
+}
+
+// skipNameScriptPrefix advances past the name operation prefix to the P2PKH portion.
+func skipNameScriptPrefix(script []byte) (int, error) {
+	switch script[0] {
+	case opNameNew:
+		return skipNameNewPrefix(script)
+	case opNameFirstUpdate:
+		return skipNameFirstUpdatePrefix(script)
+	case opNameUpdate:
+		return skipNameUpdatePrefix(script)
+	default:
+		return 0, fmt.Errorf("not a name script")
+	}
+}
+
+// skipNameNewPrefix skips the NAME_NEW prefix: OP_NAME_NEW <hash> OP_2DROP.
+func skipNameNewPrefix(script []byte) (int, error) {
+	_, offset, err := readPushData(script, 1)
+	if err != nil {
+		return 0, err
+	}
+	if offset < len(script) && script[offset] == 0x6d {
+		offset++
+	}
+	return offset, nil
+}
+
+// skipNameFirstUpdatePrefix skips the NAME_FIRSTUPDATE prefix: OP_NAME_FIRSTUPDATE <name> <rand> <value> OP_2DROP OP_2DROP.
+func skipNameFirstUpdatePrefix(script []byte) (int, error) {
+	offset, err := skipPushDataFields(script, 1, 3)
+	if err != nil {
+		return 0, err
+	}
+	for i := 0; i < 2 && offset < len(script) && script[offset] == 0x6d; i++ {
+		offset++
+	}
+	return offset, nil
+}
+
+// skipNameUpdatePrefix skips the NAME_UPDATE prefix: OP_NAME_UPDATE <name> <value> OP_2DROP OP_DROP.
+func skipNameUpdatePrefix(script []byte) (int, error) {
+	offset, err := skipPushDataFields(script, 1, 2)
+	if err != nil {
+		return 0, err
+	}
+	if offset < len(script) && script[offset] == 0x6d {
+		offset++
+	}
+	if offset < len(script) && script[offset] == 0x75 {
+		offset++
+	}
+	return offset, nil
 }
 
 // readPushData reads a Bitcoin-style push data from the script at the given offset.
@@ -1728,109 +1715,90 @@ func (bc *BlockChain) HandleBlockchainNotification(notification *blockchain.Noti
 // This is called during a blockchain reorganization to maintain consistency
 // between the name database and the main chain.
 func (bc *BlockChain) rollbackNameOperations(block *btcutil.Block) {
-	// Track NAME_NEW commitments that are restored during this rollback.
-	// When a NAME_FIRSTUPDATE is rolled back, it restores the NAME_NEW commitment.
-	// If the same block also contains that NAME_NEW, we must NOT delete it
-	// during the NAME_NEW rollback, as it was restored for a reason (the
-	// NAME_FIRSTUPDATE that consumed it is also being rolled back).
 	restoredCommitments := make(map[string]bool)
 
-	// Process transactions in reverse order to properly undo operations
 	txs := block.Transactions()
 	for i := len(txs) - 1; i >= 0; i-- {
 		tx := txs[i]
-		msgTx := tx.MsgTx()
-		txHash := tx.Hash()
-
-		// Rollback UTXOs: remove outputs created by this block
-		for outIdx := range msgTx.TxOut {
-			_ = bc.nameDB.RemoveUTXO(txHash, uint32(outIdx))
-		}
-
-		// Restore UTXOs: restore inputs that were spent by this block
-		// Skip coinbase (has no real inputs)
-		// Note: The actual restoration is done in batch after this loop
-		// via RestoreSpentUTXOsForBlock for efficiency
-
-		// Process outputs in reverse order within the transaction
-		for j := len(msgTx.TxOut) - 1; j >= 0; j-- {
-			txOut := msgTx.TxOut[j]
-			op, name, _, extra, err := parseNameScriptFull(txOut.PkScript)
-			if err != nil {
-				continue // Not a name operation
-			}
-
-			switch op {
-			case namedb.NameNew:
-				// Rollback NAME_NEW: remove the commitment from the database.
-				// extra contains the commitment hash.
-				//
-				// Skip deletion if this commitment was restored during rollback
-				// of a NAME_FIRSTUPDATE in the same block. This handles the case
-				// where both NAME_NEW and NAME_FIRSTUPDATE are in the same block.
-				commitHashKey := string(extra)
-				if restoredCommitments[commitHashKey] {
-					continue
-				}
-				_ = bc.nameDB.DeleteNameNew(extra)
-
-			case namedb.NameFirstUpdate:
-				// Rollback NAME_FIRSTUPDATE:
-				// 1. Retrieve the name record to get the original NAME_NEW height
-				// 2. Remove the history entry for this operation
-				// 3. Delete the name from the database
-				// 4. Restore the NAME_NEW commitment that was consumed with exact height
-
-				// Retrieve the name record before deleting to get NameNewHeight
-				nameRecord, err := bc.nameDB.GetName(name)
-				var nameNewHeight int32
-				if err == nil && nameRecord != nil && nameRecord.NameNewHeight != 0 {
-					// Use the exact NAME_NEW height stored during NAME_FIRSTUPDATE
-					nameNewHeight = nameRecord.NameNewHeight
-				} else {
-					// Fallback: estimate if NameNewHeight not set (old records from v2 or earlier)
-					// This maintains backward compatibility with existing databases
-					nameNewHeight = block.Height() - config.MinBlocksBeforeFirstUpdate
-					if nameNewHeight < 0 {
-						nameNewHeight = 0
-					}
-				}
-
-				_, _ = bc.nameDB.RemoveLastHistoryEntry(name)
-				_ = bc.nameDB.DeleteName(name)
-
-				// Restore the NAME_NEW commitment with the exact original height.
-				// The commitment hash is computed from rand (extra), name, and chain ID.
-				commitHash := computeCommitHash(extra, name, bc.chainParams)
-				_ = bc.nameDB.RestoreNameNew(commitHash, nameNewHeight)
-
-				// Track this commitment as restored so we don't delete it if
-				// the NAME_NEW for this commitment is also in this block
-				restoredCommitments[string(commitHash)] = true
-
-			case namedb.NameUpdate:
-				// Rollback NAME_UPDATE:
-				// 1. Remove the history entry for this operation
-				// 2. Restore the previous value from history
-				prevRecord, err := bc.nameDB.RemoveLastHistoryEntry(name)
-				if err != nil {
-					continue
-				}
-				if prevRecord != nil {
-					// Restore the previous record
-					_ = bc.nameDB.PutName(name, prevRecord)
-				}
-				// If prevRecord is nil, it means there was no previous state,
-				// which shouldn't happen for NAME_UPDATE (name should have been
-				// registered first), but we handle it gracefully
-			}
-		}
+		bc.rollbackTransactionUTXOs(tx)
+		bc.rollbackTransactionNameOps(tx, block.Height(), restoredCommitments)
 	}
 
-	// Restore all UTXOs that were spent in this block
-	// This is done after processing name operations to ensure consistency
 	if err := bc.nameDB.RestoreSpentUTXOsForBlock(block.Height()); err != nil {
 		log.Printf("Warning: Failed to restore spent UTXOs for block %d: %v", block.Height(), err)
+	}
+}
+
+// rollbackTransactionUTXOs removes UTXOs created by a transaction's outputs.
+func (bc *BlockChain) rollbackTransactionUTXOs(tx *btcutil.Tx) {
+	txHash := tx.Hash()
+	for outIdx := range tx.MsgTx().TxOut {
+		_ = bc.nameDB.RemoveUTXO(txHash, uint32(outIdx))
+	}
+}
+
+// rollbackTransactionNameOps reverses name operations within a transaction during block rollback.
+func (bc *BlockChain) rollbackTransactionNameOps(tx *btcutil.Tx, blockHeight int32, restoredCommitments map[string]bool) {
+	msgTx := tx.MsgTx()
+	for j := len(msgTx.TxOut) - 1; j >= 0; j-- {
+		txOut := msgTx.TxOut[j]
+		op, name, _, extra, err := parseNameScriptFull(txOut.PkScript)
+		if err != nil {
+			continue
+		}
+
+		switch op {
+		case namedb.NameNew:
+			bc.rollbackNameNew(extra, restoredCommitments)
+		case namedb.NameFirstUpdate:
+			bc.rollbackNameFirstUpdate(name, extra, blockHeight, restoredCommitments)
+		case namedb.NameUpdate:
+			bc.rollbackNameUpdate(name)
+		}
+	}
+}
+
+// rollbackNameNew removes a NAME_NEW commitment unless it was restored during this rollback.
+func (bc *BlockChain) rollbackNameNew(extra []byte, restoredCommitments map[string]bool) {
+	if restoredCommitments[string(extra)] {
+		return
+	}
+	_ = bc.nameDB.DeleteNameNew(extra)
+}
+
+// rollbackNameFirstUpdate removes a name registration and restores its NAME_NEW commitment.
+func (bc *BlockChain) rollbackNameFirstUpdate(name string, extra []byte, blockHeight int32, restoredCommitments map[string]bool) {
+	nameNewHeight := bc.getNameNewHeightForRollback(name, blockHeight)
+
+	_, _ = bc.nameDB.RemoveLastHistoryEntry(name)
+	_ = bc.nameDB.DeleteName(name)
+
+	commitHash := computeCommitHash(extra, name, bc.chainParams)
+	_ = bc.nameDB.RestoreNameNew(commitHash, nameNewHeight)
+	restoredCommitments[string(commitHash)] = true
+}
+
+// getNameNewHeightForRollback retrieves the NAME_NEW height for rollback, with fallback estimation.
+func (bc *BlockChain) getNameNewHeightForRollback(name string, blockHeight int32) int32 {
+	nameRecord, err := bc.nameDB.GetName(name)
+	if err == nil && nameRecord != nil && nameRecord.NameNewHeight != 0 {
+		return nameRecord.NameNewHeight
+	}
+	nameNewHeight := blockHeight - config.MinBlocksBeforeFirstUpdate
+	if nameNewHeight < 0 {
+		return 0
+	}
+	return nameNewHeight
+}
+
+// rollbackNameUpdate removes a NAME_UPDATE and restores the previous record.
+func (bc *BlockChain) rollbackNameUpdate(name string) {
+	prevRecord, err := bc.nameDB.RemoveLastHistoryEntry(name)
+	if err != nil {
+		return
+	}
+	if prevRecord != nil {
+		_ = bc.nameDB.PutName(name, prevRecord)
 	}
 }
 
