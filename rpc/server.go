@@ -1901,17 +1901,6 @@ func (s *Server) listUnspent(req *Request) *Response {
 //   - verbose (bool, optional): If false (default), returns hex-encoded block data.
 //     If true, returns JSON object with block details.
 func (s *Server) getBlock(req *Request) *Response {
-	if s.blockchain == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32603,
-				Message: "Blockchain not initialized",
-			},
-			ID: req.ID,
-		}
-	}
-
 	var params []interface{}
 	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
 		return &Response{
@@ -1964,6 +1953,18 @@ func (s *Server) getBlock(req *Request) *Response {
 			}
 		}
 		verbose = v
+	}
+
+	// Check blockchain availability after parameter validation
+	if s.blockchain == nil {
+		return &Response{
+			Jsonrpc: "2.0",
+			Error: &Error{
+				Code:    -32603,
+				Message: "Blockchain not initialized",
+			},
+			ID: req.ID,
+		}
 	}
 
 	// Get the block from blockchain
