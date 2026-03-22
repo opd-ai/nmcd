@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/btcsuite/btcd/peer"
 )
 
 func TestPeerScoreManager_GetOrCreateScore(t *testing.T) {
@@ -356,5 +358,28 @@ func BenchmarkPeerScoreManager_RecordBlock(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		psm.RecordBlockReceived(addr, 100*time.Millisecond)
+	}
+}
+
+// TestPeerScoreManager_GetBestPeers_EdgeCases tests GetBestPeers with edge cases
+func TestPeerScoreManager_GetBestPeers_EdgeCases(t *testing.T) {
+	psm := NewPeerScoreManager()
+
+	// Test with n=0
+	result := psm.GetBestPeers(nil, 0)
+	if result != nil {
+		t.Errorf("GetBestPeers(nil, 0) should return nil, got %v", result)
+	}
+
+	// Test with empty slice
+	result = psm.GetBestPeers([]*peer.Peer{}, 5)
+	if result != nil {
+		t.Errorf("GetBestPeers([], 5) should return nil, got %v", result)
+	}
+
+	// Test with negative n
+	result = psm.GetBestPeers(nil, -1)
+	if result != nil {
+		t.Errorf("GetBestPeers(nil, -1) should return nil, got %v", result)
 	}
 }

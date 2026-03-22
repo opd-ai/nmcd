@@ -103,11 +103,12 @@
   go test -cover ./network | grep -E "coverage: [0-9]+\.[0-9]+%"
   ```
 
-### Step 4: Network Package Test Coverage — Sync Protocol
+### Step 4: Network Package Test Coverage — Sync Protocol ⚠️ PARTIAL
 - **Deliverable**: Tests for `onInv`, `onGetData`, `onHeaders`, `BroadcastBlock`, `BroadcastTx` in `network/peermgr.go`
 - **Dependencies**: Step 3
 - **Goal Impact**: Completes network package coverage improvement
 - **Acceptance**: network package coverage ≥70%
+- **Result**: Added `network/sync_protocol_test.go` with 35+ tests. Coverage improved from 57.8% to 60.7%. Remaining functions (`handleInboundPeer`, `ConnectPeer`, sync internals) require actual peer connections via btcd/peer which doesn't support mocking.
 - **Validation**:
   ```bash
   go test -cover ./network | grep -E "coverage: [0-9]+\.[0-9]+%"
