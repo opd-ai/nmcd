@@ -2,6 +2,8 @@ package wallet
 
 import (
 	"testing"
+
+	"github.com/btcsuite/btcd/chaincfg"
 )
 
 // TestLoadEmptyWalletFile tests loading a wallet from an empty/nonexistent file
@@ -9,7 +11,7 @@ func TestLoadEmptyWalletFile(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Create a new wallet in the temp directory
-	w, err := NewWallet(tmpDir, nil)
+	w, err := NewWallet(tmpDir, &chaincfg.MainNetParams)
 	if err != nil {
 		t.Fatalf("Failed to create wallet: %v", err)
 	}
@@ -25,7 +27,7 @@ func TestLoadEmptyWalletFile(t *testing.T) {
 func TestGetKeyNotFound(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	w, err := NewWallet(tmpDir, nil)
+	w, err := NewWallet(tmpDir, &chaincfg.MainNetParams)
 	if err != nil {
 		t.Fatalf("Failed to create wallet: %v", err)
 	}
@@ -41,7 +43,7 @@ func TestGetKeyNotFound(t *testing.T) {
 func TestHasKeyNonExistent(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	w, err := NewWallet(tmpDir, nil)
+	w, err := NewWallet(tmpDir, &chaincfg.MainNetParams)
 	if err != nil {
 		t.Fatalf("Failed to create wallet: %v", err)
 	}
@@ -55,7 +57,7 @@ func TestHasKeyNonExistent(t *testing.T) {
 func TestEncryptWalletAlreadyEncrypted(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	w, err := NewWallet(tmpDir, nil)
+	w, err := NewWallet(tmpDir, &chaincfg.MainNetParams)
 	if err != nil {
 		t.Fatalf("Failed to create wallet: %v", err)
 	}
@@ -84,7 +86,7 @@ func TestEncryptWalletAlreadyEncrypted(t *testing.T) {
 func TestLockUnlockSequence(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	w, err := NewWallet(tmpDir, nil)
+	w, err := NewWallet(tmpDir, &chaincfg.MainNetParams)
 	if err != nil {
 		t.Fatalf("Failed to create wallet: %v", err)
 	}
@@ -129,7 +131,7 @@ func TestLockUnlockSequence(t *testing.T) {
 func TestUnlockNotEncrypted(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	w, err := NewWallet(tmpDir, nil)
+	w, err := NewWallet(tmpDir, &chaincfg.MainNetParams)
 	if err != nil {
 		t.Fatalf("Failed to create wallet: %v", err)
 	}
@@ -145,7 +147,7 @@ func TestUnlockNotEncrypted(t *testing.T) {
 func TestIsEncryptedAndIsLocked(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	w, err := NewWallet(tmpDir, nil)
+	w, err := NewWallet(tmpDir, &chaincfg.MainNetParams)
 	if err != nil {
 		t.Fatalf("Failed to create wallet: %v", err)
 	}
@@ -193,7 +195,7 @@ func TestIsEncryptedAndIsLocked(t *testing.T) {
 func TestGenerateMultipleKeys(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	w, err := NewWallet(tmpDir, nil)
+	w, err := NewWallet(tmpDir, &chaincfg.MainNetParams)
 	if err != nil {
 		t.Fatalf("Failed to create wallet: %v", err)
 	}
@@ -273,11 +275,13 @@ func TestValidatePasswordEdgeCases(t *testing.T) {
 	}{
 		{"empty", "", true},
 		{"too short", "Ab1!", true},
-		{"no uppercase", "password123!", true},
-		{"no lowercase", "PASSWORD123!", true},
-		{"no digit", "Password!!!", true},
-		{"no special", "Password123", true},
-		{"valid minimum", "Abcdef1!", false},
+		{"only lowercase", "abcdefgh", true},             // only 1 type
+		{"only uppercase", "ABCDEFGH", true},             // only 1 type
+		{"only digits", "12345678", true},                // only 1 type
+		{"only special", "!@#$%^&*", true},               // only 1 type
+		{"two types lowercase_digit", "abcd1234", false}, // 2 types OK
+		{"two types upper_lower", "ABCDabcd", false},     // 2 types OK
+		{"valid three types", "Abcdef1!", false},
 		{"valid long", "ThisIsAVeryLongPassword123!@#", false},
 	}
 
