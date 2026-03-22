@@ -338,45 +338,12 @@ func (s *Server) withPanicRecovery(handler http.HandlerFunc) http.HandlerFunc {
 // - Security headers
 // - Authentication
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
-	// Set security headers
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("X-Frame-Options", "DENY")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'")
+	setSecurityHeaders(w)
 
-	// Only allow POST requests
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if err := s.validateHTTPRequest(w, r); err != nil {
 		return
 	}
 
-	// Require a known, positive Content-Length and enforce the maximum size
-	if r.ContentLength <= 0 {
-		http.Error(w, "Content-Length required", http.StatusLengthRequired)
-		return
-	}
-	if r.ContentLength > s.maxRequestSize {
-		http.Error(w, "Request too large", http.StatusRequestEntityTooLarge)
-		return
-	}
-
-	// Extract IP and apply rate limiting
-	ip := extractIP(r.RemoteAddr)
-	if !s.rateLimiter.allow(ip) {
-		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
-		return
-	}
-
-	// Check authentication if both credentials are configured.
-	// Both rpcUser and rpcPassword must be set for authentication to be enforced.
-	if s.rpcUser != "" && s.rpcPassword != "" {
-		if !s.checkAuth(r) {
-			w.Header().Set("WWW-Authenticate", `Basic realm="nmcd RPC"`)
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-	}
-
-	// Limit reader to maxRequestSize to prevent memory exhaustion
 	limitedReader := http.MaxBytesReader(w, r.Body, s.maxRequestSize)
 	defer limitedReader.Close()
 
@@ -387,23 +354,63 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := s.processRequest(&req)
+	s.logRPCError(resp, req.Method)
+	s.writeJSONResponse(w, resp, req.Method)
+}
 
-	// Log errors for internal tracking (don't expose details to clients)
+// setSecurityHeaders sets standard security headers on the response.
+func setSecurityHeaders(w http.ResponseWriter) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'")
+}
+
+// validateHTTPRequest checks HTTP method, content length, rate limiting, and authentication.
+// Returns an error (and writes the HTTP error) if any check fails.
+func (s *Server) validateHTTPRequest(w http.ResponseWriter, r *http.Request) error {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return fmt.Errorf("method not allowed")
+	}
+	if r.ContentLength <= 0 {
+		http.Error(w, "Content-Length required", http.StatusLengthRequired)
+		return fmt.Errorf("content-length required")
+	}
+	if r.ContentLength > s.maxRequestSize {
+		http.Error(w, "Request too large", http.StatusRequestEntityTooLarge)
+		return fmt.Errorf("request too large")
+	}
+	if !s.rateLimiter.allow(extractIP(r.RemoteAddr)) {
+		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+		return fmt.Errorf("rate limit exceeded")
+	}
+	if s.rpcUser != "" && s.rpcPassword != "" && !s.checkAuth(r) {
+		w.Header().Set("WWW-Authenticate", `Basic realm="nmcd RPC"`)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return fmt.Errorf("unauthorized")
+	}
+	return nil
+}
+
+// logRPCError logs RPC errors for internal tracking.
+func (s *Server) logRPCError(resp *Response, method string) {
 	if resp.Error != nil && s.logger != nil {
 		s.logger.Warn("rpc request error",
-			"method", req.Method,
+			"method", method,
 			"error_code", resp.Error.Code,
 			"error_message", resp.Error.Message,
 		)
 	}
+}
 
+// writeJSONResponse encodes and writes the JSON-RPC response.
+func (s *Server) writeJSONResponse(w http.ResponseWriter, resp *Response, method string) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		// Log encoding error with structured logging
 		if s.logger != nil {
 			s.logger.Error("failed to encode JSON-RPC response",
 				"error", err,
-				"method", req.Method,
+				"method", method,
 			)
 		}
 	}

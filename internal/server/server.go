@@ -32,98 +32,30 @@ type Server struct {
 // NewServer creates and initializes a new nmcd server instance.
 // It sets up the blockchain, network, wallet, and RPC server components.
 func NewServer(cfg *config.Config) (*Server, error) {
-	// Ensure data directory exists
 	if err := cfg.EnsureDataDir(); err != nil {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
-	// Create blockchain
-	chainCfg := &chain.Config{
-		ChainParams: cfg.ChainParams(),
-		NameDBPath:  cfg.NameDBPath(),
-		DataDir:     cfg.DataDir,
-	}
-
-	bc, err := chain.NewBlockChain(chainCfg, nil)
+	bc, err := initBlockChain(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create blockchain: %w", err)
+		return nil, err
 	}
 
-	log.Printf("Blockchain initialized")
-
-	// Create peer manager
-	netCfg := &network.Config{
-		ChainParams: cfg.ChainParams(),
-		Blockchain:  bc,
-		ListenAddrs: cfg.ListenAddrs,
-		MaxPeers:    cfg.MaxPeers,
-	}
-
-	peerMgr, err := network.NewPeerManager(netCfg)
+	peerMgr, err := initPeerManager(cfg, bc)
 	if err != nil {
-		if closeErr := bc.Close(); closeErr != nil {
-			log.Printf("Error while closing blockchain after peer manager creation failure: %v", closeErr)
-			return nil, fmt.Errorf("failed to create peer manager: %v; additionally failed to close blockchain: %w", err, closeErr)
-		}
-		return nil, fmt.Errorf("failed to create peer manager: %w", err)
+		return nil, err
 	}
 
-	log.Printf("Network listening on %v", cfg.ListenAddrs)
+	w := initOptionalWallet(cfg)
 
-	// Create wallet
-	w, err := wallet.NewWallet(cfg.DataDir, cfg.ChainParams())
+	rpcServer, err := initRPCServer(cfg, bc, peerMgr, w)
 	if err != nil {
-		log.Printf("Warning: Failed to initialize wallet: %v", err)
-		log.Printf("Wallet functionality will be disabled")
-		// Note: wallet is optional, so we continue with nil wallet
-	} else {
-		log.Printf("Wallet initialized")
+		peerMgr.Stop()
+		bc.Close()
+		return nil, err
 	}
 
-	// Create RPC server
-	rpcCfg := &rpc.Config{
-		Blockchain:  bc,
-		PeerMgr:     peerMgr,
-		Wallet:      w,
-		ListenAddr:  cfg.RPCAddr,
-		RPCUser:     cfg.RPCUser,
-		RPCPassword: cfg.RPCPassword,
-	}
-
-	// Warn if only one of rpcuser/rpcpassword is set
-	if (cfg.RPCUser != "" && cfg.RPCPassword == "") || (cfg.RPCUser == "" && cfg.RPCPassword != "") {
-		log.Printf("Warning: Both RPC user and password must be set for authentication. Authentication is disabled.")
-	}
-
-	rpcServer, err := rpc.NewServer(rpcCfg)
-	if err != nil {
-		peerMgr.Stop() // Clean up peer manager on failure
-		if closeErr := bc.Close(); closeErr != nil {
-			log.Printf("Error while closing blockchain after RPC server creation failure: %v", closeErr)
-			return nil, fmt.Errorf("failed to create RPC server: %v; additionally failed to close blockchain: %w", err, closeErr)
-		}
-		return nil, fmt.Errorf("failed to create RPC server: %w", err)
-	}
-
-	// Setup Prometheus metrics if enabled
-	var prometheusHTTP *http.Server
-	var metricsRegistry *prometheus.Registry
-	if cfg.PrometheusAddr != "" {
-		metricsRegistry = prometheus.NewRegistry()
-		collector := metrics.NewPrometheusCollector(metrics.Get())
-		if err := metricsRegistry.Register(collector); err != nil {
-			log.Printf("Warning: Failed to register Prometheus collector: %v", err)
-		} else {
-			// Create HTTP server for Prometheus metrics
-			mux := http.NewServeMux()
-			mux.Handle("/metrics", promhttp.HandlerFor(metricsRegistry, promhttp.HandlerOpts{}))
-			prometheusHTTP = &http.Server{
-				Addr:    cfg.PrometheusAddr,
-				Handler: mux,
-			}
-			log.Printf("Prometheus metrics will be served on http://%s/metrics", cfg.PrometheusAddr)
-		}
-	}
+	prometheusHTTP, metricsRegistry := initPrometheus(cfg)
 
 	return &Server{
 		config:          cfg,
@@ -134,6 +66,93 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		prometheusHTTP:  prometheusHTTP,
 		metricsRegistry: metricsRegistry,
 	}, nil
+}
+
+// initBlockChain creates and returns a new blockchain instance.
+func initBlockChain(cfg *config.Config) (*chain.BlockChain, error) {
+	chainCfg := &chain.Config{
+		ChainParams: cfg.ChainParams(),
+		NameDBPath:  cfg.NameDBPath(),
+		DataDir:     cfg.DataDir,
+	}
+	bc, err := chain.NewBlockChain(chainCfg, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create blockchain: %w", err)
+	}
+	log.Printf("Blockchain initialized")
+	return bc, nil
+}
+
+// initPeerManager creates and returns a new peer manager, cleaning up on failure.
+func initPeerManager(cfg *config.Config, bc *chain.BlockChain) (*network.PeerManager, error) {
+	netCfg := &network.Config{
+		ChainParams: cfg.ChainParams(),
+		Blockchain:  bc,
+		ListenAddrs: cfg.ListenAddrs,
+		MaxPeers:    cfg.MaxPeers,
+	}
+	peerMgr, err := network.NewPeerManager(netCfg)
+	if err != nil {
+		bc.Close()
+		return nil, fmt.Errorf("failed to create peer manager: %w", err)
+	}
+	log.Printf("Network listening on %v", cfg.ListenAddrs)
+	return peerMgr, nil
+}
+
+// initOptionalWallet creates a wallet, returning nil if it fails.
+func initOptionalWallet(cfg *config.Config) *wallet.Wallet {
+	w, err := wallet.NewWallet(cfg.DataDir, cfg.ChainParams())
+	if err != nil {
+		log.Printf("Warning: Failed to initialize wallet: %v", err)
+		log.Printf("Wallet functionality will be disabled")
+		return nil
+	}
+	log.Printf("Wallet initialized")
+	return w
+}
+
+// initRPCServer creates and returns a new RPC server.
+func initRPCServer(cfg *config.Config, bc *chain.BlockChain, peerMgr *network.PeerManager, w *wallet.Wallet) (*rpc.Server, error) {
+	if (cfg.RPCUser != "" && cfg.RPCPassword == "") || (cfg.RPCUser == "" && cfg.RPCPassword != "") {
+		log.Printf("Warning: Both RPC user and password must be set for authentication. Authentication is disabled.")
+	}
+
+	rpcServer, err := rpc.NewServer(&rpc.Config{
+		Blockchain:  bc,
+		PeerMgr:     peerMgr,
+		Wallet:      w,
+		ListenAddr:  cfg.RPCAddr,
+		RPCUser:     cfg.RPCUser,
+		RPCPassword: cfg.RPCPassword,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create RPC server: %w", err)
+	}
+	return rpcServer, nil
+}
+
+// initPrometheus sets up Prometheus metrics collection if configured.
+func initPrometheus(cfg *config.Config) (*http.Server, *prometheus.Registry) {
+	if cfg.PrometheusAddr == "" {
+		return nil, nil
+	}
+
+	registry := prometheus.NewRegistry()
+	collector := metrics.NewPrometheusCollector(metrics.Get())
+	if err := registry.Register(collector); err != nil {
+		log.Printf("Warning: Failed to register Prometheus collector: %v", err)
+		return nil, nil
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
+	httpServer := &http.Server{
+		Addr:    cfg.PrometheusAddr,
+		Handler: mux,
+	}
+	log.Printf("Prometheus metrics will be served on http://%s/metrics", cfg.PrometheusAddr)
+	return httpServer, registry
 }
 
 // Start starts the server components.
