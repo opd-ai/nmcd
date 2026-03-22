@@ -147,11 +147,12 @@
   go test -cover ./wallet | grep -E "coverage: [0-9]+\.[0-9]+%"
   ```
 
-### Step 8: Complexity Reduction — RegisterName Refactor
+### Step 8: Complexity Reduction — RegisterName Refactor ⚠️ PARTIAL
 - **Deliverable**: Extract name commitment creation, UTXO selection, and transaction building from `RegisterName` (CC=36) into separate helper functions in `client/embedded.go`
 - **Dependencies**: Steps 1-7 (ensure test coverage before refactoring)
 - **Goal Impact**: Reduces maintenance burden and bug risk in highest-complexity function
 - **Acceptance**: `RegisterName` CC ≤20; extracted helpers CC ≤10 each
+- **Result**: Extracted 5 helper functions (`validateRegistrationInputs`, `resolveOwnerAddress`, `convertToWalletUTXOs`, `findNameNewUTXO`, `findNameUTXO`). RegisterName CC reduced from 36 to 28, UpdateName reduced from 30 to 26. All helpers have CC ≤ 5. Further reduction would require splitting the transaction creation/broadcast logic which risks changing behavior.
 - **Validation**:
   ```bash
   go-stats-generator analyze ./client --skip-tests --format json --sections functions | jq '.functions[] | select(.name == "RegisterName") | .complexity.cyclomatic'
