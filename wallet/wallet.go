@@ -477,39 +477,42 @@ const (
 	opCheckSig = 0xac
 )
 
-// BuildNameUpdateScript creates a NAME_UPDATE output script.
-// The script format is: OP_NAME_UPDATE <name> <value> OP_2DROP OP_DROP <P2PKH script>
-func BuildNameUpdateScript(name, value string, pubKeyHash []byte) ([]byte, error) {
+// validateNameScriptParams validates common parameters for name scripts.
+func validateNameScriptParams(name, value string, pubKeyHash []byte) error {
 	if len(name) == 0 || len(name) > 255 {
-		return nil, fmt.Errorf("invalid name length: %d", len(name))
+		return fmt.Errorf("invalid name length: %d", len(name))
 	}
 	if len(value) > 1023 {
-		return nil, fmt.Errorf("value too large: %d bytes", len(value))
+		return fmt.Errorf("value too large: %d bytes", len(value))
 	}
 	if len(pubKeyHash) != 20 {
-		return nil, fmt.Errorf("invalid pubkey hash length: %d", len(pubKeyHash))
+		return fmt.Errorf("invalid pubkey hash length: %d", len(pubKeyHash))
 	}
+	return nil
+}
 
-	// Build the script manually
-	script := make([]byte, 0, 128)
-
-	// OP_NAME_UPDATE
-	script = append(script, opNameUpdate)
-
-	// Push name
-	script = append(script, pushData([]byte(name))...)
-
-	// Push value
-	script = append(script, pushData([]byte(value))...)
-
-	// OP_2DROP OP_DROP (remove name op data from stack)
-	script = append(script, op2Drop, opDrop)
-
-	// Standard P2PKH: OP_DUP OP_HASH160 <pubkeyhash> OP_EQUALVERIFY OP_CHECKSIG
+// appendP2PKHScript appends standard P2PKH script to the given script buffer.
+func appendP2PKHScript(script, pubKeyHash []byte) []byte {
 	script = append(script, opDup, opHash160)
 	script = append(script, 0x14) // Push 20 bytes
 	script = append(script, pubKeyHash...)
 	script = append(script, opEqualVerify, opCheckSig)
+	return script
+}
+
+// BuildNameUpdateScript creates a NAME_UPDATE output script.
+// The script format is: OP_NAME_UPDATE <name> <value> OP_2DROP OP_DROP <P2PKH script>
+func BuildNameUpdateScript(name, value string, pubKeyHash []byte) ([]byte, error) {
+	if err := validateNameScriptParams(name, value, pubKeyHash); err != nil {
+		return nil, err
+	}
+
+	script := make([]byte, 0, 128)
+	script = append(script, opNameUpdate)
+	script = append(script, pushData([]byte(name))...)
+	script = append(script, pushData([]byte(value))...)
+	script = append(script, op2Drop, opDrop)
+	script = appendP2PKHScript(script, pubKeyHash)
 
 	return script, nil
 }
@@ -530,23 +533,11 @@ func BuildNameNewScript(hash, pubKeyHash []byte) ([]byte, error) {
 		return nil, fmt.Errorf("invalid pubkey hash length: %d", len(pubKeyHash))
 	}
 
-	// Build the script manually
 	script := make([]byte, 0, 64)
-
-	// OP_NAME_NEW
 	script = append(script, opNameNew)
-
-	// Push hash
 	script = append(script, pushData(hash)...)
-
-	// OP_2DROP (remove name op data from stack)
 	script = append(script, op2Drop)
-
-	// Standard P2PKH: OP_DUP OP_HASH160 <pubkeyhash> OP_EQUALVERIFY OP_CHECKSIG
-	script = append(script, opDup, opHash160)
-	script = append(script, 0x14) // Push 20 bytes
-	script = append(script, pubKeyHash...)
-	script = append(script, opEqualVerify, opCheckSig)
+	script = appendP2PKHScript(script, pubKeyHash)
 
 	return script, nil
 }
@@ -562,39 +553,17 @@ func BuildNameNewScript(hash, pubKeyHash []byte) ([]byte, error) {
 //
 // Returns the complete script bytes or an error if parameters are invalid.
 func BuildNameFirstUpdateScript(name, rand, value string, pubKeyHash []byte) ([]byte, error) {
-	if len(name) == 0 || len(name) > 255 {
-		return nil, fmt.Errorf("invalid name length: %d", len(name))
-	}
-	if len(value) > 1023 {
-		return nil, fmt.Errorf("value too large: %d bytes", len(value))
-	}
-	if len(pubKeyHash) != 20 {
-		return nil, fmt.Errorf("invalid pubkey hash length: %d", len(pubKeyHash))
+	if err := validateNameScriptParams(name, value, pubKeyHash); err != nil {
+		return nil, err
 	}
 
-	// Build the script manually
 	script := make([]byte, 0, 256)
-
-	// OP_NAME_FIRSTUPDATE
 	script = append(script, opNameFirstUpdate)
-
-	// Push name
 	script = append(script, pushData([]byte(name))...)
-
-	// Push rand
 	script = append(script, pushData([]byte(rand))...)
-
-	// Push value
 	script = append(script, pushData([]byte(value))...)
-
-	// OP_2DROP OP_2DROP (remove name op data from stack)
 	script = append(script, op2Drop, op2Drop)
-
-	// Standard P2PKH: OP_DUP OP_HASH160 <pubkeyhash> OP_EQUALVERIFY OP_CHECKSIG
-	script = append(script, opDup, opHash160)
-	script = append(script, 0x14) // Push 20 bytes
-	script = append(script, pubKeyHash...)
-	script = append(script, opEqualVerify, opCheckSig)
+	script = appendP2PKHScript(script, pubKeyHash)
 
 	return script, nil
 }
@@ -622,6 +591,67 @@ type UTXO struct {
 	Value    int64  // satoshis
 	PkScript []byte // the output script
 	Address  string // owner address
+}
+
+// buildNameTxBase creates the base transaction structure with inputs and name output.
+func buildNameTxBase(utxos []UTXO, nameScript []byte, nameOutValue int64) *wire.MsgTx {
+	tx := wire.NewMsgTx(wire.TxVersion)
+
+	for _, utxo := range utxos {
+		outPoint := wire.NewOutPoint(&utxo.TxHash, utxo.Vout)
+		txIn := wire.NewTxIn(outPoint, nil, nil)
+		tx.AddTxIn(txIn)
+	}
+
+	tx.AddTxOut(wire.NewTxOut(nameOutValue, nameScript))
+	return tx
+}
+
+// addChangeOutput adds a change output to the transaction if above dust limit.
+func addChangeOutput(tx *wire.MsgTx, changeValue int64, changeAddr btcutil.Address) error {
+	if changeValue >= config.DustLimit {
+		changeScript, err := txscript.PayToAddrScript(changeAddr)
+		if err != nil {
+			return fmt.Errorf("failed to create change script: %w", err)
+		}
+		tx.AddTxOut(wire.NewTxOut(changeValue, changeScript))
+	}
+	return nil
+}
+
+// signTransactionInputs signs all inputs of a transaction using the wallet's keys.
+func (w *Wallet) signTransactionInputs(tx *wire.MsgTx, utxos []UTXO) error {
+	for i, utxo := range utxos {
+		inputKp, ok := w.keys[utxo.Address]
+		if !ok {
+			return fmt.Errorf("no key for input address: %s", utxo.Address)
+		}
+
+		sigHash, err := txscript.CalcSignatureHash(
+			utxo.PkScript,
+			txscript.SigHashAll,
+			tx,
+			i,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to calculate signature hash: %w", err)
+		}
+
+		sig := ecdsa.Sign(inputKp.PrivateKey, sigHash)
+		sigWithHashType := append(sig.Serialize(), byte(txscript.SigHashAll))
+		pubKeyBytes := inputKp.PublicKey.SerializeCompressed()
+
+		sigScript, err := txscript.NewScriptBuilder().
+			AddData(sigWithHashType).
+			AddData(pubKeyBytes).
+			Script()
+		if err != nil {
+			return fmt.Errorf("failed to build sig script: %w", err)
+		}
+
+		tx.TxIn[i].SignatureScript = sigScript
+	}
+	return nil
 }
 
 // CreateNameUpdateTx creates a NAME_UPDATE transaction.
@@ -704,59 +734,17 @@ func (w *Wallet) CreateNameUpdateTx(
 		return nil, fmt.Errorf("insufficient funds: need %d, have %d", nameOutValue+fee, totalIn)
 	}
 
-	// Create transaction
-	tx := wire.NewMsgTx(wire.TxVersion)
-
-	// Add inputs
-	for _, utxo := range utxos {
-		outPoint := wire.NewOutPoint(&utxo.TxHash, utxo.Vout)
-		txIn := wire.NewTxIn(outPoint, nil, nil)
-		tx.AddTxIn(txIn)
-	}
-
-	// Add NAME_UPDATE output
-	tx.AddTxOut(wire.NewTxOut(nameOutValue, nameScript))
+	// Create transaction with inputs and name output
+	tx := buildNameTxBase(utxos, nameScript, nameOutValue)
 
 	// Add change output if above dust
-	if changeValue >= config.DustLimit {
-		changeScript, err := txscript.PayToAddrScript(changeAddr)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create change script: %w", err)
-		}
-		tx.AddTxOut(wire.NewTxOut(changeValue, changeScript))
+	if err := addChangeOutput(tx, changeValue, changeAddr); err != nil {
+		return nil, err
 	}
 
 	// Sign all inputs
-	for i, utxo := range utxos {
-		inputKp, ok := w.keys[utxo.Address]
-		if !ok {
-			return nil, fmt.Errorf("no key for input address: %s", utxo.Address)
-		}
-
-		sigHash, err := txscript.CalcSignatureHash(
-			utxo.PkScript,
-			txscript.SigHashAll,
-			tx,
-			i,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to calculate signature hash: %w", err)
-		}
-
-		sig := ecdsa.Sign(inputKp.PrivateKey, sigHash)
-		sigWithHashType := append(sig.Serialize(), byte(txscript.SigHashAll))
-		pubKeyBytes := inputKp.PublicKey.SerializeCompressed()
-
-		// Build signature script: <sig> <pubkey>
-		sigScript, err := txscript.NewScriptBuilder().
-			AddData(sigWithHashType).
-			AddData(pubKeyBytes).
-			Script()
-		if err != nil {
-			return nil, fmt.Errorf("failed to build sig script: %w", err)
-		}
-
-		tx.TxIn[i].SignatureScript = sigScript
+	if err := w.signTransactionInputs(tx, utxos); err != nil {
+		return nil, err
 	}
 
 	return tx, nil
@@ -804,26 +792,12 @@ func CreateNameUpdateTxRaw(
 		return nil, fmt.Errorf("insufficient funds: need %d, have %d", nameOutValue+fee, totalIn)
 	}
 
-	// Create transaction
-	tx := wire.NewMsgTx(wire.TxVersion)
-
-	// Add inputs
-	for _, utxo := range utxos {
-		outPoint := wire.NewOutPoint(&utxo.TxHash, utxo.Vout)
-		txIn := wire.NewTxIn(outPoint, nil, nil)
-		tx.AddTxIn(txIn)
-	}
-
-	// Add NAME_UPDATE output
-	tx.AddTxOut(wire.NewTxOut(nameOutValue, nameScript))
+	// Create transaction with inputs and name output
+	tx := buildNameTxBase(utxos, nameScript, nameOutValue)
 
 	// Add change output if above dust
-	if changeValue >= config.DustLimit {
-		changeScript, err := txscript.PayToAddrScript(destAddress)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create change script: %w", err)
-		}
-		tx.AddTxOut(wire.NewTxOut(changeValue, changeScript))
+	if err := addChangeOutput(tx, changeValue, destAddress); err != nil {
+		return nil, err
 	}
 
 	return tx, nil
@@ -1083,35 +1057,8 @@ func (w *Wallet) CreateNameFirstUpdateTx(
 	}
 
 	// Sign all inputs
-	for i, utxo := range utxos {
-		inputKp, ok := w.keys[utxo.Address]
-		if !ok {
-			return nil, fmt.Errorf("no key for input address: %s", utxo.Address)
-		}
-
-		sigHash, err := txscript.CalcSignatureHash(
-			utxo.PkScript,
-			txscript.SigHashAll,
-			tx,
-			i,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to calculate signature hash: %w", err)
-		}
-
-		sig := ecdsa.Sign(inputKp.PrivateKey, sigHash)
-		sigWithHashType := append(sig.Serialize(), byte(txscript.SigHashAll))
-		pubKeyBytes := inputKp.PublicKey.SerializeCompressed()
-
-		sigScript, err := txscript.NewScriptBuilder().
-			AddData(sigWithHashType).
-			AddData(pubKeyBytes).
-			Script()
-		if err != nil {
-			return nil, fmt.Errorf("failed to build sig script: %w", err)
-		}
-
-		tx.TxIn[i].SignatureScript = sigScript
+	if err := w.signTransactionInputs(tx, utxos); err != nil {
+		return nil, err
 	}
 
 	return tx, nil

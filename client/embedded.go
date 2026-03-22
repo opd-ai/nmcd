@@ -216,6 +216,22 @@ func NewEmbeddedClient(cfg *Config) (*EmbeddedClient, error) {
 	return client, nil
 }
 
+// checkContextAndState validates context and client state.
+func (c *EmbeddedClient) checkContextAndState(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ErrContextCanceled
+	default:
+	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.closed {
+		return fmt.Errorf("client is closed")
+	}
+	return nil
+}
+
 // ResolveName retrieves the current value and metadata for a name.
 // Returns ErrNameNotFound if the name doesn't exist or has expired.
 //
@@ -240,20 +256,9 @@ func NewEmbeddedClient(cfg *Config) (*EmbeddedClient, error) {
 //	}
 //	fmt.Printf("Value: %s\nOwner: %s\n", record.Value, record.Address)
 func (c *EmbeddedClient) ResolveName(ctx context.Context, name string) (*NameRecord, error) {
-	// Check context
-	select {
-	case <-ctx.Done():
-		return nil, ErrContextCanceled
-	default:
+	if err := c.checkContextAndState(ctx); err != nil {
+		return nil, err
 	}
-
-	// Check if client is closed
-	c.mu.RLock()
-	if c.closed {
-		c.mu.RUnlock()
-		return nil, fmt.Errorf("client is closed")
-	}
-	c.mu.RUnlock()
 
 	// Validate name format
 	if name == "" {
@@ -959,20 +964,9 @@ func (c *EmbeddedClient) applyPagination(filtered []*NameRecord, filter *ListFil
 //	        i+1, record.Height, record.Value)
 //	}
 func (c *EmbeddedClient) GetNameHistory(ctx context.Context, name string) ([]*NameRecord, error) {
-	// Check context
-	select {
-	case <-ctx.Done():
-		return nil, ErrContextCanceled
-	default:
+	if err := c.checkContextAndState(ctx); err != nil {
+		return nil, err
 	}
-
-	// Check if client is closed
-	c.mu.RLock()
-	if c.closed {
-		c.mu.RUnlock()
-		return nil, fmt.Errorf("client is closed")
-	}
-	c.mu.RUnlock()
 
 	// Validate name format
 	if name == "" {

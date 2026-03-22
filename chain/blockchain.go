@@ -1370,24 +1370,21 @@ func parseNameScriptFull(script []byte) (namedb.NameOperation, string, string, [
 		// NAME_FIRSTUPDATE: OP_NAME_FIRSTUPDATE <name> <rand> <value> OP_2DROP OP_2DROP <P2PKH>
 		offset := 1
 
-		// Extract name
-		nameBytes, newOffset, err := readPushData(script, offset)
+		nameBytes, newOffset, err := readPushDataWithError(script, offset, "name")
 		if err != nil {
-			return 0, "", "", nil, fmt.Errorf("failed to read name: %w", err)
+			return 0, "", "", nil, err
 		}
 		offset = newOffset
 
-		// Extract rand (needed to compute commitment hash)
-		rand, newOffset, err := readPushData(script, offset)
+		rand, newOffset, err := readPushDataWithError(script, offset, "rand")
 		if err != nil {
-			return 0, "", "", nil, fmt.Errorf("failed to read rand: %w", err)
+			return 0, "", "", nil, err
 		}
 		offset = newOffset
 
-		// Extract value
-		valueBytes, newOffset, err := readPushData(script, offset)
+		valueBytes, newOffset, err := readPushDataWithError(script, offset, "value")
 		if err != nil {
-			return 0, "", "", nil, fmt.Errorf("failed to read value: %w", err)
+			return 0, "", "", nil, err
 		}
 
 		opType = namedb.NameFirstUpdate
@@ -1400,17 +1397,15 @@ func parseNameScriptFull(script []byte) (namedb.NameOperation, string, string, [
 		// NAME_UPDATE: OP_NAME_UPDATE <name> <value> OP_2DROP OP_DROP <P2PKH>
 		offset := 1
 
-		// Extract name
-		nameBytes, newOffset, err := readPushData(script, offset)
+		nameBytes, newOffset, err := readPushDataWithError(script, offset, "name")
 		if err != nil {
-			return 0, "", "", nil, fmt.Errorf("failed to read name: %w", err)
+			return 0, "", "", nil, err
 		}
 		offset = newOffset
 
-		// Extract value
-		valueBytes, newOffset, err := readPushData(script, offset)
+		valueBytes, newOffset, err := readPushDataWithError(script, offset, "value")
 		if err != nil {
-			return 0, "", "", nil, fmt.Errorf("failed to read value: %w", err)
+			return 0, "", "", nil, err
 		}
 
 		opType = namedb.NameUpdate
@@ -1429,6 +1424,27 @@ func parseNameScriptFull(script []byte) (namedb.NameOperation, string, string, [
 	}
 
 	return opType, name, value, extra, nil
+}
+
+// skipPushDataFields skips the specified number of push data fields in the script.
+func skipPushDataFields(script []byte, offset, count int) (int, error) {
+	for i := 0; i < count; i++ {
+		_, newOffset, err := readPushData(script, offset)
+		if err != nil {
+			return 0, err
+		}
+		offset = newOffset
+	}
+	return offset, nil
+}
+
+// readPushDataWithError reads push data and wraps errors with field name.
+func readPushDataWithError(script []byte, offset int, fieldName string) ([]byte, int, error) {
+	data, newOffset, err := readPushData(script, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to read %s: %w", fieldName, err)
+	}
+	return data, newOffset, nil
 }
 
 // extractAddressFromNameScript extracts the owner address from a name operation script.
@@ -1460,25 +1476,11 @@ func extractAddressFromNameScript(script []byte, chainParams *chaincfg.Params) s
 
 	case opNameFirstUpdate:
 		// NAME_FIRSTUPDATE: OP_NAME_FIRSTUPDATE <name> <rand> <value> OP_2DROP OP_2DROP <P2PKH>
-		offset = 1
-		// Skip name
-		_, newOffset, err := readPushData(script, offset)
+		var err error
+		offset, err = skipPushDataFields(script, 1, 3)
 		if err != nil {
 			return ""
 		}
-		offset = newOffset
-		// Skip rand
-		_, newOffset, err = readPushData(script, offset)
-		if err != nil {
-			return ""
-		}
-		offset = newOffset
-		// Skip value
-		_, newOffset, err = readPushData(script, offset)
-		if err != nil {
-			return ""
-		}
-		offset = newOffset
 		// Skip OP_2DROP OP_2DROP (0x6d 0x6d)
 		for i := 0; i < 2 && offset < len(script) && script[offset] == 0x6d; i++ {
 			offset++
@@ -1486,19 +1488,11 @@ func extractAddressFromNameScript(script []byte, chainParams *chaincfg.Params) s
 
 	case opNameUpdate:
 		// NAME_UPDATE: OP_NAME_UPDATE <name> <value> OP_2DROP OP_DROP <P2PKH>
-		offset = 1
-		// Skip name
-		_, newOffset, err := readPushData(script, offset)
+		var err error
+		offset, err = skipPushDataFields(script, 1, 2)
 		if err != nil {
 			return ""
 		}
-		offset = newOffset
-		// Skip value
-		_, newOffset, err = readPushData(script, offset)
-		if err != nil {
-			return ""
-		}
-		offset = newOffset
 		// Skip OP_2DROP (0x6d)
 		if offset < len(script) && script[offset] == 0x6d {
 			offset++
