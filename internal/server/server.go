@@ -95,7 +95,9 @@ func initPeerManager(cfg *config.Config, bc *chain.BlockChain) (*network.PeerMan
 	}
 	peerMgr, err := network.NewPeerManager(netCfg)
 	if err != nil {
-		bc.Close()
+		if closeErr := bc.Close(); closeErr != nil {
+			return nil, fmt.Errorf("failed to create peer manager: %w (additionally failed to close blockchain: %v)", err, closeErr)
+		}
 		return nil, fmt.Errorf("failed to create peer manager: %w", err)
 	}
 	log.Printf("Network listening on %v", cfg.ListenAddrs)
