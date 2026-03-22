@@ -9,6 +9,66 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 )
 
+// setupTestHistoryRecords creates three test history records for testing
+func setupTestHistoryRecords(t *testing.T) (*chainhash.Hash, *chainhash.Hash, *chainhash.Hash, *NameRecord, *NameRecord, *NameRecord) {
+	t.Helper()
+
+	hash1, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+	hash2, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000002")
+	hash3, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000003")
+
+	record1 := &NameRecord{
+		Name:      "d/example",
+		Value:     `{"ip":"1.2.3.4"}`,
+		TxHash:    *hash1,
+		Height:    100,
+		ExpiresAt: 36100,
+		Address:   "N1111111111",
+		UpdatedAt: time.Now(),
+	}
+
+	record2 := &NameRecord{
+		Name:      "d/example",
+		Value:     `{"ip":"5.6.7.8"}`,
+		TxHash:    *hash2,
+		Height:    200,
+		ExpiresAt: 36200,
+		Address:   "N2222222222",
+		UpdatedAt: time.Now(),
+	}
+
+	record3 := &NameRecord{
+		Name:      "d/example",
+		Value:     `{"ip":"9.10.11.12"}`,
+		TxHash:    *hash3,
+		Height:    300,
+		ExpiresAt: 36300,
+		Address:   "N3333333333",
+		UpdatedAt: time.Now(),
+	}
+
+	return hash1, hash2, hash3, record1, record2, record3
+}
+
+// addTestHistoryRecords adds three test history records to the database
+func addTestHistoryRecords(t *testing.T, db *NameDatabase) (*chainhash.Hash, *chainhash.Hash, *chainhash.Hash) {
+	t.Helper()
+
+	hash1, hash2, hash3, record1, record2, record3 := setupTestHistoryRecords(t)
+
+	if err := db.AddHistory(*hash1, record1); err != nil {
+		t.Fatalf("Failed to add history 1: %v", err)
+	}
+	if err := db.AddHistory(*hash2, record2); err != nil {
+		t.Fatalf("Failed to add history 2: %v", err)
+	}
+	if err := db.AddHistory(*hash3, record3); err != nil {
+		t.Fatalf("Failed to add history 3: %v", err)
+	}
+
+	return hash1, hash2, hash3
+}
+
 func TestNameDatabase(t *testing.T) {
 	// Create temporary database
 	dbPath := filepath.Join(os.TempDir(), "test-namedb.db")
@@ -183,51 +243,7 @@ func TestGetHistory(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Create multiple history entries for the same name
-	hash1, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
-	hash2, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000002")
-	hash3, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000003")
-
-	record1 := &NameRecord{
-		Name:      "d/example",
-		Value:     `{"ip":"1.2.3.4"}`,
-		TxHash:    *hash1,
-		Height:    100,
-		ExpiresAt: 36100,
-		Address:   "N1111111111",
-		UpdatedAt: time.Now(),
-	}
-
-	record2 := &NameRecord{
-		Name:      "d/example",
-		Value:     `{"ip":"5.6.7.8"}`,
-		TxHash:    *hash2,
-		Height:    200,
-		ExpiresAt: 36200,
-		Address:   "N2222222222",
-		UpdatedAt: time.Now(),
-	}
-
-	record3 := &NameRecord{
-		Name:      "d/example",
-		Value:     `{"ip":"9.10.11.12"}`,
-		TxHash:    *hash3,
-		Height:    300,
-		ExpiresAt: 36300,
-		Address:   "N3333333333",
-		UpdatedAt: time.Now(),
-	}
-
-	// Add history entries
-	if err := db.AddHistory(*hash1, record1); err != nil {
-		t.Fatalf("Failed to add history 1: %v", err)
-	}
-	if err := db.AddHistory(*hash2, record2); err != nil {
-		t.Fatalf("Failed to add history 2: %v", err)
-	}
-	if err := db.AddHistory(*hash3, record3); err != nil {
-		t.Fatalf("Failed to add history 3: %v", err)
-	}
+	addTestHistoryRecords(t, db)
 
 	// Retrieve history
 	history, err := db.GetHistory("d/example")
@@ -714,51 +730,7 @@ func TestRemoveLastHistoryEntry(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Create multiple history entries for the same name
-	hash1, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
-	hash2, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000002")
-	hash3, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000003")
-
-	record1 := &NameRecord{
-		Name:      "d/example",
-		Value:     `{"ip":"1.2.3.4"}`,
-		TxHash:    *hash1,
-		Height:    100,
-		ExpiresAt: 36100,
-		Address:   "N1111111111",
-		UpdatedAt: time.Now(),
-	}
-
-	record2 := &NameRecord{
-		Name:      "d/example",
-		Value:     `{"ip":"5.6.7.8"}`,
-		TxHash:    *hash2,
-		Height:    200,
-		ExpiresAt: 36200,
-		Address:   "N2222222222",
-		UpdatedAt: time.Now(),
-	}
-
-	record3 := &NameRecord{
-		Name:      "d/example",
-		Value:     `{"ip":"9.10.11.12"}`,
-		TxHash:    *hash3,
-		Height:    300,
-		ExpiresAt: 36300,
-		Address:   "N3333333333",
-		UpdatedAt: time.Now(),
-	}
-
-	// Add history entries
-	if err := db.AddHistory(*hash1, record1); err != nil {
-		t.Fatalf("Failed to add history 1: %v", err)
-	}
-	if err := db.AddHistory(*hash2, record2); err != nil {
-		t.Fatalf("Failed to add history 2: %v", err)
-	}
-	if err := db.AddHistory(*hash3, record3); err != nil {
-		t.Fatalf("Failed to add history 3: %v", err)
-	}
+	addTestHistoryRecords(t, db)
 
 	// Remove the last entry and verify we get record2 back
 	prevRecord, err := db.RemoveLastHistoryEntry("d/example")

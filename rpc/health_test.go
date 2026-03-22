@@ -63,6 +63,21 @@ func createTestPeerManager(t *testing.T, bc *chain.BlockChain) *network.PeerMana
 	return pm
 }
 
+// setupTestServer creates a fully configured test RPC server with blockchain and peer manager
+func setupTestServer(t *testing.T) *Server {
+	t.Helper()
+
+	bc := createTestBlockchain(t)
+	pm := createTestPeerManager(t, bc)
+
+	return &Server{
+		blockchain:     bc,
+		peerMgr:        pm,
+		rateLimiter:    newRateLimiter(defaultRateLimit),
+		maxRequestSize: defaultMaxRequestSize,
+	}
+}
+
 func TestHandleHealth_Initializing(t *testing.T) {
 	// Create a server without blockchain (initializing state)
 	s := &Server{
@@ -95,16 +110,7 @@ func TestHandleHealth_Initializing(t *testing.T) {
 }
 
 func TestHandleHealth_Healthy(t *testing.T) {
-	// Create a server with initialized blockchain
-	bc := createTestBlockchain(t)
-	pm := createTestPeerManager(t, bc)
-
-	s := &Server{
-		blockchain:     bc,
-		peerMgr:        pm,
-		rateLimiter:    newRateLimiter(defaultRateLimit),
-		maxRequestSize: defaultMaxRequestSize,
-	}
+	s := setupTestServer(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
