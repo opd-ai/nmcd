@@ -380,34 +380,58 @@ func ContinuousOperationTest(config ContinuousOperationConfig) (*TestResult, err
 	ctx := context.Background()
 
 	start := time.Now()
-	var requestCount, successCount, failureCount int64
-	var errorMutex sync.Mutex
+	counters := &loadTestCounters{}
 
-	// Health check goroutine
 	stopChan := make(chan struct{})
-	healthErrors := make([]string, 0)
-	var healthMutex sync.Mutex
+	healthErrors := runHealthChecker(client, ctx, config.CheckInterval, stopChan)
 
+	runContinuousLoop(client, ctx, config, result, counters)
+
+	close(stopChan)
+
+	healthErrors.mu.Lock()
+	result.ErrorDetails = append(result.ErrorDetails, healthErrors.errors...)
+	healthErrors.mu.Unlock()
+
+	result.Duration = time.Since(start)
+	result.RequestCount = atomic.LoadInt64(&counters.requestCount)
+	result.SuccessCount = atomic.LoadInt64(&counters.successCount)
+	result.FailureCount = atomic.LoadInt64(&counters.failureCount)
+	result.ThroughputRPS = float64(result.RequestCount) / time.Since(start).Seconds()
+
+	return result, nil
+}
+
+// healthCheckResult holds health check errors collected by the health checker goroutine.
+type healthCheckResult struct {
+	errors []string
+	mu     sync.Mutex
+}
+
+// runHealthChecker starts a background health check goroutine and returns its results.
+func runHealthChecker(client *RPCClient, ctx context.Context, interval time.Duration, stopChan <-chan struct{}) *healthCheckResult {
+	result := &healthCheckResult{}
 	go func() {
-		ticker := time.NewTicker(config.CheckInterval)
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-
 		for {
 			select {
 			case <-stopChan:
 				return
 			case <-ticker.C:
-				_, err := client.Call(ctx, "getinfo", nil)
-				if err != nil {
-					healthMutex.Lock()
-					healthErrors = append(healthErrors, fmt.Sprintf("[%s] health check failed: %v", time.Now().Format(time.RFC3339), err))
-					healthMutex.Unlock()
+				if _, err := client.Call(ctx, "getinfo", nil); err != nil {
+					result.mu.Lock()
+					result.errors = append(result.errors, fmt.Sprintf("[%s] health check failed: %v", time.Now().Format(time.RFC3339), err))
+					result.mu.Unlock()
 				}
 			}
 		}
 	}()
+	return result
+}
 
-	// Main test loop
+// runContinuousLoop executes the main continuous operation loop.
+func runContinuousLoop(client *RPCClient, ctx context.Context, config ContinuousOperationConfig, result *TestResult, counters *loadTestCounters) {
 	endTime := time.Now().Add(config.Duration)
 	operations := []string{"getinfo", "getblockcount", "getbestblockhash", "name_list"}
 	opIdx := 0
@@ -417,41 +441,25 @@ func ContinuousOperationTest(config ContinuousOperationConfig) (*TestResult, err
 		opIdx++
 
 		_, err := client.Call(ctx, operation, nil)
-		atomic.AddInt64(&requestCount, 1)
+		atomic.AddInt64(&counters.requestCount, 1)
 
 		if err != nil {
-			atomic.AddInt64(&failureCount, 1)
-			errorMutex.Lock()
+			atomic.AddInt64(&counters.failureCount, 1)
+			counters.errorMu.Lock()
 			if len(result.ErrorDetails) < 100 {
 				result.ErrorDetails = append(result.ErrorDetails, err.Error())
 			}
-			errorMutex.Unlock()
+			counters.errorMu.Unlock()
 		} else {
-			atomic.AddInt64(&successCount, 1)
+			atomic.AddInt64(&counters.successCount, 1)
 		}
 
-		// Small delay between requests
 		time.Sleep(10 * time.Millisecond)
 
-		// Check if we've reached name count limit
-		if config.NameCount > 0 && int(atomic.LoadInt64(&successCount)) >= config.NameCount {
+		if config.NameCount > 0 && int(atomic.LoadInt64(&counters.successCount)) >= config.NameCount {
 			break
 		}
 	}
-
-	close(stopChan)
-
-	healthMutex.Lock()
-	result.ErrorDetails = append(result.ErrorDetails, healthErrors...)
-	healthMutex.Unlock()
-
-	result.Duration = time.Since(start)
-	result.RequestCount = atomic.LoadInt64(&requestCount)
-	result.SuccessCount = atomic.LoadInt64(&successCount)
-	result.FailureCount = atomic.LoadInt64(&failureCount)
-	result.ThroughputRPS = float64(result.RequestCount) / time.Since(start).Seconds()
-
-	return result, nil
 }
 
 // PrintResult outputs test results in a readable format

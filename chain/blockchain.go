@@ -492,79 +492,70 @@ func (bc *BlockChain) validateBlockVersion(block *btcutil.Block) error {
 //   - nil if validation succeeds or block doesn't require AuxPow
 //   - error if AuxPow is missing or validation fails
 func (bc *BlockChain) validateAuxPow(block *btcutil.Block) error {
-	// Determine block height
-	var height int32 = -1
-	prevHash := block.MsgBlock().Header.PrevBlock
-
-	if bc.BlockChain != nil && !prevHash.IsEqual(&chainhash.Hash{}) {
-		parentHeight, err := bc.BlockChain.BlockHeightByHash(&prevHash)
-		if err == nil {
-			height = parentHeight + 1
-		}
-	}
-
+	height := bc.resolveBlockHeight(block)
 	if height < 0 {
-		height = block.Height()
-		if height < 0 {
-			// Cannot determine height - skip AuxPow validation
-			return nil
-		}
-	}
-
-	// Check if this block should have AuxPow
-	auxPowActivationHeight := config.GetAuxPowActivationHeight(bc.chainParams)
-	if height < auxPowActivationHeight {
-		// Pre-AuxPow block - no validation needed
 		return nil
 	}
 
-	// Block requires AuxPow validation
-	version := block.MsgBlock().Header.Version
-	hasAuxPowBit := (version & config.AuxPowVersionBit) != 0
-
-	if !hasAuxPowBit {
-		// Block version validation should have caught this, but double-check
-		return fmt.Errorf("block at height %d requires AuxPow version bit but it's not set", height)
+	if height < config.GetAuxPowActivationHeight(bc.chainParams) {
+		return nil
 	}
 
-	// Retrieve cached AuxPow data
+	if err := bc.verifyAuxPowVersionBit(block, height); err != nil {
+		return err
+	}
+
 	blockHash := block.Hash()
 	auxPow := bc.getBlockAuxPow(blockHash)
-
-	// Ensure we clean up the cache entry when done (success or failure)
 	defer bc.clearBlockAuxPow(blockHash)
 
 	if auxPow == nil {
 		return fmt.Errorf("block at height %d requires AuxPow but no AuxPow data was provided", height)
 	}
 
-	// Get the target difficulty for the parent block
-	// For merged mining, the parent block (Bitcoin) must meet a difficulty target.
-	// We use the current block's difficulty target from its Bits field.
-	targetDifficulty := blockchain.CompactToBig(block.MsgBlock().Header.Bits)
+	if err := bc.verifyChainID(block, height); err != nil {
+		return err
+	}
 
-	// Validate chain ID from block version
-	// Chain ID is in bits 16+ of the Namecoin block version
-	blockChainID := ExtractChainIDFromVersion(version)
+	return bc.verifyAuxPowProof(block, auxPow, blockHash, height)
+}
+
+// resolveBlockHeight resolves the height of a block from its parent or metadata for AuxPow validation.
+func (bc *BlockChain) resolveBlockHeight(block *btcutil.Block) int32 {
+	prevHash := block.MsgBlock().Header.PrevBlock
+	if bc.BlockChain != nil && !prevHash.IsEqual(&chainhash.Hash{}) {
+		if parentHeight, err := bc.BlockChain.BlockHeightByHash(&prevHash); err == nil {
+			return parentHeight + 1
+		}
+	}
+	return block.Height()
+}
+
+// verifyAuxPowVersionBit checks that the AuxPow version bit is set on the block.
+func (bc *BlockChain) verifyAuxPowVersionBit(block *btcutil.Block, height int32) error {
+	version := block.MsgBlock().Header.Version
+	if (version & config.AuxPowVersionBit) == 0 {
+		return fmt.Errorf("block at height %d requires AuxPow version bit but it's not set", height)
+	}
+	return nil
+}
+
+// verifyChainID checks that the block's chain ID matches Namecoin's chain ID.
+func (bc *BlockChain) verifyChainID(block *btcutil.Block, height int32) error {
+	blockChainID := ExtractChainIDFromVersion(block.MsgBlock().Header.Version)
 	if blockChainID != NamecoinChainID {
 		return fmt.Errorf("block at height %d has invalid chain ID %d (expected %d)",
 			height, blockChainID, NamecoinChainID)
 	}
+	return nil
+}
 
-	// Validate the AuxPow proof
-	// This checks:
-	// 1. Parent block hash meets difficulty target
-	// 2. Coinbase merkle branch proves coinbase is in parent block
-	// 3. Chain merkle branch proves aux block hash is committed in coinbase
-	//
-	// Note: Chain ID is validated above from the block version (not in ValidateAuxPow).
-	// Note: We need to convert targetDifficulty (big.Int) to a Hash for ValidateAuxPow.
-	// blockchain.HashToBig treats hash bytes as little-endian, so we must reverse
-	// the big-endian bytes from big.Int.
+// verifyAuxPowProof validates the AuxPow proof-of-work against the target difficulty.
+func (bc *BlockChain) verifyAuxPowProof(block *btcutil.Block, auxPow *AuxPow, blockHash *chainhash.Hash, height int32) error {
+	targetDifficulty := blockchain.CompactToBig(block.MsgBlock().Header.Bits)
+
 	var targetHash chainhash.Hash
 	targetBytes := targetDifficulty.Bytes()
-
-	// Reverse bytes: big.Int is big-endian, Hash (for HashToBig) is little-endian
 	for i := 0; i < len(targetBytes); i++ {
 		targetHash[len(targetBytes)-1-i] = targetBytes[i]
 	}
@@ -574,7 +565,6 @@ func (bc *BlockChain) validateAuxPow(block *btcutil.Block) error {
 			blockHash.String(), height, err)
 	}
 
-	// All AuxPow validations passed
 	log.Printf("Successfully validated AuxPow for block %s at height %d", blockHash.String(), height)
 	return nil
 }

@@ -555,52 +555,48 @@ func (ndb *NameDatabase) RemoveLastHistoryEntry(name string) (*NameRecord, error
 		histBucket := tx.Bucket(historyBucket)
 
 		indexData := indexBucket.Get([]byte(name))
-		if indexData == nil || len(indexData) == 0 {
-			return nil // No history to remove
+		if len(indexData) == 0 {
+			return nil
 		}
 
 		if len(indexData)%txHashSize != 0 {
 			return fmt.Errorf("corrupt history index for name: %s", name)
 		}
 
-		numEntries := len(indexData) / txHashSize
-		if numEntries == 0 {
-			return nil
-		}
-
-		// Get the last txHash to remove from history bucket
-		lastTxHash := indexData[len(indexData)-txHashSize:]
-		if err := histBucket.Delete(lastTxHash); err != nil {
+		if err := histBucket.Delete(indexData[len(indexData)-txHashSize:]); err != nil {
 			return err
 		}
 
-		// Remove the last txHash from the index
-		newIndexData := indexData[:len(indexData)-txHashSize]
-		if len(newIndexData) == 0 {
-			// No more entries, delete the index
-			if err := indexBucket.Delete([]byte(name)); err != nil {
-				return err
-			}
-		} else {
-			if err := indexBucket.Put([]byte(name), newIndexData); err != nil {
-				return err
-			}
-
-			// Get the previous record (now the last one)
-			prevTxHash := newIndexData[len(newIndexData)-txHashSize:]
-			data := histBucket.Get(prevTxHash)
-			if data != nil {
-				var decodeErr error
-				prevRecord, decodeErr = decodeNameRecord(data)
-				if decodeErr != nil {
-					return fmt.Errorf("failed to decode previous record: %w", decodeErr)
-				}
-				prevRecord.Name = name
-			}
-		}
-		return nil
+		var err error
+		prevRecord, err = truncateHistoryIndex(indexBucket, histBucket, name, indexData)
+		return err
 	})
 	return prevRecord, err
+}
+
+// truncateHistoryIndex removes the last entry from the history index and returns the new last record.
+func truncateHistoryIndex(indexBucket, histBucket *bbolt.Bucket, name string, indexData []byte) (*NameRecord, error) {
+	newIndexData := indexData[:len(indexData)-txHashSize]
+	if len(newIndexData) == 0 {
+		return nil, indexBucket.Delete([]byte(name))
+	}
+
+	if err := indexBucket.Put([]byte(name), newIndexData); err != nil {
+		return nil, err
+	}
+
+	prevTxHash := newIndexData[len(newIndexData)-txHashSize:]
+	data := histBucket.Get(prevTxHash)
+	if data == nil {
+		return nil, nil
+	}
+
+	record, err := decodeNameRecord(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode previous record: %w", err)
+	}
+	record.Name = name
+	return record, nil
 }
 
 // encodeNameRecord serializes a name record.
