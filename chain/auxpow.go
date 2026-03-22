@@ -268,7 +268,7 @@ func (mb *MerkleBranch) SerializeMerkleBranch(w io.Writer) error {
 // Returns:
 //   - nil if validation succeeds
 //   - error describing validation failure
-func (ap *AuxPow) ValidateAuxPow(blockHash *chainhash.Hash, targetDifficulty *chainhash.Hash) error {
+func (ap *AuxPow) ValidateAuxPow(blockHash, targetDifficulty *chainhash.Hash) error {
 	// Step 1: Verify parent block meets proof-of-work difficulty target
 	// The parent block's hash must be less than or equal to the target difficulty
 	// Convert both hash and target to big.Int for comparison
