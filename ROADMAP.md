@@ -84,7 +84,7 @@ nmcd is a **library-first** pure Go Namecoin implementation that promises:
 | 13 | Prometheus Metrics | ✅ Achieved | 43 metrics, metrics package 83.9% coverage | - |
 | 14 | ~18,000 LOC | ✅ Achieved | go-stats-generator reports 9,729 LOC (well under claim) | - |
 | 15 | Test Coverage ≥70% | ⚠️ Partial | chain 77.4%, client 83.1%, namedb 86.5%; but rpc 60.1%, network 60.6% | 2 critical packages below 70% threshold |
-| 16 | Protocol Compliance | ✅ Achieved | 100% per PROTOCOL_COMPLIANCE_AUDIT.md; 6/6 mainnet vectors pass | Value size policy aligned with upstream (MaxValueLengthUI=520 in UI, MaxValueLength=1023 consensus) |
+| 16 | Protocol Compliance | ⚠️ Partial | Constants & name ops 100%; 6/6 mainnet vectors pass | Value size aligned with upstream; see `chain/doc.go` Known Limitations for remaining gaps (AuxPoW parent PoW, subsidy edge cases) |
 | 17 | Performance Targets | ✅ Achieved | Name lookup 1.15µs (<1ms target), RPC parsing 1.32µs, 17,697 req/s | Write operations 337ms (disk-bound, acknowledged) |
 
 **Overall: 14/17 goals fully achieved (82%)**  

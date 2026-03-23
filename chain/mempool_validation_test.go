@@ -278,10 +278,11 @@ func TestValidateMempoolTransactionMultipleInputs(t *testing.T) {
 	}
 }
 
-// TestValidateMempoolTransactionAcceptsValueExceedingUILimit tests that values between 520-1023 bytes
+// TestValidateMempoolTransactionDoesNotRejectValueExceedingUILimitForSize tests that values between 520-1023 bytes
 // are not rejected by the mempool for size, matching upstream Namecoin Core behavior.
-// The UI limit (520 bytes) is only enforced in RPC/wallet/client APIs, not at the mempool level.
-func TestValidateMempoolTransactionAcceptsValueExceedingUILimit(t *testing.T) {
+// The UI limit (520 bytes) is only enforced in RPC/wallet/client APIs, not at the mempool level, so the
+// transaction may still be rejected for other reasons (e.g., invalid name), but not due to value size.
+func TestValidateMempoolTransactionDoesNotRejectValueExceedingUILimitForSize(t *testing.T) {
 	bc, _, cleanup := setupTestBlockChain(t)
 	defer cleanup()
 

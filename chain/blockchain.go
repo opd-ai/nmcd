@@ -1907,8 +1907,9 @@ func (bc *BlockChain) validateNameOperationsInTx(tx *wire.MsgTx, currentHeight i
 }
 
 // validateNameOperation validates a specific name operation type.
-// The consensus limit (1023 bytes) is enforced by validateNameFormat() for block validation.
-// The UI limit (520 bytes) is enforced by RPC/wallet/client APIs, not at the mempool level,
+// The consensus value-size limit (1023 bytes) is enforced by validateNameFormat()
+// during consensus validation (applies to both blocks and mempool).
+// The UI limit (520 bytes) is enforced by RPC/wallet/client APIs, not by mempool policy,
 // matching upstream Namecoin Core's behavior.
 func (bc *BlockChain) validateNameOperation(op namedb.NameOperation, name, value string, extra []byte, tx *wire.MsgTx, currentHeight int32) error {
 	switch op {
