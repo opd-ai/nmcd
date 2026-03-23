@@ -400,12 +400,12 @@ func (c *DaemonClient) ResolveName(ctx context.Context, name string) (*NameRecor
 // - Call name_new and name_firstupdate RPC methods directly via raw RPC client
 // - Use Namecoin Core's RPC interface which supports these methods
 func (c *DaemonClient) RegisterName(ctx context.Context, name, value string, opts *RegisterOpts) (*TxResult, error) {
-	// Validate inputs - use relay policy limit (520 bytes)
+	// Validate inputs - use UI limit (520 bytes) matching Namecoin Core
 	if len(name) == 0 || len(name) > 255 {
 		return nil, fmt.Errorf("%w: length %d (must be 1-255)", ErrInvalidName, len(name))
 	}
-	if len(value) > config.NameValueRelayLimit {
-		return nil, fmt.Errorf("%w: length %d (max %d for relay policy)", ErrInvalidValue, len(value), config.NameValueRelayLimit)
+	if len(value) > config.MaxValueLengthUI {
+		return nil, fmt.Errorf("%w: length %d (max %d)", ErrInvalidValue, len(value), config.MaxValueLengthUI)
 	}
 
 	// The daemon has name_new and name_firstupdate RPC methods, but automatic
@@ -418,8 +418,8 @@ func (c *DaemonClient) UpdateName(ctx context.Context, name, value string, opts 
 	if len(name) == 0 || len(name) > 255 {
 		return nil, fmt.Errorf("%w: length %d (must be 1-255)", ErrInvalidName, len(name))
 	}
-	if len(value) > config.NameValueRelayLimit {
-		return nil, fmt.Errorf("%w: length %d (max %d for relay policy)", ErrInvalidValue, len(value), config.NameValueRelayLimit)
+	if len(value) > config.MaxValueLengthUI {
+		return nil, fmt.Errorf("%w: length %d (max %d)", ErrInvalidValue, len(value), config.MaxValueLengthUI)
 	}
 
 	params := []string{name, value}

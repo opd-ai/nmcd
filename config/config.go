@@ -71,12 +71,13 @@ const (
 	// See: https://github.com/namecoin/namecoin-core/blob/master/src/version.h
 	NamecoinProtocolVersion = 70015
 
-	// NameValueRelayLimit is the maximum value size for mempool acceptance (relay policy).
-	// Default matches Namecoin Core's relay policy of 520 bytes.
+	// MaxValueLengthUI is the maximum value size for user-facing operations (UI limit).
+	// Matches Namecoin Core's MAX_VALUE_LENGTH_UI constant (520 bytes).
+	// This limit is enforced in wallet, RPC, and client APIs to prevent users from
+	// creating transactions with values that exceed the recommended size.
 	// Note: The consensus limit (MaxValueLength) is 1023 bytes, which is more permissive.
-	// Transactions with values between 520-1023 bytes are valid on-chain but may not
-	// be relayed by default by Namecoin Core nodes.
-	NameValueRelayLimit = 520
+	// Values between 520-1023 bytes are valid on-chain but discouraged by the UI.
+	MaxValueLengthUI = 520
 )
 
 // UTXOTrackingStartHeight is the block height from which UTXO tracking is guaranteed.
