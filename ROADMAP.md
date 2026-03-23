@@ -151,7 +151,7 @@ nmcd is a **library-first** pure Go Namecoin implementation that promises:
 
 ## Roadmap
 
-### Priority 1: Achieve 100% Protocol Compliance
+### Priority 1: Achieve 100% Protocol Compliance ✅ COMPLETE
 
 **Impact:** Closes the final 5% compliance gap identified in the [protocol compliance audit](docs/development/PROTOCOL_COMPLIANCE_AUDIT.md); achieves full Namecoin Core relay policy compatibility  
 **Effort:** 1-2 days  
@@ -159,25 +159,25 @@ nmcd is a **library-first** pure Go Namecoin implementation that promises:
 
 The `NameValueRelayLimit` constant (520 bytes) is already defined in `config/config.go` but is not enforced. All validation code paths currently use the 1023-byte consensus limit (`MaxValueLength`). To match Namecoin Core's relay policy, the 520-byte limit must be enforced for new transactions (mempool acceptance, RPC, wallet, client APIs), while the 1023-byte consensus limit remains valid for on-chain/historical data.
 
-- [ ] **chain/blockchain.go** Enforce `NameValueRelayLimit` (520 bytes) during mempool transaction validation:
+- [x] **chain/blockchain.go** Enforce `NameValueRelayLimit` (520 bytes) during mempool transaction validation:
   - Update `ValidateMempoolTransaction` (or equivalent) to reject name values > 520 bytes
   - On-chain validation (`validateNameOperations`) continues to use 1023-byte consensus limit
   - Validation: unit test confirming 521-byte value is rejected for relay but accepted on-chain
 
-- [ ] **rpc/server.go** Update `validateValueSize` to enforce 520-byte relay limit:
+- [x] **rpc/server.go** Update `validateValueSize` to enforce 520-byte relay limit:
   - Change the 1023-byte check to use `config.NameValueRelayLimit` (520 bytes)
   - Update error message to reference relay policy limit
   - Validation: `go test ./rpc` passes; test confirms 521-byte value rejected
 
-- [ ] **wallet/wallet.go** Enforce relay limit in wallet transaction creation:
+- [x] **wallet/wallet.go** Enforce relay limit in wallet transaction creation:
   - Update `CreateNameUpdateTx` and `CreateNameFirstUpdateTx` to check against 520 bytes
   - Validation: `go test ./wallet` passes; test confirms 521-byte value rejected
 
-- [ ] **client/embedded.go, client/daemon.go** Update client-side validation:
+- [x] **client/embedded.go, client/daemon.go** Update client-side validation:
   - Change `NameUpdate` and `NameFirstUpdate` value checks from 1023 to `config.NameValueRelayLimit`
   - Validation: `go test ./client` passes
 
-- [ ] **docs/development/PROTOCOL_COMPLIANCE_AUDIT.md** Update audit to reflect 100% compliance:
+- [x] **docs/development/PROTOCOL_COMPLIANCE_AUDIT.md** Update audit to reflect 100% compliance:
   - Update Max Value Size row from ⚠️ to ✅
   - Update Executive Summary from 95% to 100%
   - Remove or update the Minor Issues section

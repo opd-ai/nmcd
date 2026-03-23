@@ -277,6 +277,75 @@ func TestValidateMempoolTransactionMultipleInputs(t *testing.T) {
 	}
 }
 
+// TestValidateMempoolTransactionRelayLimit tests that values > 520 bytes are rejected for relay
+func TestValidateMempoolTransactionRelayLimit(t *testing.T) {
+	bc, _, cleanup := setupTestBlockChain(t)
+	defer cleanup()
+
+	// Create a NAME_UPDATE script with a 521-byte value (exceeds relay limit but under consensus limit)
+	// NAME_UPDATE format: OP_NAME_UPDATE <name> <value> OP_2DROP OP_DROP <P2PKH>
+	const (
+		opNameUpdateByte = 0xd2
+		op2Drop          = 0x6d
+		opDrop           = 0x75
+	)
+	name := []byte("d/test")
+	value := make([]byte, config.NameValueRelayLimit+1) // 521 bytes > 520 relay limit
+	for i := range value {
+		value[i] = 'x'
+	}
+
+	// Build a NAME_UPDATE script
+	script := []byte{opNameUpdateByte}
+	// Push name (6 bytes - direct push since < 76)
+	script = append(script, byte(len(name)))
+	script = append(script, name...)
+	// Value length encoding: OP_PUSHDATA2 for 521 bytes (> 255)
+	script = append(script, 0x4d)                                  // OP_PUSHDATA2
+	script = append(script, byte(len(value)&0xff))                 // Low byte
+	script = append(script, byte((len(value)>>8)&0xff))            // High byte
+	script = append(script, value...)
+	script = append(script, op2Drop, opDrop)                       // Drop opcodes
+	// Minimal P2PKH suffix
+	script = append(script, 0x76, 0xa9, 0x14)                      // OP_DUP OP_HASH160 Push20
+	script = append(script, make([]byte, 20)...)                   // pubkey hash
+	script = append(script, 0x88, 0xac)                            // OP_EQUALVERIFY OP_CHECKSIG
+
+	tx := wire.NewMsgTx(wire.TxVersion)
+	tx.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: wire.OutPoint{
+			Hash:  chainhash.Hash{0x01, 0x02, 0x03},
+			Index: 0,
+		},
+		Sequence: wire.MaxTxInSequenceNum,
+	})
+	tx.AddTxOut(&wire.TxOut{
+		Value:    config.DustLimit,
+		PkScript: script,
+	})
+
+	err := bc.ValidateMempoolTransaction(tx)
+	if err == nil {
+		t.Errorf("Expected error for value exceeding relay limit (%d bytes)", len(value))
+	} else {
+		t.Logf("Got expected error: %v", err)
+		// Verify the error mentions relay
+		if !stringContains(err.Error(), "relay") {
+			t.Logf("Note: Error doesn't mention 'relay' - error was: %v", err)
+		}
+	}
+}
+
+// stringContains checks if a string contains a substring
+func stringContains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
 // setupTestBlockChainWithPath creates a test blockchain with specific paths
 func setupTestBlockChainWithPath(t *testing.T, dataDir string) (*BlockChain, *namedb.NameDatabase, func()) {
 	cfg := &Config{

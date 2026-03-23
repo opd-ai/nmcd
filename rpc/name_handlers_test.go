@@ -619,3 +619,313 @@ func TestNameUpdateEmptyName(t *testing.T) {
 		t.Errorf("Expected error code -5, got %d", resp.Error.Code)
 	}
 }
+
+// TestNameNewNameTooLong tests nameNew with name exceeding max length
+func TestNameNewNameTooLong(t *testing.T) {
+	server, _, w := setupNameHandlerTestServer(t)
+	server.wallet = w
+
+	// Create a name longer than 255 characters
+	longName := "d/" + string(make([]byte, 260))
+	paramsJSON, _ := json.Marshal([]string{longName})
+	req := &Request{
+		Jsonrpc: "2.0",
+		Method:  "name_new",
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := server.nameNew(req)
+
+	if resp.Error == nil {
+		t.Fatal("Expected error for name too long")
+	}
+	if resp.Error.Code != -5 {
+		t.Errorf("Expected error code -5, got %d", resp.Error.Code)
+	}
+}
+
+// TestNameNewEmptyName tests nameNew with empty name
+func TestNameNewEmptyName(t *testing.T) {
+	server, _, w := setupNameHandlerTestServer(t)
+	server.wallet = w
+
+	paramsJSON, _ := json.Marshal([]string{""})
+	req := &Request{
+		Jsonrpc: "2.0",
+		Method:  "name_new",
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := server.nameNew(req)
+
+	if resp.Error == nil {
+		t.Fatal("Expected error for empty name")
+	}
+	if resp.Error.Code != -5 {
+		t.Errorf("Expected error code -5, got %d", resp.Error.Code)
+	}
+}
+
+// TestNameNewMissingParams tests nameNew with missing parameters
+func TestNameNewMissingParams(t *testing.T) {
+	server, _, w := setupNameHandlerTestServer(t)
+	server.wallet = w
+
+	paramsJSON, _ := json.Marshal([]string{})
+	req := &Request{
+		Jsonrpc: "2.0",
+		Method:  "name_new",
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := server.nameNew(req)
+
+	if resp.Error == nil {
+		t.Fatal("Expected error for missing parameters")
+	}
+	if resp.Error.Code != -32602 {
+		t.Errorf("Expected error code -32602, got %d", resp.Error.Code)
+	}
+}
+
+// TestNameNewNameAlreadyExists tests nameNew when name already exists
+func TestNameNewNameAlreadyExists(t *testing.T) {
+	server, bc, w := setupNameHandlerTestServer(t)
+	server.wallet = w
+
+	// Insert a test name directly into the name database
+	testName := "d/existingname"
+	testValue := `{"ip":"192.168.1.1"}`
+	txHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+
+	record := &namedb.NameRecord{
+		Name:      testName,
+		Value:     testValue,
+		TxHash:    *txHash,
+		OutIndex:  0,
+		Height:    1,
+		ExpiresAt: 100000, // Far in the future, so not expired
+	}
+	err := bc.GetNameDB().PutName(testName, record)
+	if err != nil {
+		t.Fatalf("Failed to insert test name: %v", err)
+	}
+
+	paramsJSON, _ := json.Marshal([]string{testName})
+	req := &Request{
+		Jsonrpc: "2.0",
+		Method:  "name_new",
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := server.nameNew(req)
+
+	if resp.Error == nil {
+		t.Fatal("Expected error for existing name")
+	}
+	if resp.Error.Code != -25 {
+		t.Errorf("Expected error code -25, got %d", resp.Error.Code)
+	}
+}
+
+// TestNameFirstUpdateInvalidRand tests nameFirstUpdate with invalid rand hex
+func TestNameFirstUpdateInvalidRand(t *testing.T) {
+	server, _, w := setupNameHandlerTestServer(t)
+	server.wallet = w
+
+	paramsJSON, _ := json.Marshal([]string{"d/test", "invalid-hex-string", `{"test":"value"}`})
+	req := &Request{
+		Jsonrpc: "2.0",
+		Method:  "name_firstupdate",
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := server.nameFirstUpdate(req)
+
+	if resp.Error == nil {
+		t.Fatal("Expected error for invalid rand hex")
+	}
+	if resp.Error.Code != -5 {
+		t.Errorf("Expected error code -5, got %d", resp.Error.Code)
+	}
+}
+
+// TestNameFirstUpdateMissingParams tests nameFirstUpdate with missing parameters
+func TestNameFirstUpdateMissingParams(t *testing.T) {
+	server, _, w := setupNameHandlerTestServer(t)
+	server.wallet = w
+
+	paramsJSON, _ := json.Marshal([]string{"d/test"})
+	req := &Request{
+		Jsonrpc: "2.0",
+		Method:  "name_firstupdate",
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := server.nameFirstUpdate(req)
+
+	if resp.Error == nil {
+		t.Fatal("Expected error for missing parameters")
+	}
+	if resp.Error.Code != -32602 {
+		t.Errorf("Expected error code -32602, got %d", resp.Error.Code)
+	}
+}
+
+// TestNameFirstUpdateNameTooLong tests nameFirstUpdate with name exceeding max length
+func TestNameFirstUpdateNameTooLong(t *testing.T) {
+	server, _, w := setupNameHandlerTestServer(t)
+	server.wallet = w
+
+	longName := "d/" + string(make([]byte, 260))
+	paramsJSON, _ := json.Marshal([]string{longName, "0102030405060708090a0b0c0d0e0f1011121314", `{"test":"value"}`})
+	req := &Request{
+		Jsonrpc: "2.0",
+		Method:  "name_firstupdate",
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := server.nameFirstUpdate(req)
+
+	if resp.Error == nil {
+		t.Fatal("Expected error for name too long")
+	}
+	if resp.Error.Code != -5 {
+		t.Errorf("Expected error code -5, got %d", resp.Error.Code)
+	}
+}
+
+// TestNameFirstUpdateValueTooLarge tests nameFirstUpdate with value exceeding relay limit
+func TestNameFirstUpdateValueTooLarge(t *testing.T) {
+	server, _, w := setupNameHandlerTestServer(t)
+	server.wallet = w
+
+	// Create a value larger than relay limit (520 bytes)
+	largeValue := string(make([]byte, config.NameValueRelayLimit+1))
+	paramsJSON, _ := json.Marshal([]string{"d/test", "0102030405060708090a0b0c0d0e0f1011121314", largeValue})
+	req := &Request{
+		Jsonrpc: "2.0",
+		Method:  "name_firstupdate",
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := server.nameFirstUpdate(req)
+
+	if resp.Error == nil {
+		t.Fatal("Expected error for value too large")
+	}
+	if resp.Error.Code != -5 {
+		t.Errorf("Expected error code -5, got %d", resp.Error.Code)
+	}
+}
+
+// TestNameFirstUpdateNoCommitment tests nameFirstUpdate when no NAME_NEW commitment exists
+func TestNameFirstUpdateNoCommitment(t *testing.T) {
+	server, _, w := setupNameHandlerTestServer(t)
+	server.wallet = w
+
+	paramsJSON, _ := json.Marshal([]string{"d/test", "0102030405060708090a0b0c0d0e0f1011121314", `{"test":"value"}`})
+	req := &Request{
+		Jsonrpc: "2.0",
+		Method:  "name_firstupdate",
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := server.nameFirstUpdate(req)
+
+	if resp.Error == nil {
+		t.Fatal("Expected error for missing NAME_NEW commitment")
+	}
+	if resp.Error.Code != -25 {
+		t.Errorf("Expected error code -25, got %d", resp.Error.Code)
+	}
+}
+
+// TestNamePendingWithEmptyMempool tests namePending when mempool is empty
+func TestNamePendingWithEmptyMempool(t *testing.T) {
+	server, _, _ := setupNameHandlerTestServer(t)
+
+	paramsJSON, _ := json.Marshal([]interface{}{})
+	req := &Request{
+		Jsonrpc: "2.0",
+		Method:  "name_pending",
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := server.namePending(req)
+
+	if resp.Error != nil {
+		t.Fatalf("Unexpected error: %v", resp.Error.Message)
+	}
+	if resp.Result == nil {
+		t.Fatal("Expected result, got nil")
+	}
+
+	// Result should be an empty array
+	resultBytes, _ := json.Marshal(resp.Result)
+	if string(resultBytes) != "[]" {
+		t.Errorf("Expected empty array, got %s", string(resultBytes))
+	}
+}
+
+// TestNamePendingWithNameFilter tests namePending with a specific name filter
+func TestNamePendingWithNameFilter(t *testing.T) {
+	server, _, _ := setupNameHandlerTestServer(t)
+
+	paramsJSON, _ := json.Marshal([]string{"d/test"})
+	req := &Request{
+		Jsonrpc: "2.0",
+		Method:  "name_pending",
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := server.namePending(req)
+
+	if resp.Error != nil {
+		t.Fatalf("Unexpected error: %v", resp.Error.Message)
+	}
+	if resp.Result == nil {
+		t.Fatal("Expected result, got nil")
+	}
+}
+
+// TestCheckNameNotActiveWithExpiredName tests checkNameNotActive when name has expired
+func TestCheckNameNotActiveWithExpiredName(t *testing.T) {
+	server, bc, _ := setupNameHandlerTestServer(t)
+
+	// Insert an expired name
+	testName := "d/expiredname"
+	testValue := `{"ip":"192.168.1.1"}`
+	txHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+
+	record := &namedb.NameRecord{
+		Name:      testName,
+		Value:     testValue,
+		TxHash:    *txHash,
+		OutIndex:  0,
+		Height:    1,
+		ExpiresAt: 0, // Already expired
+	}
+	err := bc.GetNameDB().PutName(testName, record)
+	if err != nil {
+		t.Fatalf("Failed to insert test name: %v", err)
+	}
+
+	// checkNameNotActive should return nil for expired name
+	errResp := server.checkNameNotActive(testName, 1)
+	if errResp != nil {
+		t.Errorf("Expected nil for expired name, got error: %v", errResp.Error.Message)
+	}
+}
+

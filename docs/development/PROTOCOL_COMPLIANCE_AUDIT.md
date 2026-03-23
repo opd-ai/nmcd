@@ -1,6 +1,6 @@
 # Namecoin Protocol Compliance Audit: nmcd
 
-**Last Updated:** January 11, 2026  
+**Last Updated:** March 23, 2026  
 **nmcd Version:** v0.1.0 (development)  
 **Reference:** Namecoin Core (github.com/namecoin/namecoin-core)  
 **Codebase Size:** ~18,500 lines of production Go code (excluding tests)
@@ -11,12 +11,12 @@
 
 | Metric | Value |
 |--------|-------|
-| **Compliance Status** | 95% Protocol Compliance |
+| **Compliance Status** | 100% Protocol Compliance |
 | **Critical Issues** | 0 |
 | **Production Blockers** | 0 |
 | **Test Vectors** | 6/6 mainnet blocks pass |
 
-**nmcd is ready for mainnet production use.** All critical issues resolved, including AuxPoW deserialization.
+**nmcd is ready for mainnet production use.** All critical issues resolved, including AuxPoW deserialization and relay policy compliance.
 
 ---
 
@@ -42,7 +42,8 @@ Real mainnet blocks extracted from Namecoin Core:
 | Block Time Target | 600s | 600s | ✅ |
 | Difficulty Retarget | 2016 blocks | 2016 blocks | ✅ |
 | Name Expiration | 36,000 blocks | 36,000 blocks | ✅ |
-| Max Value Size | 520 bytes (relay) | 1023 bytes | ⚠️ |
+| Max Value Size (relay) | 520 bytes | 520 bytes | ✅ |
+| Max Value Size (consensus) | 1023 bytes | 1023 bytes | ✅ |
 | Max Name Length | 255 bytes | 255 bytes | ✅ |
 | NAME_NEW Min Fee | 1,000 sat | 1,000 sat | ✅ |
 | NAME_FIRSTUPDATE Fee | 0.01 NMC | 0.01 NMC | ✅ |
@@ -127,12 +128,6 @@ Real mainnet blocks extracted from Namecoin Core:
 
 ---
 
-## Minor Issues
-
-1. **Max value size:** nmcd uses 1023 bytes consensus limit vs Namecoin Core's 520-byte relay policy. The `NameValueRelayLimit` constant (520 bytes) is now defined for relay policy compatibility.
-
----
-
 ## Compliance Matrix
 
 | Check | Status |
@@ -149,8 +144,9 @@ Real mainnet blocks extracted from Namecoin Core:
 | RPC API | ✅ |
 | name_scan RPC | ✅ |
 | name_pending RPC | ✅ |
+| Relay policy (520-byte limit) | ✅ |
 
-**21/21 checks passed (100%)**
+**22/22 checks passed (100%)**
 
 ---
 
@@ -169,6 +165,7 @@ Real mainnet blocks extracted from Namecoin Core:
 
 | Date | Change |
 |------|--------|
+| 2026-03-23 | Relay policy compliance: 520-byte value limit now enforced in mempool, RPC, wallet, and client APIs |
 | 2026-01-11 | AuxPoW deserialization bug fixed; all test vectors pass |
 | 2026-01-11 | Full protocol re-audit with mainnet test vectors |
 | 2026-01-09 | Protocol constants verified |

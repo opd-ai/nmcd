@@ -310,12 +310,13 @@ func (c *EmbeddedClient) ResolveName(ctx context.Context, name string) (*NameRec
 }
 
 // validateRegistrationInputs validates name and value for registration.
+// Enforces relay policy limit (520 bytes) instead of consensus limit (1023 bytes).
 func (c *EmbeddedClient) validateRegistrationInputs(name, value string) error {
 	if len(name) == 0 || len(name) > 255 {
 		return fmt.Errorf("%w: length %d (must be 1-255)", ErrInvalidName, len(name))
 	}
-	if len(value) > 1023 {
-		return fmt.Errorf("%w: length %d (max 1023)", ErrInvalidValue, len(value))
+	if len(value) > config.NameValueRelayLimit {
+		return fmt.Errorf("%w: length %d (max %d for relay policy)", ErrInvalidValue, len(value), config.NameValueRelayLimit)
 	}
 	return nil
 }

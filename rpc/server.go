@@ -21,6 +21,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/opd-ai/nmcd/chain"
+	"github.com/opd-ai/nmcd/config"
 	"github.com/opd-ai/nmcd/internal/logging"
 	"github.com/opd-ai/nmcd/metrics"
 	"github.com/opd-ai/nmcd/namedb"
@@ -179,10 +180,12 @@ func validateNameLength(name string, reqID interface{}) *Response {
 	return nil
 }
 
-// validateValueSize validates that a name value does not exceed 1023 bytes.
+// validateValueSize validates that a name value does not exceed the relay policy limit (520 bytes).
+// Note: The consensus limit is 1023 bytes, but relay policy matches Namecoin Core's 520-byte limit.
 func validateValueSize(value string, reqID interface{}) *Response {
-	if len(value) > 1023 {
-		return errorResponse(reqID, -5, fmt.Sprintf("Value too large: %d bytes (max 1023)", len(value)))
+	if len(value) > config.NameValueRelayLimit {
+		return errorResponse(reqID, -5, fmt.Sprintf("Value too large: %d bytes (max %d for relay policy)",
+			len(value), config.NameValueRelayLimit))
 	}
 	return nil
 }
