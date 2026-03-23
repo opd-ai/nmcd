@@ -23,7 +23,7 @@
 //   - NameExpirationBlocks (36,000): Blocks until a name expires (~250 days)
 //   - MaxNameLength (255): Maximum name length in bytes
 //   - MaxValueLength (1,023): Maximum value length in bytes (consensus)
-//   - NameValueRelayLimit (520): Maximum value length for relay (policy)
+//   - MaxValueLengthUI (520): Maximum value length for UI/wallet operations
 //   - AuxPowVersionBit (0x100): Block version bit for AuxPow blocks
 //   - MainNetAuxPowActivationHeight (19,200): AuxPow mandatory after this height
 //

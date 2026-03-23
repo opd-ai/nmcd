@@ -486,13 +486,13 @@ const (
 )
 
 // validateNameScriptParams validates common parameters for name scripts.
-// Enforces relay policy limit (520 bytes) instead of consensus limit (1023 bytes).
+// Enforces UI limit (520 bytes) matching Namecoin Core's MAX_VALUE_LENGTH_UI.
 func validateNameScriptParams(name, value string, pubKeyHash []byte) error {
 	if len(name) == 0 || len(name) > 255 {
 		return fmt.Errorf("invalid name length: %d", len(name))
 	}
-	if len(value) > config.NameValueRelayLimit {
-		return fmt.Errorf("value too large: %d bytes (max %d for relay policy)", len(value), config.NameValueRelayLimit)
+	if len(value) > config.MaxValueLengthUI {
+		return fmt.Errorf("value too large: %d bytes (max %d)", len(value), config.MaxValueLengthUI)
 	}
 	if len(pubKeyHash) != 20 {
 		return fmt.Errorf("invalid pubkey hash length: %d", len(pubKeyHash))
@@ -998,8 +998,8 @@ func validateNameFirstUpdateInputs(name, randHex, value string, utxos []UTXO, na
 	if _, err := hex.DecodeString(randHex); err != nil {
 		return fmt.Errorf("invalid randHex: must be valid hex string: %w", err)
 	}
-	if len(value) > config.NameValueRelayLimit {
-		return fmt.Errorf("value too large: %d bytes (max %d for relay policy)", len(value), config.NameValueRelayLimit)
+	if len(value) > config.MaxValueLengthUI {
+		return fmt.Errorf("value too large: %d bytes (max %d)", len(value), config.MaxValueLengthUI)
 	}
 	if nameNewUtxoIndex < 0 || nameNewUtxoIndex >= len(utxos) {
 		return fmt.Errorf("invalid NAME_NEW UTXO index: %d", nameNewUtxoIndex)

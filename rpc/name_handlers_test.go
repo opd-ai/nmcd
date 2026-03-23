@@ -802,13 +802,13 @@ func TestNameFirstUpdateNameTooLong(t *testing.T) {
 	}
 }
 
-// TestNameFirstUpdateValueTooLarge tests nameFirstUpdate with value exceeding relay limit
+// TestNameFirstUpdateValueTooLarge tests nameFirstUpdate with value exceeding UI limit
 func TestNameFirstUpdateValueTooLarge(t *testing.T) {
 	server, _, w := setupNameHandlerTestServer(t)
 	server.wallet = w
 
-	// Create a value larger than relay limit (520 bytes)
-	largeValue := string(make([]byte, config.NameValueRelayLimit+1))
+	// Create a value larger than UI limit (520 bytes)
+	largeValue := string(make([]byte, config.MaxValueLengthUI+1))
 	paramsJSON, _ := json.Marshal([]string{"d/test", "0102030405060708090a0b0c0d0e0f1011121314", largeValue})
 	req := &Request{
 		Jsonrpc: "2.0",
@@ -928,4 +928,3 @@ func TestCheckNameNotActiveWithExpiredName(t *testing.T) {
 		t.Errorf("Expected nil for expired name, got error: %v", errResp.Error.Message)
 	}
 }
-

@@ -26,7 +26,7 @@
 // Each operation must comply with Namecoin protocol rules including:
 //
 //   - Name length: 1-255 bytes
-//   - Value size: ≤1023 bytes (consensus), ≤520 bytes (relay policy)
+//   - Value size: ≤1023 bytes (consensus), ≤520 bytes (UI limit for user-facing APIs)
 //   - Timing: NAME_FIRSTUPDATE within 12-36,000 blocks of NAME_NEW
 //   - Uniqueness: No duplicate unexpired names
 //

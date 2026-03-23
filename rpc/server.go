@@ -180,12 +180,13 @@ func validateNameLength(name string, reqID interface{}) *Response {
 	return nil
 }
 
-// validateValueSize validates that a name value does not exceed the relay policy limit (520 bytes).
-// Note: The consensus limit is 1023 bytes, but relay policy matches Namecoin Core's 520-byte limit.
+// validateValueSize validates that a name value does not exceed the UI limit (520 bytes).
+// This matches Namecoin Core's MAX_VALUE_LENGTH_UI constant.
+// Note: The consensus limit is 1023 bytes, but user-facing APIs enforce the 520-byte UI limit.
 func validateValueSize(value string, reqID interface{}) *Response {
-	if len(value) > config.NameValueRelayLimit {
-		return errorResponse(reqID, -5, fmt.Sprintf("Value too large: %d bytes (max %d for relay policy)",
-			len(value), config.NameValueRelayLimit))
+	if len(value) > config.MaxValueLengthUI {
+		return errorResponse(reqID, -5, fmt.Sprintf("Value too large: %d bytes (max %d)",
+			len(value), config.MaxValueLengthUI))
 	}
 	return nil
 }

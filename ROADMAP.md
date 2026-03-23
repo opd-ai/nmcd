@@ -84,7 +84,7 @@ nmcd is a **library-first** pure Go Namecoin implementation that promises:
 | 13 | Prometheus Metrics | ✅ Achieved | 43 metrics, metrics package 83.9% coverage | - |
 | 14 | ~18,000 LOC | ✅ Achieved | go-stats-generator reports 9,729 LOC (well under claim) | - |
 | 15 | Test Coverage ≥70% | ⚠️ Partial | chain 77.4%, client 83.1%, namedb 86.5%; but rpc 60.1%, network 60.6% | 2 critical packages below 70% threshold |
-| 16 | Protocol Compliance | ⚠️ Partial | 95% per PROTOCOL_COMPLIANCE_AUDIT.md; 6/6 mainnet vectors pass | Relay policy: value size uses 1023B consensus limit, not 520B relay limit |
+| 16 | Protocol Compliance | ✅ Achieved | 100% per PROTOCOL_COMPLIANCE_AUDIT.md; 6/6 mainnet vectors pass | Value size policy aligned with upstream (MaxValueLengthUI=520 in UI, MaxValueLength=1023 consensus) |
 | 17 | Performance Targets | ✅ Achieved | Name lookup 1.15µs (<1ms target), RPC parsing 1.32µs, 17,697 req/s | Write operations 337ms (disk-bound, acknowledged) |
 
 **Overall: 14/17 goals fully achieved (82%)**  
@@ -153,35 +153,32 @@ nmcd is a **library-first** pure Go Namecoin implementation that promises:
 
 ### Priority 1: Achieve 100% Protocol Compliance ✅ COMPLETE
 
-**Impact:** Closes the final 5% compliance gap identified in the [protocol compliance audit](docs/development/PROTOCOL_COMPLIANCE_AUDIT.md); achieves full Namecoin Core relay policy compatibility  
+**Impact:** Aligns value size policy with upstream Namecoin Core (MAX_VALUE_LENGTH_UI); removes incorrect mempool enforcement of UI limit  
 **Effort:** 1-2 days  
-**Risk Mitigated:** Transaction rejection by Namecoin Core peers due to relay policy mismatch on name value size
+**Risk Mitigated:** Policy mismatch with upstream Namecoin Core behavior
 
-The `NameValueRelayLimit` constant (520 bytes) is already defined in `config/config.go` but is not enforced. All validation code paths currently use the 1023-byte consensus limit (`MaxValueLength`). To match Namecoin Core's relay policy, the 520-byte limit must be enforced for new transactions (mempool acceptance, RPC, wallet, client APIs), while the 1023-byte consensus limit remains valid for on-chain/historical data.
+The `MaxValueLengthUI` constant (520 bytes, matching Namecoin Core's `MAX_VALUE_LENGTH_UI`) is enforced in user-facing APIs (RPC, wallet, client) to prevent users from creating transactions with values exceeding the recommended size. The consensus limit (`MaxValueLength`, 1023 bytes) is enforced in block validation and mempool acceptance, matching upstream Namecoin Core's `CheckNameTransaction()` behavior. Upstream does not enforce the 520-byte limit at the mempool level.
 
-- [x] **chain/blockchain.go** Enforce `NameValueRelayLimit` (520 bytes) during mempool transaction validation:
-  - Update `ValidateMempoolTransaction` (or equivalent) to reject name values > 520 bytes
-  - On-chain validation (`validateNameOperations`) continues to use 1023-byte consensus limit
-  - Validation: unit test confirming 521-byte value is rejected for relay but accepted on-chain
+- [x] **chain/blockchain.go** Mempool uses consensus limit (1023 bytes) matching upstream:
+  - `ValidateMempoolTransaction` uses `validateNameFormat()` which enforces `MaxValueLength` (1023 bytes)
+  - The UI limit (520 bytes) is NOT enforced at the mempool level, matching upstream behavior
+  - Validation: unit test confirming 521-byte value is not rejected for size at mempool level
 
-- [x] **rpc/server.go** Update `validateValueSize` to enforce 520-byte relay limit:
-  - Change the 1023-byte check to use `config.NameValueRelayLimit` (520 bytes)
-  - Update error message to reference relay policy limit
+- [x] **rpc/server.go** `validateValueSize` enforces 520-byte UI limit:
+  - Uses `config.MaxValueLengthUI` (520 bytes) matching Namecoin Core's `MAX_VALUE_LENGTH_UI`
   - Validation: `go test ./rpc` passes; test confirms 521-byte value rejected
 
-- [x] **wallet/wallet.go** Enforce relay limit in wallet transaction creation:
-  - Update `CreateNameUpdateTx` and `CreateNameFirstUpdateTx` to check against 520 bytes
+- [x] **wallet/wallet.go** Wallet enforces UI limit in transaction creation:
+  - `CreateNameUpdateTx` and `CreateNameFirstUpdateTx` check against `config.MaxValueLengthUI` (520 bytes)
   - Validation: `go test ./wallet` passes; test confirms 521-byte value rejected
 
-- [x] **client/embedded.go, client/daemon.go** Update client-side validation:
-  - Change `NameUpdate` and `NameFirstUpdate` value checks from 1023 to `config.NameValueRelayLimit`
+- [x] **client/embedded.go, client/daemon.go** Client-side validation uses UI limit:
+  - `NameUpdate` and `NameFirstUpdate` value checks use `config.MaxValueLengthUI`
   - Validation: `go test ./client` passes
 
-- [x] **docs/development/PROTOCOL_COMPLIANCE_AUDIT.md** Update audit to reflect 100% compliance:
-  - Update Max Value Size row from ⚠️ to ✅
-  - Update Executive Summary from 95% to 100%
-  - Remove or update the Minor Issues section
-  - Add audit history entry
+- [x] **docs/development/PROTOCOL_COMPLIANCE_AUDIT.md** Updated to reflect upstream alignment:
+  - Documents both MaxValueLength (1023, consensus) and MaxValueLengthUI (520, UI)
+  - Audit history entry added
 
 ### Priority 2: Close RPC Test Coverage Gap
 

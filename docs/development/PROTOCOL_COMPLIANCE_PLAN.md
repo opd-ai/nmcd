@@ -34,7 +34,7 @@ The nmcd implementation has achieved **100% Namecoin protocol compliance** and i
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| `NameValueRelayLimit` | 520 bytes | Added to config/config.go for relay policy compatibility |
+| `MaxValueLengthUI` | 520 bytes | Added to config/config.go matching Namecoin Core's MAX_VALUE_LENGTH_UI |
 | `MaxValueLength` | 1023 bytes | Consensus limit (unchanged) |
 
 ### 3. Test Coverage Improvements
@@ -176,7 +176,7 @@ func (bc *BlockChain) ScanNames(prefix string, count int) ([]*namedb.NameRecord,
 }
 ```
 
-### NameValueRelayLimit Constant
+### MaxValueLengthUI Constant
 
 **File:** `config/config.go`
 
@@ -184,10 +184,10 @@ func (bc *BlockChain) ScanNames(prefix string, count int) ([]*namedb.NameRecord,
 const (
     // ...existing constants...
     
-    // NameValueRelayLimit is the maximum value size for mempool acceptance (relay policy).
-    // Default matches Namecoin Core's relay policy of 520 bytes.
+    // MaxValueLengthUI is the maximum value size for user-facing operations (UI limit).
+    // Matches Namecoin Core's MAX_VALUE_LENGTH_UI constant (520 bytes).
     // Note: The consensus limit (MaxValueLength) is 1023 bytes.
-    NameValueRelayLimit = 520
+    MaxValueLengthUI = 520
 )
 ```
 

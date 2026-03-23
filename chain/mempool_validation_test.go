@@ -2,6 +2,7 @@ package chain
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -277,12 +278,14 @@ func TestValidateMempoolTransactionMultipleInputs(t *testing.T) {
 	}
 }
 
-// TestValidateMempoolTransactionRelayLimit tests that values > 520 bytes are rejected for relay
-func TestValidateMempoolTransactionRelayLimit(t *testing.T) {
+// TestValidateMempoolTransactionAcceptsUILimitValue tests that values between 520-1023 bytes
+// are accepted by the mempool, matching upstream Namecoin Core behavior.
+// The UI limit (520 bytes) is only enforced in RPC/wallet/client APIs, not at the mempool level.
+func TestValidateMempoolTransactionAcceptsUILimitValue(t *testing.T) {
 	bc, _, cleanup := setupTestBlockChain(t)
 	defer cleanup()
 
-	// Create a NAME_UPDATE script with a 521-byte value (exceeds relay limit but under consensus limit)
+	// Create a NAME_UPDATE script with a 521-byte value (exceeds UI limit but under consensus limit)
 	// NAME_UPDATE format: OP_NAME_UPDATE <name> <value> OP_2DROP OP_DROP <P2PKH>
 	const (
 		opNameUpdateByte = 0xd2
@@ -290,7 +293,7 @@ func TestValidateMempoolTransactionRelayLimit(t *testing.T) {
 		opDrop           = 0x75
 	)
 	name := []byte("d/test")
-	value := make([]byte, config.NameValueRelayLimit+1) // 521 bytes > 520 relay limit
+	value := make([]byte, config.MaxValueLengthUI+1) // 521 bytes > 520 UI limit, but under 1023 consensus
 	for i := range value {
 		value[i] = 'x'
 	}
@@ -301,15 +304,15 @@ func TestValidateMempoolTransactionRelayLimit(t *testing.T) {
 	script = append(script, byte(len(name)))
 	script = append(script, name...)
 	// Value length encoding: OP_PUSHDATA2 for 521 bytes (> 255)
-	script = append(script, 0x4d)                                  // OP_PUSHDATA2
-	script = append(script, byte(len(value)&0xff))                 // Low byte
-	script = append(script, byte((len(value)>>8)&0xff))            // High byte
+	script = append(script, 0x4d)                       // OP_PUSHDATA2
+	script = append(script, byte(len(value)&0xff))      // Low byte
+	script = append(script, byte((len(value)>>8)&0xff)) // High byte
 	script = append(script, value...)
-	script = append(script, op2Drop, opDrop)                       // Drop opcodes
+	script = append(script, op2Drop, opDrop) // Drop opcodes
 	// Minimal P2PKH suffix
-	script = append(script, 0x76, 0xa9, 0x14)                      // OP_DUP OP_HASH160 Push20
-	script = append(script, make([]byte, 20)...)                   // pubkey hash
-	script = append(script, 0x88, 0xac)                            // OP_EQUALVERIFY OP_CHECKSIG
+	script = append(script, 0x76, 0xa9, 0x14)    // OP_DUP OP_HASH160 Push20
+	script = append(script, make([]byte, 20)...) // pubkey hash
+	script = append(script, 0x88, 0xac)          // OP_EQUALVERIFY OP_CHECKSIG
 
 	tx := wire.NewMsgTx(wire.TxVersion)
 	tx.AddTxIn(&wire.TxIn{
@@ -324,26 +327,18 @@ func TestValidateMempoolTransactionRelayLimit(t *testing.T) {
 		PkScript: script,
 	})
 
+	// Mempool may reject the transaction for other reasons (e.g., name not found),
+	// but it must NOT reject it for value size. The UI limit (520 bytes) is only
+	// enforced in user-facing APIs, not at the mempool level.
 	err := bc.ValidateMempoolTransaction(tx)
-	if err == nil {
-		t.Errorf("Expected error for value exceeding relay limit (%d bytes)", len(value))
-	} else {
-		t.Logf("Got expected error: %v", err)
-		// Verify the error mentions relay
-		if !stringContains(err.Error(), "relay") {
-			t.Logf("Note: Error doesn't mention 'relay' - error was: %v", err)
+	if err != nil {
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "value too large") {
+			t.Errorf("Mempool should not reject 521-byte value for size (UI limit applies only in RPC/wallet): %v", err)
+		} else {
+			t.Logf("Transaction rejected for non-size reason (expected): %v", err)
 		}
 	}
-}
-
-// stringContains checks if a string contains a substring
-func stringContains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 // setupTestBlockChainWithPath creates a test blockchain with specific paths
