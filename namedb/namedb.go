@@ -45,8 +45,16 @@ const NameRecordVersion = 3
 type NameOperation uint8
 
 const (
+	// NameNew represents a NAME_NEW operation that creates a commitment hash
+	// to reserve a name without revealing it. This prevents front-running attacks.
 	NameNew NameOperation = iota
+
+	// NameFirstUpdate represents a NAME_FIRSTUPDATE operation that reveals the
+	// name from a previous NAME_NEW commitment and sets its initial value.
 	NameFirstUpdate
+
+	// NameUpdate represents a NAME_UPDATE operation that updates an existing
+	// name's value and extends its expiration by 36,000 blocks.
 	NameUpdate
 )
 

@@ -102,7 +102,7 @@ func errorResponse(id interface{}, code int, message string) *Response {
 }
 
 // successResponse creates a JSON-RPC success response with the given result.
-func successResponse(id interface{}, result interface{}) *Response {
+func successResponse(id, result interface{}) *Response {
 	return &Response{
 		Jsonrpc: "2.0",
 		Result:  result,
@@ -1821,7 +1821,7 @@ func (s *Server) getBlockHash(req *Request) *Response {
 }
 
 // parseBlockHeightParam parses and validates a block height from a JSON parameter.
-func parseBlockHeightParam(param interface{}, reqID interface{}) (int32, *Response) {
+func parseBlockHeightParam(param, reqID interface{}) (int32, *Response) {
 	var height int32
 	switch v := param.(type) {
 	case float64:

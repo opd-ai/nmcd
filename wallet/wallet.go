@@ -1007,6 +1007,7 @@ func validateNameFirstUpdateInputs(name, randHex, value string, utxos []UTXO, na
 }
 
 // SignTransaction signs all inputs in a transaction.
+// This is the public API that acquires the lock and validates input count.
 func (w *Wallet) SignTransaction(tx *wire.MsgTx, utxos []UTXO) error {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
@@ -1016,38 +1017,7 @@ func (w *Wallet) SignTransaction(tx *wire.MsgTx, utxos []UTXO) error {
 			len(tx.TxIn), len(utxos))
 	}
 
-	for i, utxo := range utxos {
-		kp, ok := w.keys[utxo.Address]
-		if !ok {
-			return fmt.Errorf("no key for address: %s", utxo.Address)
-		}
-
-		sigHash, err := txscript.CalcSignatureHash(
-			utxo.PkScript,
-			txscript.SigHashAll,
-			tx,
-			i,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to calculate signature hash: %w", err)
-		}
-
-		sig := ecdsa.Sign(kp.PrivateKey, sigHash)
-		sigWithHashType := append(sig.Serialize(), byte(txscript.SigHashAll))
-		pubKeyBytes := kp.PublicKey.SerializeCompressed()
-
-		sigScript, err := txscript.NewScriptBuilder().
-			AddData(sigWithHashType).
-			AddData(pubKeyBytes).
-			Script()
-		if err != nil {
-			return fmt.Errorf("failed to build sig script: %w", err)
-		}
-
-		tx.TxIn[i].SignatureScript = sigScript
-	}
-
-	return nil
+	return w.signTransactionInputs(tx, utxos)
 }
 
 // GenerateRand generates random bytes for NAME_NEW commitment.

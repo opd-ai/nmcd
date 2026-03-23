@@ -94,7 +94,6 @@ cfg := &client.Config{
     Mode:        client.ModeEmbedded,
     Network:     "regtest",
     DataDir:     "/tmp/nmcd-embedded",
-    WalletEnabled: true,
 }
 
 nc, err := client.NewClient(cfg)
@@ -105,7 +104,7 @@ record, err := nc.ResolveName(ctx, "d/example")
 
 // Get node info
 info, err := nc.GetInfo(ctx)
-fmt.Printf("Block height: %d\n", info.Blocks)
+fmt.Printf("Block height: %d\n", info.BlockHeight)
 ```
 
 ---
@@ -177,7 +176,7 @@ go run ./examples/list_names --namespace d/
 
 **Key code:**
 ```go
-names, err := nc.ListNames(ctx, &client.NameFilter{
+names, err := nc.ListNames(ctx, &client.ListFilter{
     Namespace: "d/",
     Limit:     100,
 })
@@ -259,9 +258,8 @@ RPCAddress: "localhost:18336"
 
 ```go
 cfg := &client.Config{
-    WalletEnabled: true,
-    WalletPath:    "/secure/location/wallet.json",
-    WalletPassword: os.Getenv("WALLET_PASSWORD"),
+    DisableWallet: false,  // Enable wallet (default)
+    DataDir:       "/secure/location/data",
 }
 ```
 
@@ -305,10 +303,10 @@ if err != nil {
 ### Registration Errors
 
 ```go
-_, err := nc.RegisterName(ctx, name, value, salt)
+_, err := nc.RegisterName(ctx, name, value, nil)
 if err != nil {
     switch {
-    case errors.Is(err, client.ErrNameAlreadyExists):
+    case errors.Is(err, client.ErrNameExists):
         // Name taken
     case errors.Is(err, client.ErrInvalidName):
         // Invalid format

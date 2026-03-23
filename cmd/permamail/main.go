@@ -165,9 +165,15 @@ func parseBackupAddresses(backupAddrs string) []string {
 	return backups
 }
 
-// register implements the register command
-func (c *CLI) register(args []string) error {
-	fs := flag.NewFlagSet("register", flag.ExitOnError)
+// nameCommandConfig holds the result of parsing a name command (register or update).
+type nameCommandConfig struct {
+	name     string
+	mailJSON []byte
+}
+
+// parseNameCommand parses common flags and arguments for register/update commands.
+func (c *CLI) parseNameCommand(cmdName string, args []string) (*nameCommandConfig, error) {
+	fs := flag.NewFlagSet(cmdName, flag.ExitOnError)
 	c.parseGlobalFlags(fs)
 
 	var backupAddrs string
@@ -175,57 +181,58 @@ func (c *CLI) register(args []string) error {
 	fs.StringVar(&backupAddrs, "backup", "", "Backup email addresses (comma-separated)")
 
 	if err := fs.Parse(args); err != nil {
-		return err
+		return nil, err
 	}
 
-	// Parse backup addresses
 	c.backups = parseBackupAddresses(backupAddrs)
 
-	// Get name from positional argument
 	if fs.NArg() < 1 {
-		return fmt.Errorf("name required: permamail register <name> --forward <email>")
+		return nil, fmt.Errorf("name required: permamail %s <name> --forward <email>", cmdName)
 	}
 	name := fs.Arg(0)
 
-	// Validate required flags
 	if c.forwardTo == "" {
-		return fmt.Errorf("--forward flag required")
+		return nil, fmt.Errorf("--forward flag required")
 	}
 
-	// Create Namecoin client
 	nc, err := c.createClient()
 	if err != nil {
-		return fmt.Errorf("failed to create client: %w", err)
+		return nil, fmt.Errorf("failed to create client: %w", err)
 	}
 	defer nc.Close()
 
-	// Build mail configuration JSON
-	mailConfig := map[string]interface{}{
-		"email": c.forwardTo,
-	}
+	mailConfig := map[string]interface{}{"email": c.forwardTo}
 	if len(c.backups) > 0 {
 		mailConfig["backup"] = c.backups
 	}
 
 	mailJSON, err := json.Marshal(mailConfig)
 	if err != nil {
-		return fmt.Errorf("failed to create mail config: %w", err)
+		return nil, fmt.Errorf("failed to create mail config: %w", err)
 	}
 
-	fmt.Printf("Registering name: %s\n", name)
+	return &nameCommandConfig{name: name, mailJSON: mailJSON}, nil
+}
+
+// register implements the register command
+func (c *CLI) register(args []string) error {
+	cfg, err := c.parseNameCommand("register", args)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Registering name: %s\n", cfg.name)
 	fmt.Printf("Forward to: %s\n", c.forwardTo)
 	if len(c.backups) > 0 {
 		fmt.Printf("Backup addresses: %v\n", c.backups)
 	}
-	fmt.Printf("Mail config: %s\n", string(mailJSON))
+	fmt.Printf("Mail config: %s\n", string(cfg.mailJSON))
 
-	// Note: Full NAME_NEW + NAME_FIRSTUPDATE flow requires wallet integration
-	// For now, we inform the user to use the nmcd RPC directly
 	fmt.Println("\nNOTE: Name registration requires NAME_NEW + NAME_FIRSTUPDATE operations.")
 	fmt.Println("This requires a running nmcd node with wallet enabled.")
 	fmt.Println("\nTo complete registration, use the nmcd RPC interface:")
 	fmt.Printf("1. Create NAME_NEW commitment (wait 12 blocks)\n")
-	fmt.Printf("2. NAME_FIRSTUPDATE with value: %s\n", string(mailJSON))
+	fmt.Printf("2. NAME_FIRSTUPDATE with value: %s\n", string(cfg.mailJSON))
 	fmt.Println("\nFull wallet integration is planned for future releases.")
 
 	return nil
@@ -233,63 +240,22 @@ func (c *CLI) register(args []string) error {
 
 // update implements the update command
 func (c *CLI) update(args []string) error {
-	fs := flag.NewFlagSet("update", flag.ExitOnError)
-	c.parseGlobalFlags(fs)
-
-	var backupAddrs string
-	fs.StringVar(&c.forwardTo, "forward", "", "Email address to forward to (required)")
-	fs.StringVar(&backupAddrs, "backup", "", "Backup email addresses (comma-separated)")
-
-	if err := fs.Parse(args); err != nil {
+	cfg, err := c.parseNameCommand("update", args)
+	if err != nil {
 		return err
 	}
 
-	// Parse backup addresses
-	c.backups = parseBackupAddresses(backupAddrs)
-
-	// Get name from positional argument
-	if fs.NArg() < 1 {
-		return fmt.Errorf("name required: permamail update <name> --forward <email>")
-	}
-	name := fs.Arg(0)
-
-	// Validate required flags
-	if c.forwardTo == "" {
-		return fmt.Errorf("--forward flag required")
-	}
-
-	// Create Namecoin client
-	nc, err := c.createClient()
-	if err != nil {
-		return fmt.Errorf("failed to create client: %w", err)
-	}
-	defer nc.Close()
-
-	// Build mail configuration JSON
-	mailConfig := map[string]interface{}{
-		"email": c.forwardTo,
-	}
-	if len(c.backups) > 0 {
-		mailConfig["backup"] = c.backups
-	}
-
-	mailJSON, err := json.Marshal(mailConfig)
-	if err != nil {
-		return fmt.Errorf("failed to create mail config: %w", err)
-	}
-
-	fmt.Printf("Updating name: %s\n", name)
+	fmt.Printf("Updating name: %s\n", cfg.name)
 	fmt.Printf("New forward address: %s\n", c.forwardTo)
 	if len(c.backups) > 0 {
 		fmt.Printf("Backup addresses: %v\n", c.backups)
 	}
-	fmt.Printf("New mail config: %s\n", string(mailJSON))
+	fmt.Printf("New mail config: %s\n", string(cfg.mailJSON))
 
-	// Note: NAME_UPDATE requires wallet integration
 	fmt.Println("\nNOTE: Name updates require the NAME_UPDATE operation.")
 	fmt.Println("This requires a running nmcd node with wallet enabled.")
 	fmt.Println("\nTo complete update, use the nmcd RPC interface:")
-	fmt.Printf("  name_update \"%s\" \"%s\"\n", name, string(mailJSON))
+	fmt.Printf("  name_update \"%s\" \"%s\"\n", cfg.name, string(cfg.mailJSON))
 	fmt.Println("\nFull wallet integration is planned for future releases.")
 
 	return nil

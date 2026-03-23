@@ -208,9 +208,14 @@ type TxResult struct {
 type TxStatus string
 
 const (
-	TxStatusPending   TxStatus = "pending"   // In mempool, not yet confirmed
-	TxStatusConfirmed TxStatus = "confirmed" // Included in a block
-	TxStatusFailed    TxStatus = "failed"    // Rejected by network or reorged out
+	// TxStatusPending indicates the transaction is in the mempool awaiting confirmation.
+	TxStatusPending TxStatus = "pending"
+
+	// TxStatusConfirmed indicates the transaction has been included in a block.
+	TxStatusConfirmed TxStatus = "confirmed"
+
+	// TxStatusFailed indicates the transaction was rejected by the network or removed during a reorg.
+	TxStatusFailed TxStatus = "failed"
 )
 
 // ListFilter configures name list filtering.
@@ -338,9 +343,14 @@ type Config struct {
 type ClientMode int
 
 const (
-	ModeAuto     ClientMode = iota // Auto-detect daemon, fallback to embedded
-	ModeEmbedded                   // Force embedded mode (in-process)
-	ModeDaemon                     // Force daemon mode (RPC only)
+	// ModeAuto automatically detects an available daemon and falls back to embedded mode if none is found.
+	ModeAuto ClientMode = iota
+
+	// ModeEmbedded forces in-process embedded mode, running the blockchain locally.
+	ModeEmbedded
+
+	// ModeDaemon forces daemon mode, connecting to an external node via RPC only.
+	ModeDaemon
 )
 
 // Errors returned by the client.

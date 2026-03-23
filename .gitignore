@@ -53,4 +53,16 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
-nmcd
+
+# Analysis and dev artifacts
+*.log
+loop.log
+test-output.txt
+baseline.json
+post.json
+final.json
+pre-cleanup.json
+post-cleanup.json
+*-baseline.json
+*-post.json
+diff-report*.json

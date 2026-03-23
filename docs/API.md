@@ -20,6 +20,7 @@ package main
 
 import (
     "context"
+    "errors"
     "fmt"
     "log"
 
@@ -248,10 +249,19 @@ type UpdateOpts struct {
 **Example:**
 
 ```go
+ctx := context.Background()
+result, err := nc.UpdateName(ctx, "d/mysite", `{"ip":"5.6.7.8"}`, &client.UpdateOpts{
+    FeeRate: 1,
+})
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Printf("NAME_UPDATE tx: %s\n", result.TxHash)
+```
 
 ## Additional Methods
-See source code documentation for complete RPC method reference.
-```
+
+See the client package GoDoc for complete method reference and additional examples.
 
 ### ModeEmbedded
 
