@@ -84,11 +84,11 @@ nmcd is a **library-first** pure Go Namecoin implementation that promises:
 | 13 | Prometheus Metrics | ✅ Achieved | 43 metrics, metrics package 83.9% coverage | - |
 | 14 | ~18,000 LOC | ✅ Achieved | go-stats-generator reports 9,729 LOC (well under claim) | - |
 | 15 | Test Coverage ≥70% | ⚠️ Partial | chain 77.4%, client 83.1%, namedb 86.5%; but rpc 60.1%, network 60.6% | 2 critical packages below 70% threshold |
-| 16 | Protocol Compliance | ✅ Achieved | 95% per PROTOCOL_COMPLIANCE_AUDIT.md; 6/6 mainnet vectors pass | Minor: value size uses 1023B consensus vs 520B relay policy |
+| 16 | Protocol Compliance | ⚠️ Partial | 95% per PROTOCOL_COMPLIANCE_AUDIT.md; 6/6 mainnet vectors pass | Relay policy: value size uses 1023B consensus limit, not 520B relay limit |
 | 17 | Performance Targets | ✅ Achieved | Name lookup 1.15µs (<1ms target), RPC parsing 1.32µs, 17,697 req/s | Write operations 337ms (disk-bound, acknowledged) |
 
-**Overall: 15/17 goals fully achieved (88%)**  
-**Partial achievements: 2 goals with documented gaps**
+**Overall: 14/17 goals fully achieved (82%)**  
+**Partial achievements: 3 goals with documented gaps**
 
 ---
 
@@ -151,7 +151,39 @@ nmcd is a **library-first** pure Go Namecoin implementation that promises:
 
 ## Roadmap
 
-### Priority 1: Close RPC Test Coverage Gap
+### Priority 1: Achieve 100% Protocol Compliance
+
+**Impact:** Closes the final 5% compliance gap identified in the [protocol compliance audit](docs/development/PROTOCOL_COMPLIANCE_AUDIT.md); achieves full Namecoin Core relay policy compatibility  
+**Effort:** 1-2 days  
+**Risk Mitigated:** Transaction rejection by Namecoin Core peers due to relay policy mismatch on name value size
+
+The `NameValueRelayLimit` constant (520 bytes) is already defined in `config/config.go` but is not enforced. All validation code paths currently use the 1023-byte consensus limit (`MaxValueLength`). To match Namecoin Core's relay policy, the 520-byte limit must be enforced for new transactions (mempool acceptance, RPC, wallet, client APIs), while the 1023-byte consensus limit remains valid for on-chain/historical data.
+
+- [ ] **chain/blockchain.go** Enforce `NameValueRelayLimit` (520 bytes) during mempool transaction validation:
+  - Update `ValidateMempoolTransaction` (or equivalent) to reject name values > 520 bytes
+  - On-chain validation (`validateNameOperations`) continues to use 1023-byte consensus limit
+  - Validation: unit test confirming 521-byte value is rejected for relay but accepted on-chain
+
+- [ ] **rpc/server.go** Update `validateValueSize` to enforce 520-byte relay limit:
+  - Change the 1023-byte check to use `config.NameValueRelayLimit` (520 bytes)
+  - Update error message to reference relay policy limit
+  - Validation: `go test ./rpc` passes; test confirms 521-byte value rejected
+
+- [ ] **wallet/wallet.go** Enforce relay limit in wallet transaction creation:
+  - Update `CreateNameUpdateTx` and `CreateNameFirstUpdateTx` to check against 520 bytes
+  - Validation: `go test ./wallet` passes; test confirms 521-byte value rejected
+
+- [ ] **client/embedded.go, client/daemon.go** Update client-side validation:
+  - Change `NameUpdate` and `NameFirstUpdate` value checks from 1023 to `config.NameValueRelayLimit`
+  - Validation: `go test ./client` passes
+
+- [ ] **docs/development/PROTOCOL_COMPLIANCE_AUDIT.md** Update audit to reflect 100% compliance:
+  - Update Max Value Size row from ⚠️ to ✅
+  - Update Executive Summary from 95% to 100%
+  - Remove or update the Minor Issues section
+  - Add audit history entry
+
+### Priority 2: Close RPC Test Coverage Gap
 
 **Impact:** Directly addresses stated 70%+ coverage target for the rpc package (largest gap)  
 **Effort:** 2-3 days  
@@ -176,7 +208,7 @@ nmcd is a **library-first** pure Go Namecoin implementation that promises:
   - Test rate limit exhaustion
   - Test cleanup of stale entries
 
-### Priority 2: Close Network Test Coverage Gap
+### Priority 3: Close Network Test Coverage Gap
 
 **Impact:** Addresses 70%+ coverage target for network package  
 **Effort:** 2 days  
@@ -194,10 +226,10 @@ nmcd is a **library-first** pure Go Namecoin implementation that promises:
   - Test `onHeaders` processing
   - Test sync state transitions
 
-### Priority 3: Achieve 80% Coverage for All Critical Packages
+### Priority 4: Achieve 80% Coverage for All Critical Packages
 
 **Impact:** Meets stated v1.0 quality bar  
-**Effort:** 3-4 days (after Priority 1-2)  
+**Effort:** 3-4 days (after Priority 2-3)  
 **Risk Mitigated:** Production deployment without adequate safety net
 
 - [ ] **chain package**: 77.4% → 80%
@@ -207,13 +239,13 @@ nmcd is a **library-first** pure Go Namecoin implementation that promises:
   - Validation: `go test -cover ./chain` shows ≥80%
 
 - [ ] **rpc package**: 60.1% → 80%
-  - Complete handler coverage from Priority 1
+  - Complete handler coverage from Priority 2
   - Add error injection tests (nil blockchain, nil peerMgr)
   - Test concurrent request handling
   - Validation: `go test -cover ./rpc` shows ≥80%
 
 - [ ] **network package**: 60.6% → 80%
-  - Complete sync/relay coverage from Priority 2
+  - Complete sync/relay coverage from Priority 3
   - Add peer scoring edge cases
   - Add connection failure recovery tests
   - Validation: `go test -cover ./network` shows ≥80%
@@ -224,7 +256,7 @@ nmcd is a **library-first** pure Go Namecoin implementation that promises:
   - Add key import/export tests
   - Validation: `go test -cover ./wallet` shows ≥80%
 
-### Priority 4: Reduce Complexity in Large Functions (Optional)
+### Priority 5: Reduce Complexity in Large Functions (Optional)
 
 **Impact:** Improves maintainability; reduces latent bug risk  
 **Effort:** 1-2 days  
@@ -244,7 +276,7 @@ nmcd is a **library-first** pure Go Namecoin implementation that promises:
   - wallet/wallet.go: 27-line duplication (suggestion #1)
   - examples/register_name/main.go: 21-line duplication (suggestion #2)
 
-### Priority 5: Documentation Alignment
+### Priority 6: Documentation Alignment
 
 **Impact:** Ensures documentation matches implementation  
 **Effort:** 0.5 days  
@@ -276,13 +308,13 @@ Based on the project's stated goals:
 | <100ms avg RPC latency | 1.32µs | <100ms | ✅ |
 | 1000+ req/s throughput | 17,697 req/s | 1000+ | ✅ |
 | <500MB memory (embedded) | ~250MB UTXO | <500MB | ✅ |
-| Protocol compliance | 95% | ≥95% | ✅ |
+| Protocol compliance | 95% | 100% | ⚠️ Relay policy gap |
 | Documentation complete | Yes | Yes | ✅ |
 | Example applications | 10 | Yes | ✅ |
 
-**Blocking for v1.0:** Priority 1 and Priority 2 (coverage to ≥70%)  
-**Recommended for v1.0:** Priority 3 (coverage to ≥80%)  
-**Nice-to-have:** Priority 4, Priority 5
+**Blocking for v1.0:** Priority 1 (100% protocol compliance), Priority 2 and Priority 3 (coverage to ≥70%)  
+**Recommended for v1.0:** Priority 4 (coverage to ≥80%)  
+**Nice-to-have:** Priority 5, Priority 6
 
 ---
 
