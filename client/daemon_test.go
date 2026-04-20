@@ -883,6 +883,7 @@ func TestDaemonClient_RetryConfig(t *testing.T) {
 }
 
 func TestDaemonClient_RegisterName(t *testing.T) {
+	// Test validation - empty name
 	client, err := NewDaemonClient(nil)
 	if err != nil {
 		t.Fatalf("NewDaemonClient() error = %v", err)
@@ -891,16 +892,123 @@ func TestDaemonClient_RegisterName(t *testing.T) {
 
 	ctx := context.Background()
 
-	// RegisterName is not yet supported in daemon mode
-	_, err = client.RegisterName(ctx, "d/test", `{}`, nil)
-	if err == nil || !strings.Contains(err.Error(), "not yet supported") {
-		t.Errorf("RegisterName() should return 'not supported' error, got %v", err)
-	}
-
-	// Test validation still works
 	_, err = client.RegisterName(ctx, "", `{}`, nil)
 	if err == nil || !strings.Contains(err.Error(), "invalid") {
 		t.Errorf("RegisterName() with empty name should fail with validation error, got %v", err)
+	}
+
+	// Test validation - value too long
+	longValue := string(make([]byte, 1024))
+	_, err = client.RegisterName(ctx, "d/test", longValue, nil)
+	if err == nil {
+		t.Error("RegisterName() with too-long value should fail")
+	}
+
+	// Test successful name_new call (no wait)
+	server := mockRPCServer(t, func(method string, params json.RawMessage) (interface{}, *rpcError) {
+		if method == "name_new" {
+			return map[string]interface{}{
+				"txid":   "txnew123",
+				"name":   "d/test",
+				"rand":   "abcd1234",
+				"status": "broadcasted",
+			}, nil
+		}
+		return nil, &rpcError{Code: -32601, Message: "Method not found"}
+	})
+	defer server.Close()
+
+	serverClient, err := NewDaemonClient(&Config{
+		Mode:    ModeDaemon,
+		RPCAddr: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("NewDaemonClient() error = %v", err)
+	}
+	defer serverClient.Close()
+
+	result, err := serverClient.RegisterName(ctx, "d/test", `{"ip":"1.2.3.4"}`, nil)
+	if err != nil {
+		t.Fatalf("RegisterName() unexpected error: %v", err)
+	}
+	if result.TxHash != "txnew123" {
+		t.Errorf("RegisterName() txHash = %q, want %q", result.TxHash, "txnew123")
+	}
+	if result.Name != "d/test" {
+		t.Errorf("RegisterName() name = %q, want %q", result.Name, "d/test")
+	}
+	if result.Status != TxStatusPending {
+		t.Errorf("RegisterName() status = %q, want %q", result.Status, TxStatusPending)
+	}
+
+	// Test name_new RPC failure
+	failServer := mockRPCServer(t, func(method string, params json.RawMessage) (interface{}, *rpcError) {
+		return nil, &rpcError{Code: -25, Message: "Name already exists"}
+	})
+	defer failServer.Close()
+
+	failClient, err := NewDaemonClient(&Config{
+		Mode:    ModeDaemon,
+		RPCAddr: failServer.URL,
+	})
+	if err != nil {
+		t.Fatalf("NewDaemonClient() error = %v", err)
+	}
+	defer failClient.Close()
+
+	_, err = failClient.RegisterName(ctx, "d/test", `{}`, nil)
+	if err == nil {
+		t.Error("RegisterName() should fail when name_new fails")
+	}
+}
+
+func TestParseNameNewResponse(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    json.RawMessage
+		wantTxID string
+		wantRand string
+		wantErr  bool
+	}{
+		{
+			name:     "valid response",
+			input:    json.RawMessage(`{"txid":"abc123","rand":"def456","name":"d/test","status":"broadcasted"}`),
+			wantTxID: "abc123",
+			wantRand: "def456",
+		},
+		{
+			name:    "missing txid",
+			input:   json.RawMessage(`{"rand":"def456"}`),
+			wantErr: true,
+		},
+		{
+			name:    "missing rand",
+			input:   json.RawMessage(`{"txid":"abc123"}`),
+			wantErr: true,
+		},
+		{
+			name:    "invalid json",
+			input:   json.RawMessage(`invalid`),
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			txid, rand, err := parseNameNewResponse(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("parseNameNewResponse() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr {
+				if txid != tt.wantTxID {
+					t.Errorf("txid = %q, want %q", txid, tt.wantTxID)
+				}
+				if rand != tt.wantRand {
+					t.Errorf("rand = %q, want %q", rand, tt.wantRand)
+				}
+			}
+		})
 	}
 }
 
