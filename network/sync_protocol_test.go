@@ -848,3 +848,23 @@ func TestOnGetDataBlockRequest(t *testing.T) {
 	// nil peer triggers early return
 	pm.onGetData(nil, getData)
 }
+
+// TestOnGetBlocksNilBlockchainGraceful tests onGetBlocks with nil blockchain returns early
+func TestOnGetBlocksNilBlockchainGraceful(t *testing.T) {
+	pm := createTestPeerManager(t)
+	pm.blockchain = nil
+	defer pm.mempool.Stop()
+
+	getBlocks := &wire.MsgGetBlocks{
+		HashStop: chainhash.Hash{},
+	}
+
+	// Should not panic when blockchain is nil
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("onGetBlocks panicked with nil blockchain: %v", r)
+		}
+	}()
+
+	pm.onGetBlocks(nil, getBlocks)
+}

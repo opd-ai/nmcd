@@ -548,19 +548,20 @@ func (pm *PeerManager) onGetBlocks(p *peer.Peer, msg *wire.MsgGetBlocks) {
 		return
 	}
 
-	// Get the best block hash
-	bestHash := pm.blockchain.BestSnapshot().Hash
+	// Use btcd's LocateBlocks to find block hashes after the common ancestor
+	blockHashes := pm.blockchain.LocateBlocks(msg.BlockLocatorHashes, &msg.HashStop, wire.MaxBlocksPerMsg)
 
-	// In a full implementation, this would:
-	// 1. Find the common ancestor with msg.BlockLocatorHashes
-	// 2. Send inventory message with block hashes from that point
-	// For now, just log that we received the request
 	pm.logger.Debug("received getblocks request",
 		"peer_id", p.Addr(),
-		"best_hash", bestHash.String())
+		"block_count", len(blockHashes))
 
-	// Create inv message (empty for minimal implementation)
 	invMsg := wire.NewMsgInv()
+	for i := range blockHashes {
+		iv := wire.NewInvVect(wire.InvTypeBlock, &blockHashes[i])
+		if err := invMsg.AddInvVect(iv); err != nil {
+			break
+		}
+	}
 	p.QueueMessage(invMsg, nil)
 }
 
