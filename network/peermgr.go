@@ -290,8 +290,17 @@ func (pm *PeerManager) onVersion(p *peer.Peer, msg *wire.MsgVersion) *wire.MsgRe
 	return nil
 }
 
+// onVerAck handles the verack message completing the version handshake.
+// Per the Bitcoin protocol, peers exchange version/verack before any other
+// messages. The sync initiation is handled in onVersion rather than onVerAck
+// because btcd's peer package manages the version handshake internally and
+// the peer height information needed for sync decisions is only available
+// in the version message. This is intentional and does not affect correctness.
 func (pm *PeerManager) onVerAck(p *peer.Peer, msg *wire.MsgVerAck) {
-	// Handle verack message
+	if p != nil {
+		pm.logger.Debug("received verack from peer",
+			"peer_id", p.Addr())
+	}
 }
 
 func (pm *PeerManager) onInv(p *peer.Peer, msg *wire.MsgInv) {
@@ -463,11 +472,7 @@ func (pm *PeerManager) onGetData(p *peer.Peer, msg *wire.MsgGetData) {
 	for _, inv := range msg.InvList {
 		switch inv.Type {
 		case wire.InvTypeBlock:
-			// Block requests are handled but not fully implemented
-			// This would require fetching blocks from the blockchain database
-			pm.logger.Debug("received block request (not implemented)",
-				"peer_id", peerAddr,
-				"block_hash", inv.Hash.String())
+			pm.serveBlock(p, &inv.Hash, peerAddr)
 
 		case wire.InvTypeTx:
 			// Send transaction from mempool if we have it
@@ -486,6 +491,33 @@ func (pm *PeerManager) onGetData(p *peer.Peer, msg *wire.MsgGetData) {
 			}
 		}
 	}
+}
+
+// serveBlock fetches a block by hash and sends it to the requesting peer.
+func (pm *PeerManager) serveBlock(p *peer.Peer, hash *chainhash.Hash, peerAddr string) {
+	if p == nil {
+		return
+	}
+	if pm.blockchain == nil {
+		pm.logger.Debug("cannot serve block: blockchain not initialized",
+			"block_hash", hash.String(),
+			"peer_id", peerAddr)
+		return
+	}
+
+	block, err := pm.blockchain.GetBlockByHash(hash)
+	if err != nil {
+		pm.logger.Debug("block not found for getdata request",
+			"block_hash", hash.String(),
+			"peer_id", peerAddr,
+			"error", err)
+		return
+	}
+
+	p.QueueMessage(block.MsgBlock(), nil)
+	pm.logger.Debug("sent block to peer",
+		"block_hash", hash.String(),
+		"peer_id", peerAddr)
 }
 
 // onHeaders handles incoming headers messages for block synchronization
@@ -528,19 +560,24 @@ func (pm *PeerManager) onGetBlocks(p *peer.Peer, msg *wire.MsgGetBlocks) {
 		return
 	}
 
-	// Get the best block hash
-	bestHash := pm.blockchain.BestSnapshot().Hash
+	// Use btcd's LocateBlocks to find block hashes after the common ancestor
+	blockHashes := pm.blockchain.LocateBlocks(msg.BlockLocatorHashes, &msg.HashStop, wire.MaxBlocksPerMsg)
 
-	// In a full implementation, this would:
-	// 1. Find the common ancestor with msg.BlockLocatorHashes
-	// 2. Send inventory message with block hashes from that point
-	// For now, just log that we received the request
 	pm.logger.Debug("received getblocks request",
 		"peer_id", p.Addr(),
-		"best_hash", bestHash.String())
+		"block_count", len(blockHashes))
 
-	// Create inv message (empty for minimal implementation)
 	invMsg := wire.NewMsgInv()
+	for i := range blockHashes {
+		iv := wire.NewInvVect(wire.InvTypeBlock, &blockHashes[i])
+		if err := invMsg.AddInvVect(iv); err != nil {
+			pm.logger.Debug("inventory message full, truncating",
+				"error", err,
+				"sent", i,
+				"total", len(blockHashes))
+			break
+		}
+	}
 	p.QueueMessage(invMsg, nil)
 }
 

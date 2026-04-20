@@ -387,18 +387,18 @@ func (c *DaemonClient) ResolveName(ctx context.Context, name string) (*NameRecor
 
 // RegisterName creates a new name registration with the given value.
 //
-// IMPORTANT: RegisterName is not fully implemented in daemon mode. While the nmcd RPC
-// server provides name_new and name_firstupdate methods, the complete two-phase
-// registration workflow (NAME_NEW → wait 12 blocks → NAME_FIRSTUPDATE) needs
-// integration work to track pending registrations and automate the second phase.
+// RegisterName implements the two-phase Namecoin registration workflow:
+//  1. Calls name_new RPC to create a commitment transaction
+//  2. If WaitForConfirmation is false, returns immediately with the NAME_NEW txid
+//  3. If WaitForConfirmation is true, waits for 12 block confirmations, then
+//     calls name_firstupdate RPC to complete the registration
 //
-// Current status: The underlying RPC methods exist (name_new and name_firstupdate),
-// but automatic completion of the two-phase process is not yet implemented.
-//
-// Workarounds:
-// - Use embedded mode (NewClient with ModeEmbedded) for name registration
-// - Call name_new and name_firstupdate RPC methods directly via raw RPC client
-// - Use Namecoin Core's RPC interface which supports these methods
+// The rand value returned by name_new is required for name_firstupdate.
+// This method uses that value internally only when WaitForConfirmation is true.
+// When WaitForConfirmation is false, RegisterName returns the NAME_NEW txid but
+// does not expose rand to the caller. Callers that need to complete
+// name_firstupdate later must either set WaitForConfirmation to true or call
+// name_new directly and persist the returned rand themselves.
 func (c *DaemonClient) RegisterName(ctx context.Context, name, value string, opts *RegisterOpts) (*TxResult, error) {
 	// Validate inputs - use UI limit (520 bytes) matching Namecoin Core
 	if len(name) == 0 || len(name) > 255 {
@@ -408,9 +408,79 @@ func (c *DaemonClient) RegisterName(ctx context.Context, name, value string, opt
 		return nil, fmt.Errorf("%w: length %d (max %d)", ErrInvalidValue, len(value), config.MaxValueLengthUI)
 	}
 
-	// The daemon has name_new and name_firstupdate RPC methods, but automatic
-	// two-phase registration workflow integration is not yet complete.
-	return nil, fmt.Errorf("RegisterName via daemon mode is not yet supported: use embedded mode (ModeEmbedded) or call name_new/name_firstupdate RPC methods directly on Namecoin Core")
+	// Phase 1: Call name_new to create commitment
+	nameNewResult, err := c.rpcCall(ctx, "name_new", []string{name})
+	if err != nil {
+		return nil, fmt.Errorf("name_new failed: %w", err)
+	}
+
+	txid, rand, err := parseNameNewResponse(nameNewResult)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &TxResult{
+		TxHash: txid,
+		Name:   name,
+		Status: TxStatusPending,
+	}
+
+	if opts == nil || !opts.WaitForConfirmation {
+		return result, nil
+	}
+
+	// Phase 2: Wait for 12 confirmations, then call name_firstupdate
+	return c.completeNameRegistration(ctx, name, value, txid, rand, result)
+}
+
+// nameNewMinConfirmations is the minimum number of block confirmations
+// required before a NAME_FIRSTUPDATE can reference a NAME_NEW commitment.
+const nameNewMinConfirmations = 12
+
+// parseNameNewResponse extracts the txid and rand from a name_new RPC response.
+func parseNameNewResponse(result json.RawMessage) (txid, rand string, err error) {
+	var resp struct {
+		TxID string `json:"txid"`
+		Rand string `json:"rand"`
+	}
+	if err := json.Unmarshal(result, &resp); err != nil {
+		return "", "", fmt.Errorf("failed to parse name_new response: %w", err)
+	}
+	if resp.TxID == "" {
+		return "", "", fmt.Errorf("name_new response missing txid")
+	}
+	if resp.Rand == "" {
+		return "", "", fmt.Errorf("name_new response missing rand")
+	}
+	return resp.TxID, resp.Rand, nil
+}
+
+// completeNameRegistration waits for NAME_NEW to be confirmed and then
+// calls name_firstupdate to complete the two-phase registration.
+func (c *DaemonClient) completeNameRegistration(ctx context.Context, name, value, nameNewTxID, rand string, result *TxResult) (*TxResult, error) {
+	if err := c.WaitForConfirmation(ctx, nameNewTxID, nameNewMinConfirmations); err != nil {
+		return nil, fmt.Errorf("failed waiting for NAME_NEW confirmation: %w", err)
+	}
+
+	firstUpdateResult, err := c.rpcCall(ctx, "name_firstupdate", []string{name, rand, value})
+	if err != nil {
+		return nil, fmt.Errorf("name_firstupdate failed: %w", err)
+	}
+
+	var resp struct {
+		TxID string `json:"txid"`
+	}
+	if err := json.Unmarshal(firstUpdateResult, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse name_firstupdate response: %w", err)
+	}
+	if resp.TxID == "" {
+		return nil, fmt.Errorf("name_firstupdate response missing txid")
+	}
+
+	result.TxHash = resp.TxID
+	result.Status = TxStatusPending
+	result.Confirmations = 0
+	return result, nil
 }
 
 // UpdateName updates an existing name's value.

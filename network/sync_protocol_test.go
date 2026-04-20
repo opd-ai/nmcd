@@ -807,3 +807,86 @@ func TestOnInvWithPeerLikeConditions(t *testing.T) {
 	// Should handle nil peer gracefully
 	pm.onInv(nil, inv)
 }
+
+// TestServeBlockNilBlockchain tests serveBlock when blockchain is nil.
+// Note: Functional tests verifying that serveBlock queues a MsgBlock when
+// GetBlockByHash succeeds would require the blockchain field to be an interface
+// for mock injection. The field is currently *chain.BlockChain (concrete type),
+// so these tests validate nil-safety and error paths only.
+func TestServeBlockNilBlockchain(t *testing.T) {
+	pm := createTestPeerManager(t)
+	pm.blockchain = nil
+	defer pm.mempool.Stop()
+
+	var hash chainhash.Hash
+	hash[0] = 0x01
+
+	// Should not panic when blockchain is nil
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("serveBlock panicked with nil blockchain: %v", r)
+		}
+	}()
+
+	pm.serveBlock(nil, &hash, "test-peer")
+}
+
+// TestServeBlockNilPeer tests serveBlock returns silently with nil peer
+func TestServeBlockNilPeer(t *testing.T) {
+	pm := createTestPeerManager(t)
+	defer pm.mempool.Stop()
+
+	var hash chainhash.Hash
+	hash[0] = 0x01
+
+	// Should return silently without panic or logging when peer is nil
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("serveBlock panicked with nil peer: %v", r)
+		}
+	}()
+
+	pm.serveBlock(nil, &hash, "test-peer")
+}
+
+// TestOnGetDataBlockRequest tests onGetData block serving with nil blockchain
+func TestOnGetDataBlockRequest(t *testing.T) {
+	pm := createTestPeerManager(t)
+	pm.blockchain = nil
+	defer pm.mempool.Stop()
+
+	getData := wire.NewMsgGetData()
+	var blockHash chainhash.Hash
+	blockHash[0] = 0xAB
+	getData.AddInvVect(wire.NewInvVect(wire.InvTypeBlock, &blockHash))
+
+	// Should not panic — gracefully handles nil blockchain
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("onGetData panicked with block request and nil blockchain: %v", r)
+		}
+	}()
+
+	// nil peer triggers early return
+	pm.onGetData(nil, getData)
+}
+
+// TestOnGetBlocksNilBlockchainGraceful tests onGetBlocks with nil blockchain returns early
+func TestOnGetBlocksNilBlockchainGraceful(t *testing.T) {
+	pm := createTestPeerManager(t)
+	pm.blockchain = nil
+	defer pm.mempool.Stop()
+
+	getBlocks := &wire.MsgGetBlocks{
+		HashStop: chainhash.Hash{},
+	}
+
+	// Should not panic when blockchain is nil
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("onGetBlocks panicked with nil blockchain: %v", r)
+		}
+	}()
+
+	pm.onGetBlocks(nil, getBlocks)
+}

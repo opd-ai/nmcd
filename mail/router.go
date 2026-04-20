@@ -19,17 +19,6 @@ type ForwardingRule struct {
 	Backups []string
 }
 
-// Resolver defines the interface for looking up mail forwarding rules.
-// This abstraction decouples the router from the specific bridge implementation,
-// enabling testing with mock resolvers.
-//
-// Note: This interface matches bridge.Resolver for seamless integration.
-type Resolver interface {
-	// LookupMail retrieves email configuration for a given name.
-	// The name should be a localpart (e.g., "alice") without the .bit domain.
-	LookupMail(ctx context.Context, name string) (bridge.MailConfig, error)
-}
-
 // cacheEntry stores a cached forwarding rule with expiration time
 type cacheEntry struct {
 	rule      ForwardingRule
@@ -41,7 +30,7 @@ type cacheEntry struct {
 //
 // Thread-safety: Router is safe for concurrent use by multiple goroutines.
 type Router struct {
-	resolver Resolver              // Resolver for mail config lookups
+	resolver bridge.Resolver       // Resolver for mail config lookups
 	cache    map[string]cacheEntry // Cache mapping names to forwarding rules
 	ttl      time.Duration         // Time-to-live for cache entries
 	mu       sync.RWMutex          // Protects cache map
@@ -50,7 +39,7 @@ type Router struct {
 // NewRouter creates a new mail router with the given resolver and cache TTL.
 //
 // Parameters:
-//   - resolver: Implementation of Resolver interface (typically bridge.NamecoinBridge)
+//   - resolver: Implementation of bridge.Resolver interface (typically bridge.NamecoinBridge)
 //   - ttl: Cache time-to-live duration (0 disables caching)
 //
 // Returns:
@@ -63,7 +52,7 @@ type Router struct {
 //
 //	// Create with no caching
 //	router := NewRouter(bridgeResolver, 0)
-func NewRouter(resolver Resolver, ttl time.Duration) *Router {
+func NewRouter(resolver bridge.Resolver, ttl time.Duration) *Router {
 	return &Router{
 		resolver: resolver,
 		cache:    make(map[string]cacheEntry),
