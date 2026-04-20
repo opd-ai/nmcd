@@ -495,7 +495,7 @@ func (pm *PeerManager) onGetData(p *peer.Peer, msg *wire.MsgGetData) {
 
 // serveBlock fetches a block by hash and sends it to the requesting peer.
 func (pm *PeerManager) serveBlock(p *peer.Peer, hash *chainhash.Hash, peerAddr string) {
-	if pm.blockchain == nil {
+	if p == nil || pm.blockchain == nil {
 		pm.logger.Debug("cannot serve block: blockchain not initialized",
 			"block_hash", hash.String(),
 			"peer_id", peerAddr)
@@ -568,6 +568,10 @@ func (pm *PeerManager) onGetBlocks(p *peer.Peer, msg *wire.MsgGetBlocks) {
 	for i := range blockHashes {
 		iv := wire.NewInvVect(wire.InvTypeBlock, &blockHashes[i])
 		if err := invMsg.AddInvVect(iv); err != nil {
+			pm.logger.Debug("inventory message full, truncating",
+				"error", err,
+				"sent", i,
+				"total", len(blockHashes))
 			break
 		}
 	}
