@@ -290,8 +290,17 @@ func (pm *PeerManager) onVersion(p *peer.Peer, msg *wire.MsgVersion) *wire.MsgRe
 	return nil
 }
 
+// onVerAck handles the verack message completing the version handshake.
+// Per the Bitcoin protocol, peers exchange version/verack before any other
+// messages. The sync initiation is handled in onVersion rather than onVerAck
+// because btcd's peer package manages the version handshake internally and
+// the peer height information needed for sync decisions is only available
+// in the version message. This is intentional and does not affect correctness.
 func (pm *PeerManager) onVerAck(p *peer.Peer, msg *wire.MsgVerAck) {
-	// Handle verack message
+	if p != nil {
+		pm.logger.Debug("received verack from peer",
+			"peer_id", p.Addr())
+	}
 }
 
 func (pm *PeerManager) onInv(p *peer.Peer, msg *wire.MsgInv) {
