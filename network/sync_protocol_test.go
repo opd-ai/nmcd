@@ -808,7 +808,11 @@ func TestOnInvWithPeerLikeConditions(t *testing.T) {
 	pm.onInv(nil, inv)
 }
 
-// TestServeBlockNilBlockchain tests serveBlock when blockchain is nil
+// TestServeBlockNilBlockchain tests serveBlock when blockchain is nil.
+// Note: Functional tests verifying that serveBlock queues a MsgBlock when
+// GetBlockByHash succeeds would require the blockchain field to be an interface
+// for mock injection. The field is currently *chain.BlockChain (concrete type),
+// so these tests validate nil-safety and error paths only.
 func TestServeBlockNilBlockchain(t *testing.T) {
 	pm := createTestPeerManager(t)
 	pm.blockchain = nil
@@ -821,6 +825,24 @@ func TestServeBlockNilBlockchain(t *testing.T) {
 	defer func() {
 		if r := recover(); r != nil {
 			t.Errorf("serveBlock panicked with nil blockchain: %v", r)
+		}
+	}()
+
+	pm.serveBlock(nil, &hash, "test-peer")
+}
+
+// TestServeBlockNilPeer tests serveBlock returns silently with nil peer
+func TestServeBlockNilPeer(t *testing.T) {
+	pm := createTestPeerManager(t)
+	defer pm.mempool.Stop()
+
+	var hash chainhash.Hash
+	hash[0] = 0x01
+
+	// Should return silently without panic or logging when peer is nil
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("serveBlock panicked with nil peer: %v", r)
 		}
 	}()
 

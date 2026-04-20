@@ -495,7 +495,10 @@ func (pm *PeerManager) onGetData(p *peer.Peer, msg *wire.MsgGetData) {
 
 // serveBlock fetches a block by hash and sends it to the requesting peer.
 func (pm *PeerManager) serveBlock(p *peer.Peer, hash *chainhash.Hash, peerAddr string) {
-	if p == nil || pm.blockchain == nil {
+	if p == nil {
+		return
+	}
+	if pm.blockchain == nil {
 		pm.logger.Debug("cannot serve block: blockchain not initialized",
 			"block_hash", hash.String(),
 			"peer_id", peerAddr)

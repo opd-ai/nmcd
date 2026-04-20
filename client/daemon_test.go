@@ -962,6 +962,118 @@ func TestDaemonClient_RegisterName(t *testing.T) {
 	}
 }
 
+// TestDaemonClient_RegisterName_WaitForConfirmation tests the full two-phase
+// registration flow: name_new → wait for 12 confirmations → name_firstupdate.
+func TestDaemonClient_RegisterName_WaitForConfirmation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var calls []string
+	var getRawTransactionCalls int
+	var firstUpdateArgs []interface{}
+
+	server := mockRPCServer(t, func(method string, params json.RawMessage) (interface{}, *rpcError) {
+		calls = append(calls, method)
+
+		switch method {
+		case "name_new":
+			var rpcParams []interface{}
+			if err := json.Unmarshal(params, &rpcParams); err != nil {
+				t.Fatalf("name_new params unmarshal error = %v", err)
+			}
+			if len(rpcParams) < 1 || rpcParams[0] != "d/test" {
+				t.Fatalf("name_new params = %#v, want first arg %q", rpcParams, "d/test")
+			}
+			return map[string]interface{}{
+				"txid":   "name-new-txid",
+				"rand":   "rand-value",
+				"name":   "d/test",
+				"status": "broadcasted",
+			}, nil
+
+		case "getrawtransaction":
+			getRawTransactionCalls++
+			// First call: not enough confirmations; second call: 12 confirmations
+			if getRawTransactionCalls == 1 {
+				return map[string]interface{}{
+					"txid":          "name-new-txid",
+					"confirmations": 0,
+				}, nil
+			}
+			return map[string]interface{}{
+				"txid":          "name-new-txid",
+				"confirmations": 12,
+			}, nil
+
+		case "name_firstupdate":
+			if err := json.Unmarshal(params, &firstUpdateArgs); err != nil {
+				t.Fatalf("name_firstupdate params unmarshal error = %v", err)
+			}
+			return map[string]interface{}{
+				"txid":   "name-firstupdate-txid",
+				"name":   "d/test",
+				"value":  `{}`,
+				"status": "broadcasted",
+			}, nil
+
+		default:
+			return nil, &rpcError{Code: -32601, Message: "Method not found: " + method}
+		}
+	})
+	defer server.Close()
+
+	client, err := NewDaemonClient(&Config{
+		Mode:    ModeDaemon,
+		RPCAddr: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("NewDaemonClient() error = %v", err)
+	}
+	defer client.Close()
+
+	result, err := client.RegisterName(ctx, "d/test", `{}`, &RegisterOpts{
+		WaitForConfirmation: true,
+	})
+	if err != nil {
+		t.Fatalf("RegisterName() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("RegisterName() result is nil")
+	}
+
+	// Verify RPC call sequence
+	gotCalls := strings.Join(calls, ",")
+	wantCalls := "name_new,getrawtransaction,getrawtransaction,name_firstupdate"
+	if gotCalls != wantCalls {
+		t.Fatalf("RPC call sequence = %q, want %q", gotCalls, wantCalls)
+	}
+
+	// Verify name_firstupdate was called with correct params (name, rand, value)
+	if len(firstUpdateArgs) < 3 {
+		t.Fatalf("name_firstupdate params = %#v, want at least 3 args", firstUpdateArgs)
+	}
+	if firstUpdateArgs[0] != "d/test" {
+		t.Errorf("name_firstupdate name = %#v, want %q", firstUpdateArgs[0], "d/test")
+	}
+	if firstUpdateArgs[1] != "rand-value" {
+		t.Errorf("name_firstupdate rand = %#v, want %q", firstUpdateArgs[1], "rand-value")
+	}
+	if firstUpdateArgs[2] != "{}" {
+		t.Errorf("name_firstupdate value = %#v, want %q", firstUpdateArgs[2], "{}")
+	}
+
+	// After name_firstupdate broadcast, result should be pending (not yet mined)
+	if result.TxHash != "name-firstupdate-txid" {
+		t.Errorf("RegisterName() txHash = %q, want %q", result.TxHash, "name-firstupdate-txid")
+	}
+	if result.Status != TxStatusPending {
+		t.Errorf("RegisterName() status = %q, want %q", result.Status, TxStatusPending)
+	}
+	if result.Confirmations != 0 {
+		t.Errorf("RegisterName() confirmations = %d, want 0", result.Confirmations)
+	}
+}
+
 func TestParseNameNewResponse(t *testing.T) {
 	tests := []struct {
 		name     string

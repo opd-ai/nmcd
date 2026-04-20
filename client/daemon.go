@@ -393,10 +393,12 @@ func (c *DaemonClient) ResolveName(ctx context.Context, name string) (*NameRecor
 //  3. If WaitForConfirmation is true, waits for 12 block confirmations, then
 //     calls name_firstupdate RPC to complete the registration
 //
-// The rand value from name_new is required for name_firstupdate but is only
-// available during this call. If WaitForConfirmation is false, the caller is
-// responsible for completing registration by calling name_firstupdate RPC
-// directly with the rand value returned in TxResult.Rand.
+// The rand value returned by name_new is required for name_firstupdate.
+// This method uses that value internally only when WaitForConfirmation is true.
+// When WaitForConfirmation is false, RegisterName returns the NAME_NEW txid but
+// does not expose rand to the caller. Callers that need to complete
+// name_firstupdate later must either set WaitForConfirmation to true or call
+// name_new directly and persist the returned rand themselves.
 func (c *DaemonClient) RegisterName(ctx context.Context, name, value string, opts *RegisterOpts) (*TxResult, error) {
 	// Validate inputs - use UI limit (520 bytes) matching Namecoin Core
 	if len(name) == 0 || len(name) > 255 {
@@ -471,10 +473,13 @@ func (c *DaemonClient) completeNameRegistration(ctx context.Context, name, value
 	if err := json.Unmarshal(firstUpdateResult, &resp); err != nil {
 		return nil, fmt.Errorf("failed to parse name_firstupdate response: %w", err)
 	}
+	if resp.TxID == "" {
+		return nil, fmt.Errorf("name_firstupdate response missing txid")
+	}
 
 	result.TxHash = resp.TxID
-	result.Status = TxStatusConfirmed
-	result.Confirmations = nameNewMinConfirmations
+	result.Status = TxStatusPending
+	result.Confirmations = 0
 	return result, nil
 }
 
