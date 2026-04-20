@@ -3,13 +3,13 @@
 // The mail package implements the core routing functionality for the Permamail system,
 // enabling resolution of blockchain-based .bit email addresses to real email addresses.
 // It is designed to be completely independent of Namecoin, using dependency injection
-// to interact with the blockchain through the Resolver interface.
+// to interact with the blockchain through the bridge.Resolver interface.
 //
 // # Architecture
 //
 // The package follows a clean separation of concerns:
 //
-//   - Resolver interface: Abstracts mail config lookups (implemented by bridge package)
+//   - bridge.Resolver interface: Abstracts mail config lookups (implemented by bridge package)
 //   - Router: Stateless routing logic with optional caching
 //   - Address parsing: Validates .bit email address format
 //
@@ -73,7 +73,7 @@
 //
 // # Testing
 //
-// The Resolver interface enables testing without a real Namecoin node:
+// The bridge.Resolver interface enables testing without a real Namecoin node:
 //
 //	type mockResolver struct {
 //	    responses map[string]bridge.MailConfig
