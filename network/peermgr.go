@@ -463,11 +463,7 @@ func (pm *PeerManager) onGetData(p *peer.Peer, msg *wire.MsgGetData) {
 	for _, inv := range msg.InvList {
 		switch inv.Type {
 		case wire.InvTypeBlock:
-			// Block requests are handled but not fully implemented
-			// This would require fetching blocks from the blockchain database
-			pm.logger.Debug("received block request (not implemented)",
-				"peer_id", peerAddr,
-				"block_hash", inv.Hash.String())
+			pm.serveBlock(p, &inv.Hash, peerAddr)
 
 		case wire.InvTypeTx:
 			// Send transaction from mempool if we have it
@@ -486,6 +482,30 @@ func (pm *PeerManager) onGetData(p *peer.Peer, msg *wire.MsgGetData) {
 			}
 		}
 	}
+}
+
+// serveBlock fetches a block by hash and sends it to the requesting peer.
+func (pm *PeerManager) serveBlock(p *peer.Peer, hash *chainhash.Hash, peerAddr string) {
+	if pm.blockchain == nil {
+		pm.logger.Debug("cannot serve block: blockchain not initialized",
+			"block_hash", hash.String(),
+			"peer_id", peerAddr)
+		return
+	}
+
+	block, err := pm.blockchain.GetBlockByHash(hash)
+	if err != nil {
+		pm.logger.Debug("block not found for getdata request",
+			"block_hash", hash.String(),
+			"peer_id", peerAddr,
+			"error", err)
+		return
+	}
+
+	p.QueueMessage(block.MsgBlock(), nil)
+	pm.logger.Debug("sent block to peer",
+		"block_hash", hash.String(),
+		"peer_id", peerAddr)
 }
 
 // onHeaders handles incoming headers messages for block synchronization
