@@ -370,7 +370,10 @@ func (bc *BlockChain) validateBlockSubsidy(block *btcutil.Block) error {
 	// to avoid false rejections of legitimate blocks that include transaction fees.
 	maxSubsidy := config.CalcBlockSubsidy(height, bc.chainParams)
 	txs := block.Transactions()
-	totalFees, skipFeeCheck := bc.computeBlockFees(txs[1:], height)
+	totalFees, skipFeeCheck, err := bc.computeBlockFees(txs[1:], height)
+	if err != nil {
+		return err
+	}
 	if skipFeeCheck {
 		// Cannot compute fees; skip the subsidy check to avoid false positives.
 		return nil
@@ -385,29 +388,33 @@ func (bc *BlockChain) validateBlockSubsidy(block *btcutil.Block) error {
 }
 
 // computeBlockFees sums the transaction fees for a set of non-coinbase transactions.
-// Returns (totalFees, skipCheck). skipCheck is true when UTXO data is unavailable,
-// which means the caller should skip fee-based validation to avoid false rejections.
-func (bc *BlockChain) computeBlockFees(txs []*btcutil.Tx, height int32) (int64, bool) {
+// Returns (totalFees, skipCheck, err). skipCheck is true when UTXO data is unavailable
+// for historical blocks, which means the caller should skip fee-based validation to
+// avoid false rejections.
+func (bc *BlockChain) computeBlockFees(txs []*btcutil.Tx, height int32) (int64, bool, error) {
 	if bc.nameDB == nil || len(txs) == 0 {
 		// No non-coinbase transactions means no fees; strict check is valid.
-		return 0, false
+		return 0, false, nil
 	}
 	var totalFees int64
 	for _, tx := range txs {
 		inputSum, skip, err := bc.sumInputValues(tx.MsgTx(), height)
-		if skip || err != nil {
-			return 0, true
+		if skip {
+			return 0, true, nil
+		}
+		if err != nil {
+			return 0, false, err
 		}
 		outputSum, err := sumOutputValues(tx.MsgTx())
 		if err != nil {
-			return 0, true
+			return 0, false, err
 		}
 		fee := inputSum - outputSum
 		if fee > 0 {
 			totalFees += fee
 		}
 	}
-	return totalFees, false
+	return totalFees, false, nil
 }
 
 // validateProofOfWork validates that the block hash meets the difficulty target

@@ -628,6 +628,10 @@ func (s *Server) getMetrics(req *Request) *Response {
 
 // nameShow returns information about a name
 func (s *Server) nameShow(req *Request) *Response {
+	if errResp := s.requireBlockchain(req.ID); errResp != nil {
+		return errResp
+	}
+
 	var params []string
 	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
 		return &Response{
@@ -655,8 +659,8 @@ func (s *Server) nameShow(req *Request) *Response {
 
 	bestHeight := s.blockchain.BestSnapshot().Height
 	expiresIn := record.ExpiresAt - bestHeight
-	expired := expiresIn <= 0
-	if expired {
+	expired := expiresIn < 0
+	if expiresIn < 0 {
 		expiresIn = 0
 	}
 
@@ -1059,6 +1063,10 @@ func findNameNewUTXOIndex(utxos []wallet.UTXO) int {
 
 // nameList returns all names in the database
 func (s *Server) nameList(req *Request) *Response {
+	if errResp := s.requireBlockchain(req.ID); errResp != nil {
+		return errResp
+	}
+
 	names, err := s.blockchain.ListNames()
 	if err != nil {
 		return &Response{
@@ -1076,8 +1084,8 @@ func (s *Server) nameList(req *Request) *Response {
 	bestHeight := s.blockchain.BestSnapshot().Height
 	for i, record := range names {
 		expiresIn := record.ExpiresAt - bestHeight
-		expired := expiresIn <= 0
-		if expired {
+		expired := expiresIn < 0
+		if expiresIn < 0 {
 			expiresIn = 0
 		}
 		result[i] = map[string]interface{}{
@@ -1206,8 +1214,8 @@ func formatNameRecords(names []*namedb.NameRecord, currentHeight int32) []map[st
 	result := make([]map[string]interface{}, len(names))
 	for i, record := range names {
 		expiresIn := record.ExpiresAt - currentHeight
-		expired := expiresIn <= 0
-		if expired {
+		expired := expiresIn < 0
+		if expiresIn < 0 {
 			expiresIn = 0
 		}
 		result[i] = map[string]interface{}{
