@@ -127,22 +127,22 @@ func TestHandleRequestAuth(t *testing.T) {
 			expectedStatus: http.StatusUnauthorized,
 		},
 		{
-			name:           "only user configured - auth not enforced (need both)",
+			name:           "only user configured - auth enforced (either credential triggers auth)",
 			serverUser:     "admin",
 			serverPass:     "",
 			requestUser:    "",
 			requestPass:    "",
 			setBasicAuth:   false,
-			expectedStatus: http.StatusOK, // Auth not enforced when only one credential is set
+			expectedStatus: http.StatusUnauthorized, // Auth enforced when either credential is set
 		},
 		{
-			name:           "only password configured - auth not enforced (need both)",
+			name:           "only password configured - auth enforced (either credential triggers auth)",
 			serverUser:     "",
 			serverPass:     "secret",
 			requestUser:    "",
 			requestPass:    "",
 			setBasicAuth:   false,
-			expectedStatus: http.StatusOK, // Auth not enforced when only one credential is set
+			expectedStatus: http.StatusUnauthorized, // Auth enforced when either credential is set
 		},
 	}
 

@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -377,6 +378,7 @@ func (ndb *NameDatabase) ScanNames(prefix string, count int) ([]*NameRecord, err
 
 			record, decodeErr := decodeNameRecord(v)
 			if decodeErr != nil {
+				log.Printf("Warning: skipping corrupted name entry in ScanNames for key %q: %v", string(k), decodeErr)
 				continue
 			}
 			record.Name = string(k)

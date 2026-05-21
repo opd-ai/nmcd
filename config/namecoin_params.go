@@ -127,7 +127,12 @@ var genesisBlock = wire.MsgBlock{
 	Transactions: []*wire.MsgTx{&genesisCoinbaseTx},
 }
 
-// Testnet genesis block data
+// Testnet genesis block data.
+// NOTE (BUG-014): testNetGenesisMerkleRoot is currently set to Bitcoin's testnet
+// genesis merkle root (0x3ba3edfd...). Namecoin has a different testnet genesis
+// block. This causes testnet mode to start with an incorrect genesis block and
+// will be incompatible with real Namecoin testnet peers. Update to the correct
+// Namecoin testnet genesis values when connecting to a real Namecoin testnet.
 var testNetGenesisTimestamp = time.Unix(1296688602, 0)
 
 var testNetGenesisMerkleRoot = chainhash.Hash([chainhash.HashSize]byte{
@@ -156,7 +161,11 @@ var testNetGenesisBlock = wire.MsgBlock{
 	Transactions: []*wire.MsgTx{&genesisCoinbaseTx},
 }
 
-// Regtest genesis block data
+// Regtest genesis block data.
+// NOTE (BUG-014): regTestGenesisMerkleRoot is currently set to Bitcoin's testnet
+// genesis merkle root (0x3ba3edfd...). For regtest mode used in development and
+// testing this does not affect compatibility (regtest is self-contained), but
+// the value should be updated to Namecoin's actual regtest genesis if one exists.
 var regTestGenesisTimestamp = time.Unix(1296688602, 0)
 
 var regTestGenesisMerkleRoot = chainhash.Hash([chainhash.HashSize]byte{

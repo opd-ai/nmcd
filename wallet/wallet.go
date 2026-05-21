@@ -345,7 +345,6 @@ func (w *Wallet) EncryptWallet(password string) error {
 		w.unlockPassword = ""
 		w.passwordHash = nil
 		w.passwordSalt = nil
-		w.passwordHash = nil
 		return fmt.Errorf("failed to save encrypted wallet: %w", err)
 	}
 
@@ -366,11 +365,15 @@ func (w *Wallet) Lock() error {
 		return fmt.Errorf("wallet is already locked")
 	}
 
-	// Clear sensitive data from memory
-	// Zero private key bytes before removing references
+	// Clear sensitive data from memory.
+	// Note: kp.PrivateKey.Serialize() returns a copy of the key bytes, so zeroing
+	// the copy does not zero the original key held inside the btcec.PrivateKey struct.
+	// True in-memory zeroing would require access to btcec internals or a custom key type.
+	// This is a best-effort measure; the private key bytes may remain accessible in memory
+	// until the garbage collector reclaims the btcec.PrivateKey object.
 	for _, kp := range w.keys {
 		if kp.PrivateKey != nil {
-			// Zero the private key bytes
+			// Zero the serialized copy as a best-effort measure.
 			privKeyBytes := kp.PrivateKey.Serialize()
 			for i := range privKeyBytes {
 				privKeyBytes[i] = 0
