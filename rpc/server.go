@@ -376,10 +376,9 @@ func (s *Server) validateHTTPRequest(w http.ResponseWriter, r *http.Request) err
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return fmt.Errorf("method not allowed")
 	}
-	if r.ContentLength <= 0 {
-		http.Error(w, "Content-Length required", http.StatusLengthRequired)
-		return fmt.Errorf("content-length required")
-	}
+	// Accept requests without Content-Length (e.g. chunked transfer encoding).
+	// The body size is enforced by http.MaxBytesReader in the caller, so we only
+	// reject requests that explicitly declare a size exceeding the limit.
 	if r.ContentLength > s.maxRequestSize {
 		http.Error(w, "Request too large", http.StatusRequestEntityTooLarge)
 		return fmt.Errorf("request too large")
@@ -388,7 +387,7 @@ func (s *Server) validateHTTPRequest(w http.ResponseWriter, r *http.Request) err
 		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 		return fmt.Errorf("rate limit exceeded")
 	}
-	if s.rpcUser != "" && s.rpcPassword != "" && !s.checkAuth(r) {
+	if (s.rpcUser != "" || s.rpcPassword != "") && !s.checkAuth(r) {
 		w.Header().Set("WWW-Authenticate", `Basic realm="nmcd RPC"`)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return fmt.Errorf("unauthorized")
@@ -654,12 +653,20 @@ func (s *Server) nameShow(req *Request) *Response {
 		}
 	}
 
+	bestHeight := s.blockchain.BestSnapshot().Height
+	expiresIn := record.ExpiresAt - bestHeight
+	expired := expiresIn <= 0
+	if expired {
+		expiresIn = 0
+	}
+
 	result := map[string]interface{}{
 		"name":       record.Name,
 		"value":      record.Value,
 		"txid":       record.TxHash.String(),
 		"height":     record.Height,
-		"expires_in": record.ExpiresAt - s.blockchain.BestSnapshot().Height,
+		"expires_in": expiresIn,
+		"expired":    expired,
 		"address":    record.Address,
 	}
 
@@ -1068,12 +1075,18 @@ func (s *Server) nameList(req *Request) *Response {
 	result := make([]map[string]interface{}, len(names))
 	bestHeight := s.blockchain.BestSnapshot().Height
 	for i, record := range names {
+		expiresIn := record.ExpiresAt - bestHeight
+		expired := expiresIn <= 0
+		if expired {
+			expiresIn = 0
+		}
 		result[i] = map[string]interface{}{
 			"name":       record.Name,
 			"value":      record.Value,
 			"txid":       record.TxHash.String(),
 			"height":     record.Height,
-			"expires_in": record.ExpiresAt - bestHeight,
+			"expires_in": expiresIn,
+			"expired":    expired,
 			"address":    record.Address,
 		}
 	}
@@ -1192,12 +1205,18 @@ func parseNameScanParams(rawParams json.RawMessage, reqID interface{}) (string, 
 func formatNameRecords(names []*namedb.NameRecord, currentHeight int32) []map[string]interface{} {
 	result := make([]map[string]interface{}, len(names))
 	for i, record := range names {
+		expiresIn := record.ExpiresAt - currentHeight
+		expired := expiresIn <= 0
+		if expired {
+			expiresIn = 0
+		}
 		result[i] = map[string]interface{}{
 			"name":       record.Name,
 			"value":      record.Value,
 			"txid":       record.TxHash.String(),
 			"height":     record.Height,
-			"expires_in": record.ExpiresAt - currentHeight,
+			"expires_in": expiresIn,
+			"expired":    expired,
 			"address":    record.Address,
 		}
 	}

@@ -325,8 +325,9 @@ func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.Behavi
 // - Halves every 210,000 blocks
 // - Maximum supply: ~21,000,000 NMC
 //
-// Note: This function only validates that the reward doesn't EXCEED the maximum.
-// It's acceptable for miners to claim less than the maximum (though unusual).
+// The maximum allowed coinbase output is: blockReward + totalTransactionFees.
+// When UTXO data is unavailable for historical blocks, fee validation is skipped
+// to avoid false rejections of legitimate blocks.
 func (bc *BlockChain) validateBlockSubsidy(block *btcutil.Block) error {
 	// Get the coinbase transaction (always the first transaction)
 	if len(block.Transactions()) == 0 {
@@ -364,22 +365,49 @@ func (bc *BlockChain) validateBlockSubsidy(block *btcutil.Block) error {
 		}
 	}
 
-	// Calculate maximum allowed subsidy for this block height
+	// Compute transaction fees from non-coinbase transactions.
+	// If UTXO data is unavailable (historical blocks), skip the fee-inclusive check
+	// to avoid false rejections of legitimate blocks that include transaction fees.
 	maxSubsidy := config.CalcBlockSubsidy(height, bc.chainParams)
+	txs := block.Transactions()
+	totalFees, skipFeeCheck := bc.computeBlockFees(txs[1:], height)
+	if skipFeeCheck {
+		// Cannot compute fees; skip the subsidy check to avoid false positives.
+		return nil
+	}
 
-	// In a proper implementation, we should also add transaction fees to maxSubsidy.
-	// However, since we don't have full UTXO tracking for all historical blocks,
-	// we'll skip fee validation for now. This is documented as a known limitation.
-	//
-	// For now, we only validate that the coinbase output doesn't exceed the base subsidy.
-	// This catches the most egregious cases where miners try to create too many coins.
-
-	if totalOutput > maxSubsidy {
-		return fmt.Errorf("coinbase output %d exceeds maximum block subsidy %d at height %d",
-			totalOutput, maxSubsidy, height)
+	if totalOutput > maxSubsidy+totalFees {
+		return fmt.Errorf("coinbase output %d exceeds maximum block subsidy %d plus fees %d at height %d",
+			totalOutput, maxSubsidy, totalFees, height)
 	}
 
 	return nil
+}
+
+// computeBlockFees sums the transaction fees for a set of non-coinbase transactions.
+// Returns (totalFees, skipCheck). skipCheck is true when UTXO data is unavailable,
+// which means the caller should skip fee-based validation to avoid false rejections.
+func (bc *BlockChain) computeBlockFees(txs []*btcutil.Tx, height int32) (int64, bool) {
+	if bc.nameDB == nil || len(txs) == 0 {
+		// No non-coinbase transactions means no fees; strict check is valid.
+		return 0, false
+	}
+	var totalFees int64
+	for _, tx := range txs {
+		inputSum, skip, err := bc.sumInputValues(tx.MsgTx(), height)
+		if skip || err != nil {
+			return 0, true
+		}
+		outputSum, err := sumOutputValues(tx.MsgTx())
+		if err != nil {
+			return 0, true
+		}
+		fee := inputSum - outputSum
+		if fee > 0 {
+			totalFees += fee
+		}
+	}
+	return totalFees, false
 }
 
 // validateProofOfWork validates that the block hash meets the difficulty target
@@ -870,6 +898,10 @@ func (bc *BlockChain) sumInputValues(tx *wire.MsgTx, height int32) (int64, bool,
 			return 0, false, fmt.Errorf("cannot validate transaction fee: UTXO %s:%d not found at height %d: %w",
 				txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index, height, err)
 		}
+		if utxo.Value < 0 {
+			return 0, false, fmt.Errorf("negative UTXO value %d at %s:%d",
+				utxo.Value, txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index)
+		}
 		if totalInputValue > 0 && utxo.Value > 0 && totalInputValue > (1<<63-1)-utxo.Value {
 			return 0, false, fmt.Errorf("transaction input value overflow: %d + %d", totalInputValue, utxo.Value)
 		}
@@ -1221,11 +1253,15 @@ const (
 	op2Drop = 0x6d
 )
 
-// computeCommitHash computes the NAME_NEW commitment hash with chain ID.
+// computeCommitHash computes the NAME_NEW commitment hash with a network-specific identifier.
 // The commitment is RIPEMD160(SHA256(rand || name || chainID)) to prevent
-// cross-chain replay attacks. The chain ID is derived from the network magic bytes.
-// This ensures that NAME_NEW commitments are network-specific and cannot be
-// replayed across mainnet, testnet, or regtest networks.
+// cross-chain replay attacks. The chain identifier is derived from the network magic bytes,
+// providing network-specific commitments that differ across mainnet, testnet, and regtest.
+//
+// Note: The Namecoin AuxPow protocol uses a separate chain ID (NamecoinChainID = 1) for
+// merge-mining identification, which is distinct from the commitment hash chain identifier
+// used here. The network-magic-based approach used here ensures cross-network replay
+// protection for NAME_NEW commitments.
 //
 // Parameters:
 //   - rand: Random salt value from NAME_NEW
@@ -1235,7 +1271,7 @@ const (
 // Returns: 20-byte commitment hash (RIPEMD160(SHA256(data)))
 func computeCommitHash(rand []byte, name string, chainParams *chaincfg.Params) []byte {
 	nameBytes := []byte(name)
-	// Extract network magic bytes as chain ID (4 bytes)
+	// Extract network magic bytes as chain ID (4 bytes, little-endian)
 	chainID := make([]byte, 4)
 	chainID[0] = byte(chainParams.Net)
 	chainID[1] = byte(chainParams.Net >> 8)
@@ -1688,11 +1724,11 @@ func (bc *BlockChain) VerifyBlock(block *btcutil.Block) error {
 	return nil
 }
 
-// HandleBlockchainNotification processes blockchain notifications
+// HandleBlockchainNotification processes blockchain notifications.
+// This method must NOT acquire bc.mu because it may be dispatched synchronously
+// from within bc.BlockChain.ProcessBlock() (which holds bc.mu), causing a deadlock.
+// All operations here delegate to bc.nameDB which has its own independent mutex.
 func (bc *BlockChain) HandleBlockchainNotification(notification *blockchain.Notification) {
-	bc.mu.Lock()
-	defer bc.mu.Unlock()
-
 	switch notification.Type {
 	case blockchain.NTBlockConnected:
 		// Block connected to main chain - name operations are already

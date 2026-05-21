@@ -37,8 +37,9 @@ type Mempool struct {
 	cleanupTick time.Duration // How often to cleanup expired transactions
 
 	// Lifecycle management
-	quit chan struct{}
-	wg   sync.WaitGroup
+	quit     chan struct{}
+	wg       sync.WaitGroup
+	stopOnce sync.Once
 }
 
 // MempoolConfig configures mempool behavior
@@ -49,12 +50,14 @@ type MempoolConfig struct {
 	CleanupTick time.Duration // Cleanup interval (default: 10 minutes)
 }
 
-// NewMempool creates a new transaction mempool
+// NewMempool creates a new transaction mempool.
+// Callers must call Stop() when done to avoid goroutine leaks.
 func NewMempool() *Mempool {
 	return NewMempoolWithConfig(nil)
 }
 
-// NewMempoolWithConfig creates a new transaction mempool with custom configuration
+// NewMempoolWithConfig creates a new transaction mempool with custom configuration.
+// Callers must call Stop() when done to avoid goroutine leaks.
 func NewMempoolWithConfig(cfg *MempoolConfig) *Mempool {
 	if cfg == nil {
 		cfg = &MempoolConfig{}
@@ -242,8 +245,10 @@ func (mp *Mempool) Clear() {
 	log.Printf("Mempool: cleared all transactions")
 }
 
-// Stop stops the mempool cleanup goroutine
+// Stop stops the mempool cleanup goroutine.
+// Safe to call multiple times; only the first call has effect.
+// Callers must invoke Stop to avoid goroutine leaks.
 func (mp *Mempool) Stop() {
-	close(mp.quit)
+	mp.stopOnce.Do(func() { close(mp.quit) })
 	mp.wg.Wait()
 }

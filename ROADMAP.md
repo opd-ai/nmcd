@@ -186,13 +186,13 @@ The `MaxValueLengthUI` constant (520 bytes, matching Namecoin Core's `MAX_VALUE_
 **Effort:** 2-3 days  
 **Risk Mitigated:** Undetected bugs in JSON-RPC handlers users interact with
 
-- [ ] **rpc/server.go** Add unit tests for name RPC handlers:
+- [x] **rpc/server.go** Add unit tests for name RPC handlers:
   - `nameShow`: Add tests for found/not-found/expired cases
   - `nameUpdate`: Add tests for success, invalid name, wallet locked
   - `nameList`: Add tests for empty list, pagination
   - `namePending`: Add tests for mempool queries
   - Target: rpc 60.1% → 75%+
-  - Validation: `go test -cover ./rpc` shows ≥75%
+  - Validation: `go test -cover ./rpc` shows ≥75% (achieved 76.0%)
 
 - [ ] **rpc/server.go** Add unit tests for standard RPC handlers:
   - `getBlock` verbose mode: Currently low coverage

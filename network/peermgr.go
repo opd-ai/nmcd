@@ -115,6 +115,7 @@ func (pm *PeerManager) listenLoop(listener net.Listener) {
 	acceptCh := make(chan net.Conn, 1)
 	errCh := make(chan error, 1)
 
+	pm.wg.Add(1)
 	go pm.acceptConnections(listener, acceptCh, errCh)
 
 	pm.dispatchConnections(acceptCh, errCh)
@@ -122,6 +123,7 @@ func (pm *PeerManager) listenLoop(listener net.Listener) {
 
 // acceptConnections runs in a goroutine, accepting connections and sending them on channels.
 func (pm *PeerManager) acceptConnections(listener net.Listener, acceptCh chan<- net.Conn, errCh chan<- error) {
+	defer pm.wg.Done()
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -160,16 +162,6 @@ func (pm *PeerManager) dispatchConnections(acceptCh <-chan net.Conn, errCh <-cha
 func (pm *PeerManager) handleInboundPeer(conn net.Conn) {
 	defer pm.wg.Done()
 
-	// Check if max peers reached
-	pm.mu.RLock()
-	peerCount := len(pm.peers)
-	pm.mu.RUnlock()
-
-	if pm.maxPeers > 0 && peerCount >= pm.maxPeers {
-		conn.Close()
-		return
-	}
-
 	// Create peer configuration
 	peerCfg := &peer.Config{
 		UserAgentName:    "nmcd",
@@ -194,8 +186,15 @@ func (pm *PeerManager) handleInboundPeer(conn net.Conn) {
 	p := peer.NewInboundPeer(peerCfg)
 	p.AssociateConnection(conn)
 
-	// Add to peer list
+	// Atomically check max-peers limit and add the peer.
+	// This prevents the TOCTOU race where two goroutines both pass the check
+	// before either one adds its peer.
 	pm.mu.Lock()
+	if pm.maxPeers > 0 && len(pm.peers) >= pm.maxPeers {
+		pm.mu.Unlock()
+		conn.Close()
+		return
+	}
 	pm.peers[p.Addr()] = p
 	// Update peer count metrics
 	pm.updatePeerMetrics()
@@ -215,16 +214,7 @@ func (pm *PeerManager) handleInboundPeer(conn net.Conn) {
 
 // ConnectPeer connects to an outbound peer
 func (pm *PeerManager) ConnectPeer(addr string) error {
-	// Check if max peers reached
-	pm.mu.RLock()
-	peerCount := len(pm.peers)
-	pm.mu.RUnlock()
-
-	if pm.maxPeers > 0 && peerCount >= pm.maxPeers {
-		return fmt.Errorf("max peers limit (%d) reached", pm.maxPeers)
-	}
-
-	// Dial the peer
+	// Dial the peer (no lock held during network I/O)
 	conn, err := net.DialTimeout("tcp", addr, time.Second*30)
 	if err != nil {
 		return fmt.Errorf("failed to connect to %s: %w", addr, err)
@@ -258,8 +248,13 @@ func (pm *PeerManager) ConnectPeer(addr string) error {
 	}
 	p.AssociateConnection(conn)
 
-	// Add to peer list
+	// Atomically check max-peers limit and add the peer.
 	pm.mu.Lock()
+	if pm.maxPeers > 0 && len(pm.peers) >= pm.maxPeers {
+		pm.mu.Unlock()
+		conn.Close()
+		return fmt.Errorf("max peers limit (%d) reached", pm.maxPeers)
+	}
 	pm.peers[p.Addr()] = p
 	// Update peer count metrics
 	pm.updatePeerMetrics()
