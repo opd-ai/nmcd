@@ -51,9 +51,11 @@ func (ndb *NameDatabase) NewBatchWriter(maxBatchSize int) *BatchWriter {
 }
 
 // PutName adds a name write operation to the batch.
+// Stores a copy of the record to prevent external mutation.
 // Returns error if auto-commit fails.
 func (bw *BatchWriter) PutName(name string, record *NameRecord) error {
-	bw.names[name] = record
+	// Copy the record to prevent external mutation
+	bw.names[name] = record.Copy()
 	delete(bw.deletedNames, name) // Remove from delete set if exists
 	bw.batchSize++
 	return bw.autoCommitIfNeeded()
@@ -69,9 +71,11 @@ func (bw *BatchWriter) DeleteName(name string) error {
 }
 
 // AddHistory adds a history entry write operation to the batch.
+// Stores a copy of the record to prevent external mutation.
 // Returns error if auto-commit fails.
 func (bw *BatchWriter) AddHistory(txHash chainhash.Hash, record *NameRecord) error {
-	bw.history[txHash] = record
+	// Copy the record to prevent external mutation
+	bw.history[txHash] = record.Copy()
 	bw.batchSize++
 	return bw.autoCommitIfNeeded()
 }
@@ -86,9 +90,11 @@ func (bw *BatchWriter) PutNameNew(commitHash []byte, height int32) error {
 }
 
 // AddUTXO adds a UTXO write operation to the batch.
+// Stores a copy of the UTXO to prevent external mutation.
 // Returns error if auto-commit fails.
 func (bw *BatchWriter) AddUTXO(utxo *UTXO) error {
-	bw.utxos = append(bw.utxos, utxo)
+	// Copy the UTXO to prevent external mutation
+	bw.utxos = append(bw.utxos, utxo.Copy())
 	bw.batchSize++
 	return bw.autoCommitIfNeeded()
 }

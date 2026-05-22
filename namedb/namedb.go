@@ -115,6 +115,25 @@ type UTXO struct {
 	Height   int32          // Block height where UTXO was created
 }
 
+// Copy creates a deep copy of the UTXO.
+// This prevents aliasing issues when caching or batching UTXOs.
+func (u *UTXO) Copy() *UTXO {
+	if u == nil {
+		return nil
+	}
+	// Create a copy with a new PkScript slice
+	pkScript := make([]byte, len(u.PkScript))
+	copy(pkScript, u.PkScript)
+	return &UTXO{
+		TxHash:   u.TxHash, // chainhash.Hash is a value type ([32]byte)
+		OutIndex: u.OutIndex,
+		Value:    u.Value,
+		Address:  u.Address,
+		PkScript: pkScript,
+		Height:   u.Height,
+	}
+}
+
 // NameDatabase manages name operations with bbolt storage
 type NameDatabase struct {
 	db    *bbolt.DB
