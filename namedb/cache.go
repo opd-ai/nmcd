@@ -34,8 +34,9 @@ func newLRUCache(capacity int) *lruCache {
 }
 
 // Get retrieves a value from the cache.
-// Returns the value and true if found, nil and false if not found.
+// Returns a copy of the value and true if found, nil and false if not found.
 // Moves the accessed item to the front (most recently used).
+// The returned record is a copy to prevent external mutation of cached state.
 func (c *lruCache) Get(key string) (*NameRecord, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -44,28 +45,33 @@ func (c *lruCache) Get(key string) (*NameRecord, bool) {
 		// Move to front (most recently used)
 		c.list.MoveToFront(elem)
 		entry := elem.Value.(*cacheEntry)
-		return entry.value, true
+		// Return a copy to prevent external mutation
+		return entry.value.Copy(), true
 	}
 	return nil, false
 }
 
 // Put adds or updates a value in the cache.
+// Stores a copy of the value to prevent external mutation of cached state.
 // If the cache is at capacity, the least recently used item is evicted.
 // Returns true if an item was evicted.
 func (c *lruCache) Put(key string, value *NameRecord) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	// Store a copy to prevent external mutation
+	valueCopy := value.Copy()
+
 	// Update existing entry
 	if elem, ok := c.items[key]; ok {
 		c.list.MoveToFront(elem)
 		entry := elem.Value.(*cacheEntry)
-		entry.value = value
+		entry.value = valueCopy
 		return false
 	}
 
 	// Add new entry
-	entry := &cacheEntry{key: key, value: value}
+	entry := &cacheEntry{key: key, value: valueCopy}
 	elem := c.list.PushFront(entry)
 	c.items[key] = elem
 
