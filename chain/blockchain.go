@@ -1785,16 +1785,28 @@ func (bc *BlockChain) HandleBlockchainNotification(notification *blockchain.Noti
 // between the name database and the main chain.
 func (bc *BlockChain) rollbackNameOperations(block *btcutil.Block) {
 	restoredCommitments := make(map[string]bool)
+	var rollbackErrors []error
 
 	txs := block.Transactions()
 	for i := len(txs) - 1; i >= 0; i-- {
 		tx := txs[i]
 		bc.rollbackTransactionUTXOs(tx)
-		bc.rollbackTransactionNameOps(tx, block.Height(), restoredCommitments)
+		if err := bc.rollbackTransactionNameOps(tx, block.Height(), restoredCommitments); err != nil {
+			rollbackErrors = append(rollbackErrors, err)
+		}
 	}
 
 	if err := bc.nameDB.RestoreSpentUTXOsForBlock(block.Height()); err != nil {
-		log.Printf("Warning: Failed to restore spent UTXOs for block %d: %v", block.Height(), err)
+		rollbackErrors = append(rollbackErrors, fmt.Errorf("failed to restore spent UTXOs for block %d: %w", block.Height(), err))
+	}
+
+	// Log all accumulated errors
+	if len(rollbackErrors) > 0 {
+		log.Printf("ERROR: Rollback for block %d encountered %d error(s):", block.Height(), len(rollbackErrors))
+		for i, err := range rollbackErrors {
+			log.Printf("  [%d] %v", i+1, err)
+		}
+		log.Printf("WARNING: Name database may be in an inconsistent state after failed rollback of block %d", block.Height())
 	}
 }
 
@@ -1807,8 +1819,11 @@ func (bc *BlockChain) rollbackTransactionUTXOs(tx *btcutil.Tx) {
 }
 
 // rollbackTransactionNameOps reverses name operations within a transaction during block rollback.
-func (bc *BlockChain) rollbackTransactionNameOps(tx *btcutil.Tx, blockHeight int32, restoredCommitments map[string]bool) {
+// Returns error if any database operation fails during rollback.
+func (bc *BlockChain) rollbackTransactionNameOps(tx *btcutil.Tx, blockHeight int32, restoredCommitments map[string]bool) error {
 	msgTx := tx.MsgTx()
+	var errors []error
+	
 	for j := len(msgTx.TxOut) - 1; j >= 0; j-- {
 		txOut := msgTx.TxOut[j]
 		op, name, _, extra, err := parseNameScriptFull(txOut.PkScript)
@@ -1818,33 +1833,51 @@ func (bc *BlockChain) rollbackTransactionNameOps(tx *btcutil.Tx, blockHeight int
 
 		switch op {
 		case namedb.NameNew:
-			bc.rollbackNameNew(extra, restoredCommitments)
+			if err := bc.rollbackNameNew(extra, restoredCommitments); err != nil {
+				errors = append(errors, fmt.Errorf("NAME_NEW rollback failed: %w", err))
+			}
 		case namedb.NameFirstUpdate:
-			bc.rollbackNameFirstUpdate(name, extra, blockHeight, restoredCommitments)
+			if err := bc.rollbackNameFirstUpdate(name, extra, blockHeight, restoredCommitments); err != nil {
+				errors = append(errors, fmt.Errorf("NAME_FIRSTUPDATE rollback for %s failed: %w", name, err))
+			}
 		case namedb.NameUpdate:
-			bc.rollbackNameUpdate(name)
+			if err := bc.rollbackNameUpdate(name); err != nil {
+				errors = append(errors, fmt.Errorf("NAME_UPDATE rollback for %s failed: %w", name, err))
+			}
 		}
 	}
+	
+	if len(errors) > 0 {
+		return fmt.Errorf("rollback errors: %v", errors)
+	}
+	return nil
 }
 
 // rollbackNameNew removes a NAME_NEW commitment unless it was restored during this rollback.
-func (bc *BlockChain) rollbackNameNew(extra []byte, restoredCommitments map[string]bool) {
+func (bc *BlockChain) rollbackNameNew(extra []byte, restoredCommitments map[string]bool) error {
 	if restoredCommitments[string(extra)] {
-		return
+		return nil
 	}
-	_ = bc.nameDB.DeleteNameNew(extra)
+	return bc.nameDB.DeleteNameNew(extra)
 }
 
 // rollbackNameFirstUpdate removes a name registration and restores its NAME_NEW commitment.
-func (bc *BlockChain) rollbackNameFirstUpdate(name string, extra []byte, blockHeight int32, restoredCommitments map[string]bool) {
+func (bc *BlockChain) rollbackNameFirstUpdate(name string, extra []byte, blockHeight int32, restoredCommitments map[string]bool) error {
 	nameNewHeight := bc.getNameNewHeightForRollback(name, blockHeight)
 
-	_, _ = bc.nameDB.RemoveLastHistoryEntry(name)
-	_ = bc.nameDB.DeleteName(name)
+	if _, err := bc.nameDB.RemoveLastHistoryEntry(name); err != nil {
+		return fmt.Errorf("failed to remove history for %s: %w", name, err)
+	}
+	if err := bc.nameDB.DeleteName(name); err != nil {
+		return fmt.Errorf("failed to delete name %s: %w", name, err)
+	}
 
 	commitHash := computeCommitHash(extra, name, bc.chainParams)
-	_ = bc.nameDB.RestoreNameNew(commitHash, nameNewHeight)
+	if err := bc.nameDB.RestoreNameNew(commitHash, nameNewHeight); err != nil {
+		return fmt.Errorf("failed to restore NAME_NEW for %s: %w", name, err)
+	}
 	restoredCommitments[string(commitHash)] = true
+	return nil
 }
 
 // getNameNewHeightForRollback retrieves the NAME_NEW height for rollback, with fallback estimation.
@@ -1861,14 +1894,17 @@ func (bc *BlockChain) getNameNewHeightForRollback(name string, blockHeight int32
 }
 
 // rollbackNameUpdate removes a NAME_UPDATE and restores the previous record.
-func (bc *BlockChain) rollbackNameUpdate(name string) {
+func (bc *BlockChain) rollbackNameUpdate(name string) error {
 	prevRecord, err := bc.nameDB.RemoveLastHistoryEntry(name)
 	if err != nil {
-		return
+		return fmt.Errorf("failed to remove history for %s: %w", name, err)
 	}
 	if prevRecord != nil {
-		_ = bc.nameDB.PutName(name, prevRecord)
+		if err := bc.nameDB.PutName(name, prevRecord); err != nil {
+			return fmt.Errorf("failed to restore previous record for %s: %w", name, err)
+		}
 	}
+	return nil
 }
 
 // GetBlockHeader returns a block header by hash
