@@ -59,7 +59,7 @@
 
 - [x] **CRITICAL-3: NAME_FIRSTUPDATE pushes hex string instead of raw bytes** — `wallet/wallet.go:952-976` — Logic/Protocol Correctness — `CreateNameFirstUpdateTx` validates `randHex` by decoding it, but builds the script with the original 40-char hex string instead of the decoded 20-byte value. Generated `NAME_FIRSTUPDATE` transactions won't match the prior `NAME_NEW` commitment hash and will fail network validation. Data flow: user calls RPC `name_firstupdate` → `rpc/server.go` → `wallet.CreateNameFirstUpdateTx(randHex)` → script built with ASCII hex. — **Remediation:** Pass `decoded` (raw bytes) into script construction instead of `randHex`. Validate with `go test -race ./wallet/...`.
 
-- [ ] **CRITICAL-4: NAME_FIRSTUPDATE rejects valid re-registration of expired names** — `chain/blockchain.go:658-661` — Logic/Blockchain Validation — Block validation rejects `NAME_FIRSTUPDATE` whenever the name exists in DB, regardless of expiration status. Valid re-registrations of names that have been expired for any duration are incorrectly rejected. — **Remediation:** Only reject when the existing record's `ExpiresAt > currentHeight`. Validate with `go test -race ./chain/...`.
+- [x] **CRITICAL-4: NAME_FIRSTUPDATE rejects valid re-registration of expired names** — `chain/blockchain.go:658-661` — Logic/Blockchain Validation — Block validation rejects `NAME_FIRSTUPDATE` whenever the name exists in DB, regardless of expiration status. Valid re-registrations of names that have been expired for any duration are incorrectly rejected. — **Remediation:** Only reject when the existing record's `ExpiresAt > currentHeight`. Validate with `go test -race ./chain/...`.
 
 ### HIGH
 

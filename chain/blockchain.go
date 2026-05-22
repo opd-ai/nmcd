@@ -662,9 +662,16 @@ func (bc *BlockChain) validateNameFirstUpdateOp(txOut *wire.TxOut, name string, 
 	}
 	ctx.seenNames[name] = true
 
-	// Verify name doesn't exist
-	if _, err := bc.nameDB.GetName(name); err == nil {
-		return fmt.Errorf("name already exists: %s (tx: %s)", name, txHash)
+	// Verify name doesn't already exist (or is expired)
+	existingRecord, err := bc.nameDB.GetName(name)
+	if err == nil {
+		// Name exists - check if it's expired
+		// Per namedb convention: ExpiresAt < currentHeight means expired
+		if existingRecord.ExpiresAt >= height {
+			return fmt.Errorf("name already exists and is not expired: %s (expires at %d, current height %d, tx: %s)",
+				name, existingRecord.ExpiresAt, height, txHash)
+		}
+		// Name exists but is expired - allow re-registration
 	}
 
 	// Compute the commitment hash from rand (extra), name, and chain ID
