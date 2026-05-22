@@ -198,6 +198,66 @@ func TestGetNameUTXO(t *testing.T) {
 	}
 }
 
+func TestGetNameUTXONonZeroOutIndex(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := tmpDir + "/test_name_utxo_nonzero.db"
+	defer os.Remove(dbPath)
+
+	db, err := NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Register a name with a non-zero output index (e.g., the name output is at index 2)
+	txHash, _ := chainhash.NewHashFromStr("00000000000000000000000000000000000000000000000000000000000000ab")
+	name := "d/nonzero"
+	const outIdx uint32 = 2
+	record := &NameRecord{
+		Name:      name,
+		Value:     `{"ip":"10.0.0.1"}`,
+		TxHash:    *txHash,
+		OutIndex:  outIdx,
+		Height:    300,
+		ExpiresAt: 36300,
+		Address:   "NNonZeroOwner",
+	}
+
+	if err := db.PutName(name, record); err != nil {
+		t.Fatalf("PutName failed: %v", err)
+	}
+
+	// Add the UTXO at the correct (non-zero) output index
+	utxo := &UTXO{
+		TxHash:   *txHash,
+		OutIndex: outIdx,
+		Value:    7000000,
+		Address:  "NNonZeroOwner",
+		PkScript: []byte{0x76, 0xa9, 0x14},
+		Height:   300,
+	}
+
+	if err := db.AddUTXO(utxo); err != nil {
+		t.Fatalf("AddUTXO failed: %v", err)
+	}
+
+	// GetNameUTXO must use OutIndex from the record, not hardcoded 0
+	nameUTXO, err := db.GetNameUTXO(name)
+	if err != nil {
+		t.Fatalf("GetNameUTXO failed: %v", err)
+	}
+
+	if nameUTXO.OutIndex != outIdx {
+		t.Errorf("Name UTXO output index mismatch: got %d, want %d", nameUTXO.OutIndex, outIdx)
+	}
+	if nameUTXO.Value != 7000000 {
+		t.Errorf("Name UTXO value mismatch: got %d, want 7000000", nameUTXO.Value)
+	}
+	if nameUTXO.Address != "NNonZeroOwner" {
+		t.Errorf("Name UTXO address mismatch: got %s, want NNonZeroOwner", nameUTXO.Address)
+	}
+}
+
 func TestRemoveNonexistentUTXO(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/test_remove_nonexistent.db"

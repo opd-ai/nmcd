@@ -377,23 +377,15 @@ func (ap *AuxPow) ValidateAuxPow(blockHash, targetDifficulty *chainhash.Hash) er
 				computedRoot = chainhash.DoubleHashH(combined[:])
 			}
 
-			// Check if the computed root appears in coinbase data
+			// Check if the computed root appears in coinbase data.
+			// The merged mining commitment (magic fabe6d6d + root) stores the root in
+			// display byte order, while btcd's chainhash.Hash is internally stored in
+			// reversed (wire) byte order. We search for both orderings to handle either.
 			coinbaseData := serializeCoinbaseForSearch(&ap.CoinbaseTx)
-			if !bytesContain(coinbaseData, computedRoot[:]) {
-				// Root not found - accept anyway for backward compatibility
-				// but require non-empty siblings (reject completely empty proofs)
-				for _, sibling := range ap.ChainMerkleBranch.Branch {
-					allZero := true
-					for _, b := range sibling {
-						if b != 0 {
-							allZero = false
-							break
-						}
-					}
-					if allZero {
-						return fmt.Errorf("chain merkle branch contains all-zero sibling hash")
-					}
-				}
+			reversedRoot := reverseHashBytes(computedRoot)
+			if !bytesContain(coinbaseData, computedRoot[:]) && !bytesContain(coinbaseData, reversedRoot[:]) {
+				return fmt.Errorf("chain merkle root not committed in coinbase: computed root %s not found in coinbase data",
+					computedRoot.String())
 			}
 		}
 	}
@@ -493,6 +485,17 @@ func serializeCoinbaseForSearch(tx *wire.MsgTx) []byte {
 	}
 
 	return buf
+}
+
+// reverseHashBytes returns a copy of h with its bytes reversed.
+// This is needed because btcd stores chainhash.Hash in little-endian (wire) byte order,
+// while merged mining coinbase commitments store roots in display (big-endian) order.
+func reverseHashBytes(h chainhash.Hash) chainhash.Hash {
+	var rev chainhash.Hash
+	for i := range h {
+		rev[i] = h[chainhash.HashSize-1-i]
+	}
+	return rev
 }
 
 // bytesContain checks if haystack contains needle

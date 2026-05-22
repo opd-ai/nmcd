@@ -559,19 +559,23 @@ func BuildNameNewScript(hash, pubKeyHash []byte) ([]byte, error) {
 //
 // Parameters:
 //   - name: The name being registered (e.g., "d/example")
-//   - rand: The random salt used in the NAME_NEW commitment
+//   - randHex: The random salt used in the NAME_NEW commitment, encoded as a hex string (must be non-empty)
 //   - value: The initial value for the name (typically JSON)
 //   - pubKeyHash: The 20-byte public key hash for the receiving address
 //
 // Returns the complete script bytes or an error if parameters are invalid.
-func BuildNameFirstUpdateScript(name, rand, value string, pubKeyHash []byte) ([]byte, error) {
+func BuildNameFirstUpdateScript(name, randHex, value string, pubKeyHash []byte) ([]byte, error) {
 	if err := validateNameScriptParams(name, value, pubKeyHash); err != nil {
 		return nil, err
 	}
 
-	// Decode rand from hex string to raw bytes
+	if len(randHex) == 0 {
+		return nil, fmt.Errorf("randHex cannot be empty")
+	}
+
+	// Decode randHex from hex string to raw bytes
 	// CRITICAL: Must push decoded bytes, not the hex string itself
-	randBytes, err := hex.DecodeString(rand)
+	randBytes, err := hex.DecodeString(randHex)
 	if err != nil {
 		return nil, fmt.Errorf("invalid rand hex: %w", err)
 	}

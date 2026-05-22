@@ -2,6 +2,7 @@ package chain
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -302,7 +303,15 @@ func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.Behavi
 	// - Merkle root verification
 	// - Transaction validation
 	// - etc.
-	isMainChain, isOrphan, err := bc.BlockChain.ProcessBlock(block, flags)
+	//
+	// For AuxPow-era blocks (height >= activation), suppress btcd's built-in
+	// child-header PoW check since those blocks are proved by the parent
+	// block's hash, which was already validated in validateAuxPow() above.
+	btcdFlags := flags
+	if height >= config.GetAuxPowActivationHeight(bc.chainParams) {
+		btcdFlags |= blockchain.BFNoPoWCheck
+	}
+	isMainChain, isOrphan, err := bc.BlockChain.ProcessBlock(block, btcdFlags)
 	if err != nil {
 		metrics.Get().RecordBlockRejected()
 		return isMainChain, isOrphan, err
@@ -672,6 +681,9 @@ func (bc *BlockChain) validateNameFirstUpdateOp(txOut *wire.TxOut, name string, 
 				name, existingRecord.ExpiresAt, height, txHash)
 		}
 		// Name exists but is expired - allow re-registration
+	} else if !errors.Is(err, namedb.ErrNameNotFound) {
+		// Unexpected DB error (e.g., corruption); fail closed to avoid masking inconsistencies
+		return fmt.Errorf("failed to check existing name %s: %w", name, err)
 	}
 
 	// Compute the commitment hash from rand (extra), name, and chain ID

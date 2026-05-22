@@ -280,12 +280,20 @@ func TestBuildNameFirstUpdateScript(t *testing.T) {
 			wantErr:    true,
 		},
 		{
-			name:       "empty rand is allowed",
+			name:       "empty rand returns error",
 			nameVal:    "d/test",
 			rand:       "",
 			value:      "test",
 			pubKeyHash: pubKeyHash,
-			wantErr:    false,
+			wantErr:    true,
+		},
+		{
+			name:       "invalid hex rand returns error",
+			nameVal:    "d/test",
+			rand:       "zzzzzz",
+			value:      "test",
+			pubKeyHash: pubKeyHash,
+			wantErr:    true,
 		},
 	}
 
