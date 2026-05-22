@@ -569,10 +569,17 @@ func BuildNameFirstUpdateScript(name, rand, value string, pubKeyHash []byte) ([]
 		return nil, err
 	}
 
+	// Decode rand from hex string to raw bytes
+	// CRITICAL: Must push decoded bytes, not the hex string itself
+	randBytes, err := hex.DecodeString(rand)
+	if err != nil {
+		return nil, fmt.Errorf("invalid rand hex: %w", err)
+	}
+
 	script := make([]byte, 0, 256)
 	script = append(script, opNameFirstUpdate)
 	script = append(script, pushData([]byte(name))...)
-	script = append(script, pushData([]byte(rand))...)
+	script = append(script, pushData(randBytes)...) // Push decoded bytes, not hex string
 	script = append(script, pushData([]byte(value))...)
 	script = append(script, op2Drop, op2Drop)
 	script = appendP2PKHScript(script, pubKeyHash)
