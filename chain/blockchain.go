@@ -1790,7 +1790,9 @@ func (bc *BlockChain) rollbackNameOperations(block *btcutil.Block) {
 	txs := block.Transactions()
 	for i := len(txs) - 1; i >= 0; i-- {
 		tx := txs[i]
-		bc.rollbackTransactionUTXOs(tx)
+		if err := bc.rollbackTransactionUTXOs(tx); err != nil {
+			rollbackErrors = append(rollbackErrors, err)
+		}
 		if err := bc.rollbackTransactionNameOps(tx, block.Height(), restoredCommitments); err != nil {
 			rollbackErrors = append(rollbackErrors, err)
 		}
@@ -1811,19 +1813,29 @@ func (bc *BlockChain) rollbackNameOperations(block *btcutil.Block) {
 }
 
 // rollbackTransactionUTXOs removes UTXOs created by a transaction's outputs.
-func (bc *BlockChain) rollbackTransactionUTXOs(tx *btcutil.Tx) {
+func (bc *BlockChain) rollbackTransactionUTXOs(tx *btcutil.Tx) error {
 	txHash := tx.Hash()
+	var rollbackErrors []error
+
 	for outIdx := range tx.MsgTx().TxOut {
-		_ = bc.nameDB.RemoveUTXO(txHash, uint32(outIdx))
+		if err := bc.nameDB.RemoveUTXO(txHash, uint32(outIdx)); err != nil {
+			rollbackErrors = append(rollbackErrors, fmt.Errorf("failed to remove created UTXO %s:%d: %w", txHash, outIdx, err))
+		}
 	}
+
+	if len(rollbackErrors) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf("rollback UTXOs for tx %s: %w", txHash, errors.Join(rollbackErrors...))
 }
 
 // rollbackTransactionNameOps reverses name operations within a transaction during block rollback.
 // Returns error if any database operation fails during rollback.
 func (bc *BlockChain) rollbackTransactionNameOps(tx *btcutil.Tx, blockHeight int32, restoredCommitments map[string]bool) error {
 	msgTx := tx.MsgTx()
-	var errors []error
-	
+	var rollbackErrors []error
+
 	for j := len(msgTx.TxOut) - 1; j >= 0; j-- {
 		txOut := msgTx.TxOut[j]
 		op, name, _, extra, err := parseNameScriptFull(txOut.PkScript)
@@ -1834,21 +1846,21 @@ func (bc *BlockChain) rollbackTransactionNameOps(tx *btcutil.Tx, blockHeight int
 		switch op {
 		case namedb.NameNew:
 			if err := bc.rollbackNameNew(extra, restoredCommitments); err != nil {
-				errors = append(errors, fmt.Errorf("NAME_NEW rollback failed: %w", err))
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("NAME_NEW rollback failed: %w", err))
 			}
 		case namedb.NameFirstUpdate:
 			if err := bc.rollbackNameFirstUpdate(name, extra, blockHeight, restoredCommitments); err != nil {
-				errors = append(errors, fmt.Errorf("NAME_FIRSTUPDATE rollback for %s failed: %w", name, err))
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("NAME_FIRSTUPDATE rollback for %s failed: %w", name, err))
 			}
 		case namedb.NameUpdate:
 			if err := bc.rollbackNameUpdate(name); err != nil {
-				errors = append(errors, fmt.Errorf("NAME_UPDATE rollback for %s failed: %w", name, err))
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("NAME_UPDATE rollback for %s failed: %w", name, err))
 			}
 		}
 	}
-	
-	if len(errors) > 0 {
-		return fmt.Errorf("rollback errors: %v", errors)
+
+	if len(rollbackErrors) > 0 {
+		return fmt.Errorf("rollback name operations for tx %s: %w", tx.Hash(), errors.Join(rollbackErrors...))
 	}
 	return nil
 }

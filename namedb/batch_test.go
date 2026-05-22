@@ -271,6 +271,117 @@ func TestBatchWriter_UTXOOperations(t *testing.T) {
 	}
 }
 
+// TestBatchWriter_Immutability tests that queued batch inputs are snapshotted at enqueue time.
+func TestBatchWriter_Immutability(t *testing.T) {
+	db, err := NewNameDatabase(t.TempDir() + "/batch_immutability.db")
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	batch := db.NewBatchWriter(0)
+
+	nameHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000111")
+	nameRecord := &NameRecord{
+		Name:      "d/test",
+		Value:     "original",
+		TxHash:    *nameHash,
+		Height:    111,
+		ExpiresAt: 36111,
+		UpdatedAt: time.Now(),
+	}
+	if err := batch.PutName(nameRecord.Name, nameRecord); err != nil {
+		t.Fatalf("Failed to queue name: %v", err)
+	}
+
+	historyHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000222")
+	historyRecord := &NameRecord{
+		Name:      "d/test",
+		Value:     "history-original",
+		TxHash:    *historyHash,
+		Height:    100,
+		ExpiresAt: 36100,
+		UpdatedAt: time.Now(),
+	}
+	if err := batch.AddHistory(*historyHash, historyRecord); err != nil {
+		t.Fatalf("Failed to queue history: %v", err)
+	}
+
+	utxoHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000333")
+	utxo := &UTXO{
+		TxHash:   *utxoHash,
+		OutIndex: 1,
+		Value:    12345,
+		Address:  "NOriginal",
+		PkScript: []byte{0x51, 0x52, 0x53},
+		Height:   112,
+	}
+	if err := batch.AddUTXO(utxo); err != nil {
+		t.Fatalf("Failed to queue UTXO: %v", err)
+	}
+
+	commitHash := []byte{0x01, 0x02, 0x03, 0x04}
+	originalCommitHash := append([]byte(nil), commitHash...)
+	if err := batch.PutNameNew(commitHash, 120); err != nil {
+		t.Fatalf("Failed to queue name_new: %v", err)
+	}
+
+	nameRecord.Value = "mutated"
+	historyRecord.Value = "history-mutated"
+	utxo.Value = 99999
+	utxo.Address = "NMutated"
+	utxo.PkScript[0] = 0xff
+	commitHash[0] = 0xaa
+
+	if err := batch.Commit(); err != nil {
+		t.Fatalf("Failed to commit batch: %v", err)
+	}
+
+	storedName, err := db.GetName("d/test")
+	if err != nil {
+		t.Fatalf("Failed to get stored name: %v", err)
+	}
+	if storedName.Value != "original" {
+		t.Fatalf("Expected original name value, got %q", storedName.Value)
+	}
+
+	history, err := db.GetHistory("d/test")
+	if err != nil {
+		t.Fatalf("Failed to get history: %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("Expected 1 history entry, got %d", len(history))
+	}
+	if history[0].Value != "history-original" {
+		t.Fatalf("Expected original history value, got %q", history[0].Value)
+	}
+
+	storedUTXO, err := db.GetUTXO(utxoHash, 1)
+	if err != nil {
+		t.Fatalf("Failed to get stored UTXO: %v", err)
+	}
+	if storedUTXO.Value != 12345 {
+		t.Fatalf("Expected original UTXO value, got %d", storedUTXO.Value)
+	}
+	if storedUTXO.Address != "NOriginal" {
+		t.Fatalf("Expected original UTXO address, got %q", storedUTXO.Address)
+	}
+	if len(storedUTXO.PkScript) != 3 || storedUTXO.PkScript[0] != 0x51 {
+		t.Fatalf("Expected original UTXO script, got %v", storedUTXO.PkScript)
+	}
+
+	nameNewRecord, err := db.GetNameNew(originalCommitHash)
+	if err != nil {
+		t.Fatalf("Failed to get stored name_new: %v", err)
+	}
+	if nameNewRecord.Height != 120 {
+		t.Fatalf("Expected original name_new height, got %d", nameNewRecord.Height)
+	}
+	if _, err := db.GetNameNew(commitHash); err == nil {
+		t.Fatal("Expected mutated commitment hash to be absent")
+	}
+}
+
 // TestBatchWriter_EmptyCommit tests that committing an empty batch is safe
 func TestBatchWriter_EmptyCommit(t *testing.T) {
 	db, err := NewNameDatabase(t.TempDir() + "/batch_empty.db")

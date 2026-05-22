@@ -83,8 +83,9 @@ func (bw *BatchWriter) AddHistory(txHash chainhash.Hash, record *NameRecord) err
 // PutNameNew adds a NAME_NEW commitment write operation to the batch.
 // Returns error if auto-commit fails.
 func (bw *BatchWriter) PutNameNew(commitHash []byte, height int32) error {
-	key := string(commitHash)
-	bw.nameNews[key] = nameNewEntry{commitHash: commitHash, height: height}
+	commitHashCopy := append([]byte(nil), commitHash...)
+	key := string(commitHashCopy)
+	bw.nameNews[key] = nameNewEntry{commitHash: commitHashCopy, height: height}
 	bw.batchSize++
 	return bw.autoCommitIfNeeded()
 }

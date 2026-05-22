@@ -89,6 +89,34 @@ func TestLRUCache_Update(t *testing.T) {
 	}
 }
 
+// TestLRUCache_Immutability tests that cached values are isolated from caller mutation.
+func TestLRUCache_Immutability(t *testing.T) {
+	cache := newLRUCache(2)
+
+	original := &NameRecord{Name: "test1", Value: "value1", Height: 100}
+	cache.Put("test1", original)
+
+	original.Value = "mutated after put"
+
+	cached, ok := cache.Get("test1")
+	if !ok {
+		t.Fatal("Expected cached record to exist")
+	}
+	if cached.Value != "value1" {
+		t.Fatalf("Expected cached value to remain unchanged after Put mutation, got %q", cached.Value)
+	}
+
+	cached.Value = "mutated after get"
+
+	cachedAgain, ok := cache.Get("test1")
+	if !ok {
+		t.Fatal("Expected cached record to still exist")
+	}
+	if cachedAgain.Value != "value1" {
+		t.Fatalf("Expected cached value to remain unchanged after Get mutation, got %q", cachedAgain.Value)
+	}
+}
+
 // TestLRUCache_Delete tests deleting entries
 func TestLRUCache_Delete(t *testing.T) {
 	cache := newLRUCache(3)
