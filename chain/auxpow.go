@@ -347,31 +347,17 @@ func (ap *AuxPow) ValidateAuxPow(blockHash, targetDifficulty *chainhash.Hash) er
 		// This is valid for single-chain merged mining
 		// We accept this case as it means the block hash is directly committed
 	} else {
-		// Verify the chain merkle branch connects the aux block hash to something
-		// in the coinbase. The computed root should relate to the coinbase.
-		//
-		// In practice, we verify that the merkle branch is structurally valid
-		// and that it connects to a commitment in the coinbase tx.
-		//
-		// A common pattern: the coinbase tx hash is used as the root for verification
+		// Verify structural validity first
+		if len(ap.ChainMerkleBranch.Branch) > 32 {
+			return fmt.Errorf("chain merkle branch too deep: %d levels (max 32)",
+				len(ap.ChainMerkleBranch.Branch))
+		}
+
+		// Verify the chain merkle branch connects the aux block hash to the coinbase tx.
+		// The computed root must match the coinbase tx hash.
+		// This proves that the aux block hash is committed in the coinbase.
 		if !CheckMerkleBranch(blockHash, &ap.ChainMerkleBranch, &coinbaseTxHash2) {
-			// If that doesn't match, it might be a multi-chain merkle tree
-			// In that case, we verify the branch is at least structurally valid
-			// by checking it produces some consistent root
-
-			// For now, we accept the proof if:
-			// 1. The coinbase merkle branch is valid (already checked above)
-			// 2. The chain merkle branch structure is valid (branches not too deep)
-			// 3. The parent block PoW is valid (already checked above)
-			//
-			// This is a pragmatic approach that works with various merged mining formats
-			// while still providing strong security guarantees.
-
-			// Verify structural validity
-			if len(ap.ChainMerkleBranch.Branch) > 32 {
-				return fmt.Errorf("chain merkle branch too deep: %d levels (max 32)",
-					len(ap.ChainMerkleBranch.Branch))
-			}
+			return fmt.Errorf("chain merkle branch verification failed: aux block hash not committed in coinbase")
 		}
 	}
 

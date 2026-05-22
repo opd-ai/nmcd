@@ -231,6 +231,10 @@ func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.Behavi
 	startTime := time.Now()
 
 	// Validate proof of work (difficulty) before processing
+	// For pre-AuxPow blocks (< activation height), we validate the block's own hash.
+	// For AuxPow blocks (>= activation height), the proof-of-work is validated via
+	// the parent block in validateAuxPow(), so we skip the child-header PoW check.
+	//
 	// This ensures the block hash meets the difficulty target specified in the block header.
 	// While btcd's ProcessBlock also validates this, we perform an explicit check here for:
 	// 1. Clear visibility that difficulty validation is happening
@@ -241,15 +245,18 @@ func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.Behavi
 	// - Retargets every 2016 blocks
 	// - Targets 10 minute block time
 	// - Max 4x adjustment per retarget period
-	//
-	// Note: This validates pre-AuxPoW blocks (< 19,200). AuxPoW blocks (>= 19,200) require
-	// additional validation of the parent Bitcoin block, which is not yet implemented.
-	if err := bc.validateProofOfWork(block); err != nil {
-		metrics.Get().RecordBlockRejected()
-		metrics.Get().RecordValidationError("proof_of_work")
-		return false, false, fmt.Errorf("invalid proof of work for block %s at height %d: %w",
-			block.Hash(), block.Height(), err)
+	height := bc.resolveBlockHeight(block)
+	if height >= 0 && height < config.GetAuxPowActivationHeight(bc.chainParams) {
+		// Pre-AuxPow block: validate the block's own hash against difficulty
+		if err := bc.validateProofOfWork(block); err != nil {
+			metrics.Get().RecordBlockRejected()
+			metrics.Get().RecordValidationError("proof_of_work")
+			return false, false, fmt.Errorf("invalid proof of work for block %s at height %d: %w",
+				block.Hash(), block.Height(), err)
+		}
 	}
+	// For AuxPow blocks (height >= activation), skip child-header PoW check.
+	// The parent block's PoW is validated in validateAuxPow() via auxPow.ValidateAuxPow()
 
 	// Validate block version (AuxPow version bit) before processing
 	// This ensures blocks at or after AuxPow activation height have the required version bit set.
