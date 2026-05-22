@@ -214,9 +214,9 @@ func (ndb *NameDatabase) GetNameUTXO(name string) (*UTXO, error) {
 		return nil, fmt.Errorf("name not found: %w", err)
 	}
 
-	// The name UTXO is the first output (index 0) of the name transaction
-	// NAME_FIRSTUPDATE and NAME_UPDATE always put the name in output 0
-	utxo, err := ndb.GetUTXO(&record.TxHash, 0)
+	// Get the name UTXO using the correct output index from the record
+	// NAME_FIRSTUPDATE and NAME_UPDATE put the name in output specified by OutIndex
+	utxo, err := ndb.GetUTXO(&record.TxHash, record.OutIndex)
 	if err != nil {
 		return nil, fmt.Errorf("name UTXO not found for %s: %w", name, err)
 	}

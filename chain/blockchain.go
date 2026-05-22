@@ -2,6 +2,7 @@ package chain
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -231,6 +232,10 @@ func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.Behavi
 	startTime := time.Now()
 
 	// Validate proof of work (difficulty) before processing
+	// For pre-AuxPow blocks (< activation height), we validate the block's own hash.
+	// For AuxPow blocks (>= activation height), the proof-of-work is validated via
+	// the parent block in validateAuxPow(), so we skip the child-header PoW check.
+	//
 	// This ensures the block hash meets the difficulty target specified in the block header.
 	// While btcd's ProcessBlock also validates this, we perform an explicit check here for:
 	// 1. Clear visibility that difficulty validation is happening
@@ -241,15 +246,18 @@ func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.Behavi
 	// - Retargets every 2016 blocks
 	// - Targets 10 minute block time
 	// - Max 4x adjustment per retarget period
-	//
-	// Note: This validates pre-AuxPoW blocks (< 19,200). AuxPoW blocks (>= 19,200) require
-	// additional validation of the parent Bitcoin block, which is not yet implemented.
-	if err := bc.validateProofOfWork(block); err != nil {
-		metrics.Get().RecordBlockRejected()
-		metrics.Get().RecordValidationError("proof_of_work")
-		return false, false, fmt.Errorf("invalid proof of work for block %s at height %d: %w",
-			block.Hash(), block.Height(), err)
+	height := bc.resolveBlockHeight(block)
+	if height >= 0 && height < config.GetAuxPowActivationHeight(bc.chainParams) {
+		// Pre-AuxPow block: validate the block's own hash against difficulty
+		if err := bc.validateProofOfWork(block); err != nil {
+			metrics.Get().RecordBlockRejected()
+			metrics.Get().RecordValidationError("proof_of_work")
+			return false, false, fmt.Errorf("invalid proof of work for block %s at height %d: %w",
+				block.Hash(), block.Height(), err)
+		}
 	}
+	// For AuxPow blocks (height >= activation), skip child-header PoW check.
+	// The parent block's PoW is validated in validateAuxPow() via auxPow.ValidateAuxPow()
 
 	// Validate block version (AuxPow version bit) before processing
 	// This ensures blocks at or after AuxPow activation height have the required version bit set.
@@ -295,7 +303,15 @@ func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.Behavi
 	// - Merkle root verification
 	// - Transaction validation
 	// - etc.
-	isMainChain, isOrphan, err := bc.BlockChain.ProcessBlock(block, flags)
+	//
+	// For AuxPow-era blocks (height >= activation), suppress btcd's built-in
+	// child-header PoW check since those blocks are proved by the parent
+	// block's hash, which was already validated in validateAuxPow() above.
+	btcdFlags := flags
+	if height >= config.GetAuxPowActivationHeight(bc.chainParams) {
+		btcdFlags |= blockchain.BFNoPoWCheck
+	}
+	isMainChain, isOrphan, err := bc.BlockChain.ProcessBlock(block, btcdFlags)
 	if err != nil {
 		metrics.Get().RecordBlockRejected()
 		return isMainChain, isOrphan, err
@@ -655,9 +671,19 @@ func (bc *BlockChain) validateNameFirstUpdateOp(txOut *wire.TxOut, name string, 
 	}
 	ctx.seenNames[name] = true
 
-	// Verify name doesn't exist
-	if _, err := bc.nameDB.GetName(name); err == nil {
-		return fmt.Errorf("name already exists: %s (tx: %s)", name, txHash)
+	// Verify name doesn't already exist (or is expired)
+	existingRecord, err := bc.nameDB.GetName(name)
+	if err == nil {
+		// Name exists - check if it's expired
+		// Per namedb convention: ExpiresAt < currentHeight means expired
+		if existingRecord.ExpiresAt >= height {
+			return fmt.Errorf("name already exists and is not expired: %s (expires at %d, current height %d, tx: %s)",
+				name, existingRecord.ExpiresAt, height, txHash)
+		}
+		// Name exists but is expired - allow re-registration
+	} else if !errors.Is(err, namedb.ErrNameNotFound) {
+		// Unexpected DB error (e.g., corruption); fail closed to avoid masking inconsistencies
+		return fmt.Errorf("failed to check existing name %s: %w", name, err)
 	}
 
 	// Compute the commitment hash from rand (extra), name, and chain ID

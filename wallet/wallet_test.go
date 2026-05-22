@@ -242,7 +242,7 @@ func TestBuildNameFirstUpdateScript(t *testing.T) {
 		{
 			name:       "valid registration",
 			nameVal:    "d/example",
-			rand:       "randomsalt123",
+			rand:       "0123456789abcdef0123456789abcdef01234567", // Valid 40-char hex (20 bytes)
 			value:      `{"ip":"192.168.1.1"}`,
 			pubKeyHash: pubKeyHash,
 			wantErr:    false,
@@ -250,7 +250,7 @@ func TestBuildNameFirstUpdateScript(t *testing.T) {
 		{
 			name:       "empty name",
 			nameVal:    "",
-			rand:       "salt",
+			rand:       "abcdef",
 			value:      "test",
 			pubKeyHash: pubKeyHash,
 			wantErr:    true,
@@ -258,7 +258,7 @@ func TestBuildNameFirstUpdateScript(t *testing.T) {
 		{
 			name:       "name too long",
 			nameVal:    string(make([]byte, 256)),
-			rand:       "salt",
+			rand:       "abcdef",
 			value:      "test",
 			pubKeyHash: pubKeyHash,
 			wantErr:    true,
@@ -266,7 +266,7 @@ func TestBuildNameFirstUpdateScript(t *testing.T) {
 		{
 			name:       "value too long",
 			nameVal:    "d/test",
-			rand:       "salt",
+			rand:       "abcdef",
 			value:      string(make([]byte, 1024)),
 			pubKeyHash: pubKeyHash,
 			wantErr:    true,
@@ -274,18 +274,26 @@ func TestBuildNameFirstUpdateScript(t *testing.T) {
 		{
 			name:       "invalid pubkey hash",
 			nameVal:    "d/test",
-			rand:       "salt",
+			rand:       "abcdef",
 			value:      "test",
 			pubKeyHash: make([]byte, 10),
 			wantErr:    true,
 		},
 		{
-			name:       "empty rand is allowed",
+			name:       "empty rand returns error",
 			nameVal:    "d/test",
 			rand:       "",
 			value:      "test",
 			pubKeyHash: pubKeyHash,
-			wantErr:    false,
+			wantErr:    true,
+		},
+		{
+			name:       "invalid hex rand returns error",
+			nameVal:    "d/test",
+			rand:       "zzzzzz",
+			value:      "test",
+			pubKeyHash: pubKeyHash,
+			wantErr:    true,
 		},
 	}
 
