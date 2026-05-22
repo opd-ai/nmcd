@@ -86,6 +86,25 @@ type NameRecord struct {
 	NameNewHeight int32 // Original NAME_NEW height (for NAME_FIRSTUPDATE only, used during reorg rollback)
 }
 
+// Copy creates a deep copy of the NameRecord.
+// This prevents aliasing issues when caching or returning records.
+func (nr *NameRecord) Copy() *NameRecord {
+	if nr == nil {
+		return nil
+	}
+	return &NameRecord{
+		Name:          nr.Name,
+		Value:         nr.Value,
+		TxHash:        nr.TxHash, // chainhash.Hash is a value type ([32]byte)
+		OutIndex:      nr.OutIndex,
+		Height:        nr.Height,
+		ExpiresAt:     nr.ExpiresAt,
+		Address:       nr.Address,
+		UpdatedAt:     nr.UpdatedAt,
+		NameNewHeight: nr.NameNewHeight,
+	}
+}
+
 // UTXO represents an unspent transaction output
 type UTXO struct {
 	TxHash   chainhash.Hash // Transaction hash
@@ -94,6 +113,25 @@ type UTXO struct {
 	Address  string         // Output address
 	PkScript []byte         // Output script
 	Height   int32          // Block height where UTXO was created
+}
+
+// Copy creates a deep copy of the UTXO.
+// This prevents aliasing issues when caching or batching UTXOs.
+func (u *UTXO) Copy() *UTXO {
+	if u == nil {
+		return nil
+	}
+	// Create a copy with a new PkScript slice
+	pkScript := make([]byte, len(u.PkScript))
+	copy(pkScript, u.PkScript)
+	return &UTXO{
+		TxHash:   u.TxHash, // chainhash.Hash is a value type ([32]byte)
+		OutIndex: u.OutIndex,
+		Value:    u.Value,
+		Address:  u.Address,
+		PkScript: pkScript,
+		Height:   u.Height,
+	}
 }
 
 // NameDatabase manages name operations with bbolt storage
