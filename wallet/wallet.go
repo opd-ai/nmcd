@@ -720,7 +720,6 @@ func (w *Wallet) CreateNameUpdateTx(
 	// Otherwise, the name remains at the current owner's address.
 	// This enables both simple value updates and ownership transfers.
 	var pubKeyHash []byte
-	var changeAddr btcutil.Address
 	if destAddress != nil {
 		// Use provided destination address for name transfer
 		switch addr := destAddress.(type) {
@@ -729,12 +728,14 @@ func (w *Wallet) CreateNameUpdateTx(
 		default:
 			return nil, fmt.Errorf("unsupported destination address type: %T", destAddress)
 		}
-		changeAddr = destAddress
 	} else {
 		// Keep at current address (simple value update without ownership transfer)
 		pubKeyHash = btcutil.Hash160(kp.PublicKey.SerializeCompressed())
-		changeAddr = kp.Address
 	}
+	
+	// Always send change back to the current owner's address (from wallet)
+	// This prevents accidentally sending change to the destination address during transfers
+	changeAddr := kp.Address
 
 	// Build NAME_UPDATE output script
 	nameScript, err := BuildNameUpdateScript(name, newValue, pubKeyHash)
@@ -974,7 +975,8 @@ func (w *Wallet) CreateNameFirstUpdateTx(
 		return nil, err
 	}
 
-	if _, ok := w.keys[utxos[nameNewUtxoIndex].Address]; !ok {
+	nameNewKp, ok := w.keys[utxos[nameNewUtxoIndex].Address]
+	if !ok {
 		return nil, fmt.Errorf("no key for NAME_NEW address: %s", utxos[nameNewUtxoIndex].Address)
 	}
 
@@ -989,7 +991,10 @@ func (w *Wallet) CreateNameFirstUpdateTx(
 	}
 
 	nameOutValue := int64(1000)
-	tx, err := w.buildNameTransaction(utxos, nameScript, nameOutValue, feeRate, ownerAddress, config.MinNameOperationFee)
+	// Send change back to the NAME_NEW address (from wallet), not to ownerAddress
+	// This prevents accidentally sending change to the destination during transfers
+	changeAddr := nameNewKp.Address
+	tx, err := w.buildNameTransaction(utxos, nameScript, nameOutValue, feeRate, changeAddr, config.MinNameOperationFee)
 	if err != nil {
 		return nil, err
 	}

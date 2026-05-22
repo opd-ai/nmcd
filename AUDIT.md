@@ -63,7 +63,7 @@
 
 ### HIGH
 
-- [ ] **HIGH-1: Wallet change sent to destination/name-owner address** — `wallet/wallet.go:713-725, 752-754, 898-932` — Logic/Funds Safety — In `CreateNameUpdateTx` and `CreateNameFirstUpdateTx`, the name destination/owner address is also used as the change address. When performing a name transfer, all excess coins from the spent UTXOs go to the new owner. Data flow: RPC `name_update` with transfer → `wallet.CreateNameUpdateTx(destAddr)` → change output uses `destAddr`. — **Remediation:** Accept a separate `changeAddress` parameter (from the wallet's own addresses) for change outputs. Validate with `go test -race ./wallet/...`.
+- [x] **HIGH-1: Wallet change sent to destination/name-owner address** — `wallet/wallet.go:713-725, 752-754, 898-932` — Logic/Funds Safety — In `CreateNameUpdateTx` and `CreateNameFirstUpdateTx`, the name destination/owner address is also used as the change address. When performing a name transfer, all excess coins from the spent UTXOs go to the new owner. Data flow: RPC `name_update` with transfer → `wallet.CreateNameUpdateTx(destAddr)` → change output uses `destAddr`. — **Remediation:** Accept a separate `changeAddress` parameter (from the wallet's own addresses) for change outputs. Validate with `go test -race ./wallet/...`.
 
 - [ ] **HIGH-2: Cache returns mutable shared pointers** — `namedb/namedb.go:172-176, 195-196, 219-220` + `namedb/cache.go:43-47` — Data Aliasing/Concurrency — The name cache stores and returns the same `*NameRecord` pointer. External mutation after `GetName` or `PutName` corrupts cached state without a DB write and can race with concurrent readers. — **Remediation:** Deep-copy `NameRecord` on cache insert and return copies from cache reads. Validate with `go test -race ./namedb/...`.
 
