@@ -163,9 +163,10 @@ func (mp *Mempool) AddTx(tx *wire.MsgTx) error {
 	}
 
 	// Add transaction to mempool
+	// Deep-copy transaction to prevent external mutation
 	now := time.Now()
 	mp.txs[txHash] = &mempoolTx{
-		tx:       tx,
+		tx:       tx.Copy(),
 		addedAt:  now,
 		lastSeen: now,
 	}
@@ -200,12 +201,13 @@ func (mp *Mempool) RemoveTxs(txHashes []chainhash.Hash) {
 }
 
 // GetTx retrieves a transaction from the mempool
+// Returns a copy to prevent external mutation of mempool state
 func (mp *Mempool) GetTx(txHash *chainhash.Hash) (*wire.MsgTx, bool) {
 	mp.mu.RLock()
 	defer mp.mu.RUnlock()
 
 	if mtx, exists := mp.txs[*txHash]; exists {
-		return mtx.tx, true
+		return mtx.tx.Copy(), true
 	}
 	return nil, false
 }
@@ -226,13 +228,14 @@ func (mp *Mempool) Count() int {
 }
 
 // GetAll returns all transactions in the mempool
+// Returns copies to prevent external mutation of mempool state
 func (mp *Mempool) GetAll() []*wire.MsgTx {
 	mp.mu.RLock()
 	defer mp.mu.RUnlock()
 
 	txs := make([]*wire.MsgTx, 0, len(mp.txs))
 	for _, mtx := range mp.txs {
-		txs = append(txs, mtx.tx)
+		txs = append(txs, mtx.tx.Copy())
 	}
 	return txs
 }

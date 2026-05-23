@@ -160,15 +160,21 @@ func (sm *SyncManager) HandleHeaders(p *peer.Peer, msg *wire.MsgHeaders) {
 		return
 	}
 
+	// Skip processing if we don't have a blockchain or peer
+	if sm.blockchain == nil || p == nil {
+		return
+	}
+
+	// Only accept headers from the active sync peer to prevent spam
+	if sm.syncPeer != nil && p.Addr() != sm.syncPeer.Addr() {
+		log.Printf("Ignoring headers from non-sync peer %s (sync peer is %s)", p.Addr(), sm.syncPeer.Addr())
+		return
+	}
+
 	if p != nil {
 		log.Printf("Received %d headers from %s", headerCount, p.Addr())
 	} else {
 		log.Printf("Received %d headers", headerCount)
-	}
-
-	// Skip processing if we don't have a blockchain or peer
-	if sm.blockchain == nil || p == nil {
-		return
 	}
 
 	// Process each header by requesting the full block
@@ -235,6 +241,26 @@ func (sm *SyncManager) IsSyncing() bool {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	return sm.syncPeer != nil
+}
+
+// OnPeerDisconnected is called when a peer disconnects.
+// If the disconnected peer was the sync peer, clear it so a new peer can be selected.
+func (sm *SyncManager) OnPeerDisconnected(p *peer.Peer) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	// Clear sync peer if it disconnected
+	if sm.syncPeer != nil && sm.syncPeer.Addr() == p.Addr() {
+		log.Printf("Sync peer %s disconnected, will reselect", p.Addr())
+		sm.syncPeer = nil
+	}
+
+	// Clear best peer if it disconnected
+	if sm.bestPeer != nil && sm.bestPeer.Addr() == p.Addr() {
+		log.Printf("Best peer %s disconnected, will reselect", p.Addr())
+		sm.bestPeer = nil
+		sm.bestHeight = 0
+	}
 }
 
 // cleanupOldRequests removes block requests older than 2 minutes
