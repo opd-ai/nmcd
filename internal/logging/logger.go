@@ -75,6 +75,7 @@ type Logger struct {
 
 var (
 	defaultLogger *Logger
+	defaultLoggerMu sync.RWMutex
 	once          sync.Once
 )
 
@@ -169,11 +170,15 @@ func GetDefault() *Logger {
 			}
 		}
 	})
+	defaultLoggerMu.RLock()
+	defer defaultLoggerMu.RUnlock()
 	return defaultLogger
 }
 
 // SetDefault sets the default global logger
 func SetDefault(logger *Logger) {
+	defaultLoggerMu.Lock()
+	defer defaultLoggerMu.Unlock()
 	defaultLogger = logger
 }
 
