@@ -193,7 +193,7 @@ func TestSyncBlocks(t *testing.T) {
 	// Create a PeerManager with no blockchain (should handle gracefully)
 	pm := &PeerManager{
 		logger:     logging.GetDefault().WithComponent("test"),
-		peers:      make(map[string]*peer.Peer),
+		peers:      make(map[int32]*peer.Peer),
 		blockchain: nil,
 		mempool:    NewMempool(),
 		quit:       make(chan struct{}),
@@ -211,7 +211,7 @@ func TestSyncBlocks(t *testing.T) {
 func TestGetMempoolMethod(t *testing.T) {
 	pm := &PeerManager{
 		logger:  logging.GetDefault().WithComponent("test"),
-		peers:   make(map[string]*peer.Peer),
+		peers:   make(map[int32]*peer.Peer),
 		mempool: NewMempool(),
 		quit:    make(chan struct{}),
 	}

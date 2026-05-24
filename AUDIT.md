@@ -105,7 +105,7 @@
 
 - [x] **MEDIUM-11: onInv requests all announced inventory unconditionally** — COMPLETED — Modified `onInv` to filter inventory by type (only blocks/transactions) and check mempool for duplicate transactions before requesting. Ignores other inventory types with debug logging. Validated with `go test -race ./network/...`.
 
-- [ ] **MEDIUM-12: Peer map keyed by address allows overwrites** — `network/peermgr.go:198, 208, 258, 269` — Logic/Resource Lifecycle — `pm.peers` keyed by `p.Addr()` allows duplicate connections to overwrite each other. Disconnect handling can remove wrong peer entries. — **Remediation:** Key by unique connection/peer ID or reject duplicates before insertion. Validate with `go test -race ./network/...`.
+- [x] **MEDIUM-12: Peer map keyed by address allows overwrites** — COMPLETED — Changed peers map from `map[string]*peer.Peer` to `map[int32]*peer.Peer`, using unique peer ID as key instead of address. Prevents duplicate connections from same address overwriting each other. Updated all tests. Validated with `go test -race ./network/...`.
 
 ### LOW
 

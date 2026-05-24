@@ -24,7 +24,7 @@ func TestPeerManagerCreation(t *testing.T) {
 	// Create a PeerManager directly for testing structure without needing a full blockchain
 	// In production, NewPeerManager should be used which requires a non-nil blockchain
 	pm := &PeerManager{
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		blockchain:  nil, // nil is acceptable for structure tests
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    10,
@@ -63,7 +63,7 @@ func TestPeerManagerCreation(t *testing.T) {
 func TestPeerManagerGetConnectedPeers(t *testing.T) {
 	pm := &PeerManager{
 		logger:      logging.GetDefault().WithComponent("test"),
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    10,
 		quit:        make(chan struct{}),
@@ -79,7 +79,7 @@ func TestPeerManagerGetConnectedPeers(t *testing.T) {
 func TestPeerManagerGetPeerInfo(t *testing.T) {
 	pm := &PeerManager{
 		logger:      logging.GetDefault().WithComponent("test"),
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    10,
 		quit:        make(chan struct{}),
@@ -96,7 +96,7 @@ func TestPeerManagerGetPeerInfo(t *testing.T) {
 func TestPeerManagerStop(t *testing.T) {
 	pm := &PeerManager{
 		logger:      logging.GetDefault().WithComponent("test"),
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    10,
 		quit:        make(chan struct{}),
@@ -124,7 +124,7 @@ func TestPeerManagerBlockchainReference(t *testing.T) {
 
 	// Create a PeerManager directly for testing
 	pm := &PeerManager{
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		blockchain:  nil,
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    10,
@@ -193,7 +193,7 @@ func TestConfigStruct(t *testing.T) {
 func TestOnBlockWithNilBlockchain(t *testing.T) {
 	pm := &PeerManager{
 		logger:      logging.GetDefault().WithComponent("test"),
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		blockchain:  nil, // nil blockchain
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    10,
@@ -223,7 +223,7 @@ func TestOnBlockWithNilBlockchain(t *testing.T) {
 func TestOnBlockDoesNotPanicWithValidBlock(t *testing.T) {
 	pm := &PeerManager{
 		logger:      logging.GetDefault().WithComponent("test"),
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		blockchain:  nil, // We use nil to test the nil check path
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    10,
@@ -263,7 +263,7 @@ func TestOnBlockDoesNotPanicWithValidBlock(t *testing.T) {
 func TestOnBlockBufferParameter(t *testing.T) {
 	pm := &PeerManager{
 		logger:      logging.GetDefault().WithComponent("test"),
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		blockchain:  nil,
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    10,
@@ -320,7 +320,7 @@ func TestEdgeCaseBugAcceptLoopRace(t *testing.T) {
 
 		// Create PeerManager directly
 		pm := &PeerManager{
-			peers:       make(map[string]*peer.Peer),
+			peers:       make(map[int32]*peer.Peer),
 			blockchain:  nil,
 			chainParams: &chaincfg.MainNetParams,
 			maxPeers:    10,

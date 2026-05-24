@@ -20,7 +20,7 @@ import (
 
 // PeerManager manages network peers using btcd/peer
 type PeerManager struct {
-	peers       map[string]*peer.Peer
+	peers       map[int32]*peer.Peer
 	listeners   []net.Listener
 	blockchain  *chain.BlockChain
 	mempool     *Mempool
@@ -61,7 +61,7 @@ func NewPeerManager(cfg *Config) (*PeerManager, error) {
 	}
 
 	pm := &PeerManager{
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		blockchain:  cfg.Blockchain,
 		mempool:     NewMempoolWithConfig(mempoolCfg),
 		chainParams: cfg.ChainParams,
@@ -200,7 +200,7 @@ func (pm *PeerManager) handleInboundPeer(conn net.Conn) {
 		conn.Close()
 		return
 	}
-	pm.peers[p.Addr()] = p
+	pm.peers[p.ID()] = p
 	// Update peer count metrics
 	pm.updatePeerMetrics()
 	pm.mu.Unlock()
@@ -210,7 +210,7 @@ func (pm *PeerManager) handleInboundPeer(conn net.Conn) {
 
 	// Remove from peer list
 	pm.mu.Lock()
-	delete(pm.peers, p.Addr())
+	delete(pm.peers, p.ID())
 	// Update peer count metrics and record disconnect
 	pm.updatePeerMetrics()
 	metrics.Get().RecordPeerDisconnect()
@@ -265,7 +265,7 @@ func (pm *PeerManager) ConnectPeer(addr string) error {
 		conn.Close()
 		return fmt.Errorf("max peers limit (%d) reached", pm.maxPeers)
 	}
-	pm.peers[p.Addr()] = p
+	pm.peers[p.ID()] = p
 	// Update peer count metrics
 	pm.updatePeerMetrics()
 	pm.mu.Unlock()
@@ -276,7 +276,7 @@ func (pm *PeerManager) ConnectPeer(addr string) error {
 		p.WaitForDisconnect()
 
 		pm.mu.Lock()
-		delete(pm.peers, p.Addr())
+		delete(pm.peers, p.ID())
 		// Update peer count metrics and record disconnect
 		pm.updatePeerMetrics()
 		metrics.Get().RecordPeerDisconnect()

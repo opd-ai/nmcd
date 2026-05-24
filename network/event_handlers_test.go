@@ -46,7 +46,7 @@ func createTestPeerManager(t *testing.T) *PeerManager {
 
 	pm := &PeerManager{
 		logger:      logging.GetDefault().WithComponent("test"),
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		blockchain:  nil,
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    10,
@@ -140,7 +140,7 @@ func TestOnTxMempoolFull(t *testing.T) {
 
 	pm := &PeerManager{
 		logger:      logging.GetDefault().WithComponent("test"),
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    10,
 		quit:        make(chan struct{}),
@@ -613,7 +613,7 @@ func TestMempoolWithValidatorRejects(t *testing.T) {
 
 	pm := &PeerManager{
 		logger:      logging.GetDefault().WithComponent("test"),
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    10,
 		quit:        make(chan struct{}),
@@ -646,7 +646,7 @@ func TestOnTxWithValidatorAccepts(t *testing.T) {
 
 	pm := &PeerManager{
 		logger:      logging.GetDefault().WithComponent("test"),
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    10,
 		quit:        make(chan struct{}),
