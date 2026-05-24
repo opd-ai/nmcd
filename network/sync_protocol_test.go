@@ -82,6 +82,11 @@ func (m *mockBlockchain) SetBlockAuxPowFromBytes(hash *chainhash.Hash, buf []byt
 	return nil
 }
 
+func (m *mockBlockchain) ValidateMempoolTransaction(tx *wire.MsgTx) error {
+	// Mock implementation - always accept transactions
+	return nil
+}
+
 // createTestPeerManagerWithSyncManager creates a PeerManager with sync manager for testing
 func createTestPeerManagerWithSyncManager(t *testing.T) *PeerManager {
 	t.Helper()

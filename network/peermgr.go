@@ -47,6 +47,11 @@ func NewPeerManager(cfg *Config) (*PeerManager, error) {
 	// Get logger
 	logger := logging.GetDefault().WithComponent("network")
 
+	// Require non-nil blockchain for mempool validation
+	if cfg.Blockchain == nil {
+		return nil, fmt.Errorf("blockchain is required for peer manager")
+	}
+
 	// Create mempool with validation
 	mempoolCfg := &MempoolConfig{
 		Validator:   cfg.Blockchain, // BlockChain implements TxValidator

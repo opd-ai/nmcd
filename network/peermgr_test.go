@@ -1,6 +1,7 @@
 package network
 
 import (
+	"net"
 	"testing"
 	"time"
 
@@ -12,18 +13,29 @@ import (
 
 // TestPeerManagerCreation tests that PeerManager can be created with proper configuration.
 func TestPeerManagerCreation(t *testing.T) {
-	// Create a PeerManager with no listeners and nil blockchain
-	// This tests the basic structure without needing a full blockchain instance
-	netCfg := &Config{
-		ChainParams: &chaincfg.MainNetParams,
-		Blockchain:  nil,        // nil is acceptable when no block processing is needed
-		ListenAddrs: []string{}, // No listeners for this test
-		MaxPeers:    10,
+	// Ensure logger is initialized
+	logCfg := logging.DefaultConfig()
+	logCfg.Level = logging.LevelError
+	logger, err := logging.Init(logCfg)
+	if err == nil {
+		logging.SetDefault(logger)
 	}
 
-	pm, err := NewPeerManager(netCfg)
-	if err != nil {
-		t.Fatalf("Failed to create PeerManager: %v", err)
+	// Create a PeerManager directly for testing structure without needing a full blockchain
+	// In production, NewPeerManager should be used which requires a non-nil blockchain
+	pm := &PeerManager{
+		peers:       make(map[string]*peer.Peer),
+		blockchain:  nil, // nil is acceptable for structure tests
+		chainParams: &chaincfg.MainNetParams,
+		maxPeers:    10,
+		logger:      logging.GetDefault().WithComponent("network"),
+		quit:        make(chan struct{}),
+		mempool:     NewMempoolWithConfig(&MempoolConfig{
+			Validator:   nil,
+			MaxTxs:      5000,
+			TxExpiry:    24 * time.Hour,
+			CleanupTick: 10 * time.Minute,
+		}),
 	}
 	defer pm.Stop()
 
@@ -102,21 +114,32 @@ func TestPeerManagerStop(t *testing.T) {
 
 // TestPeerManagerBlockchainReference tests that blockchain reference is stored correctly.
 func TestPeerManagerBlockchainReference(t *testing.T) {
-	// When a nil blockchain is provided, it should be stored as nil
-	netCfg := &Config{
-		ChainParams: &chaincfg.MainNetParams,
-		Blockchain:  nil,
-		ListenAddrs: []string{},
-		MaxPeers:    10,
+	// Ensure logger is initialized
+	logCfg := logging.DefaultConfig()
+	logCfg.Level = logging.LevelError
+	logger, err := logging.Init(logCfg)
+	if err == nil {
+		logging.SetDefault(logger)
 	}
 
-	pm, err := NewPeerManager(netCfg)
-	if err != nil {
-		t.Fatalf("Failed to create PeerManager: %v", err)
+	// Create a PeerManager directly for testing
+	pm := &PeerManager{
+		peers:       make(map[string]*peer.Peer),
+		blockchain:  nil,
+		chainParams: &chaincfg.MainNetParams,
+		maxPeers:    10,
+		logger:      logging.GetDefault().WithComponent("network"),
+		quit:        make(chan struct{}),
+		mempool:     NewMempoolWithConfig(&MempoolConfig{
+			Validator:   nil,
+			MaxTxs:      5000,
+			TxExpiry:    24 * time.Hour,
+			CleanupTick: 10 * time.Minute,
+		}),
 	}
 	defer pm.Stop()
 
-	// With nil blockchain, the field should be nil
+	// Verify blockchain reference is nil as configured
 	if pm.blockchain != nil {
 		t.Error("Expected blockchain to be nil when configured with nil")
 	}
@@ -279,19 +302,42 @@ func TestOnBlockBufferParameter(t *testing.T) {
 // This test reproduces the race condition where the accept goroutine may try
 // to send on channels after the main loop has exited.
 func TestEdgeCaseBugAcceptLoopRace(t *testing.T) {
+	// Ensure logger is initialized
+	logCfg := logging.DefaultConfig()
+	logCfg.Level = logging.LevelError
+	logger, err := logging.Init(logCfg)
+	if err == nil {
+		logging.SetDefault(logger)
+	}
+
 	// Run the test multiple times to increase the chance of detecting a race
 	for i := 0; i < 10; i++ {
-		netCfg := &Config{
-			ChainParams: &chaincfg.MainNetParams,
-			Blockchain:  nil,
-			ListenAddrs: []string{"127.0.0.1:0"}, // Use port 0 to get a free port
-			MaxPeers:    10,
+		// Start a listener manually (simulates what NewPeerManager does)
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("Failed to create listener: %v", err)
 		}
 
-		pm, err := NewPeerManager(netCfg)
-		if err != nil {
-			t.Fatalf("Failed to create PeerManager: %v", err)
+		// Create PeerManager directly
+		pm := &PeerManager{
+			peers:       make(map[string]*peer.Peer),
+			blockchain:  nil,
+			chainParams: &chaincfg.MainNetParams,
+			maxPeers:    10,
+			logger:      logging.GetDefault().WithComponent("network"),
+			quit:        make(chan struct{}),
+			mempool:     NewMempoolWithConfig(&MempoolConfig{
+				Validator:   nil,
+				MaxTxs:      5000,
+				TxExpiry:    24 * time.Hour,
+				CleanupTick: 10 * time.Minute,
+			}),
 		}
+		pm.listeners = append(pm.listeners, listener)
+
+		// Start listen loop
+		pm.wg.Add(1)
+		go pm.listenLoop(listener)
 
 		// Give it a tiny bit of time to start listening
 		time.Sleep(10 * time.Millisecond)

@@ -101,7 +101,7 @@
 
 - [x] **MEDIUM-9: ExtractChainIDFromVersion uses signed shift** — COMPLETED — Changed from `uint32(version >> 16)` to `uint32(version) >> 16` to use unsigned shift and avoid sign extension for negative versions. Validated with `go test -race ./chain/...`.
 
-- [ ] **MEDIUM-10: Mempool validation skipped when blockchain is nil** — `network/peermgr.go:50-56, 401-418` + `network/mempool.go:159-171` — Security/Initialization — `NewPeerManager` allows `cfg.Blockchain == nil`, leaving mempool validator nil. `onTx` still accepts and relays unvalidated transactions. — **Remediation:** Require non-nil blockchain for live networking, or reject tx handling without a validator. Validate with `go test -race ./network/...`.
+- [x] **MEDIUM-10: Mempool validation skipped when blockchain is nil** — COMPLETED — Added check in `NewPeerManager` to require non-nil blockchain, preventing unvalidated transaction relay. Updated affected tests to create PeerManager directly or use mock blockchain. Validated with `go test -race ./network/...`.
 
 - [ ] **MEDIUM-11: onInv requests all announced inventory unconditionally** — `network/peermgr.go:301-313` — Security/Performance — `onInv` requests every announced inventory item without checking if already known, already requested, or worth fetching. A peer can force redundant bandwidth/CPU use. — **Remediation:** Filter by type and known state before queueing getdata. Validate with `go test -race ./network/...`.
 
