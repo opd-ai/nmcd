@@ -103,7 +103,7 @@
 
 - [x] **MEDIUM-10: Mempool validation skipped when blockchain is nil** — COMPLETED — Added check in `NewPeerManager` to require non-nil blockchain, preventing unvalidated transaction relay. Updated affected tests to create PeerManager directly or use mock blockchain. Validated with `go test -race ./network/...`.
 
-- [ ] **MEDIUM-11: onInv requests all announced inventory unconditionally** — `network/peermgr.go:301-313` — Security/Performance — `onInv` requests every announced inventory item without checking if already known, already requested, or worth fetching. A peer can force redundant bandwidth/CPU use. — **Remediation:** Filter by type and known state before queueing getdata. Validate with `go test -race ./network/...`.
+- [x] **MEDIUM-11: onInv requests all announced inventory unconditionally** — COMPLETED — Modified `onInv` to filter inventory by type (only blocks/transactions) and check mempool for duplicate transactions before requesting. Ignores other inventory types with debug logging. Validated with `go test -race ./network/...`.
 
 - [ ] **MEDIUM-12: Peer map keyed by address allows overwrites** — `network/peermgr.go:198, 208, 258, 269` — Logic/Resource Lifecycle — `pm.peers` keyed by `p.Addr()` allows duplicate connections to overwrite each other. Disconnect handling can remove wrong peer entries. — **Remediation:** Key by unique connection/peer ID or reject duplicates before insertion. Validate with `go test -race ./network/...`.
 

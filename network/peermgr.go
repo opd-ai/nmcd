@@ -321,7 +321,26 @@ func (pm *PeerManager) onInv(p *peer.Peer, msg *wire.MsgInv) {
 	}
 	gdmsg := wire.NewMsgGetData()
 	for _, inv := range msg.InvList {
-		gdmsg.AddInvVect(inv)
+		// Filter by type - only request blocks and transactions
+		switch inv.Type {
+		case wire.InvTypeBlock, wire.InvTypeTx:
+			// Check if we already have this item
+			if inv.Type == wire.InvTypeTx {
+				// Check mempool first
+				if pm.mempool.HasTx(&inv.Hash) {
+					continue
+				}
+			}
+			// For blocks, the blockchain will handle duplicates during ProcessBlock
+			// Add to getdata request
+			gdmsg.AddInvVect(inv)
+		default:
+			// Ignore other inventory types
+			pm.logger.Debug("ignoring inventory type",
+				"type", inv.Type,
+				"hash", inv.Hash.String(),
+				"peer_id", p.Addr())
+		}
 	}
 	if len(gdmsg.InvList) > 0 {
 		p.QueueMessage(gdmsg, nil)
