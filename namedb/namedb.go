@@ -140,9 +140,10 @@ func (u *UTXO) Copy() *UTXO {
 
 // NameDatabase manages name operations with bbolt storage
 type NameDatabase struct {
-	db    *bbolt.DB
-	mu    sync.RWMutex
-	cache *lruCache // LRU cache for name lookups (10,000 entries)
+	db     *bbolt.DB
+	mu     sync.RWMutex
+	cache  *lruCache // LRU cache for name lookups (10,000 entries)
+	closed bool      // Tracks whether database has been closed
 }
 
 // NewNameDatabase creates a new name database
@@ -176,6 +177,15 @@ func NewNameDatabase(dbPath string) (*NameDatabase, error) {
 func (ndb *NameDatabase) Close() error {
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
+	
+	if ndb.closed {
+		return nil // Already closed
+	}
+	
+	// Clear cache
+	ndb.cache.Clear()
+	ndb.closed = true
+	
 	return ndb.db.Close()
 }
 
@@ -624,6 +634,11 @@ func (ndb *NameDatabase) ScanNames(prefix string, count int) ([]*NameRecord, err
 	ndb.mu.RLock()
 	defer ndb.mu.RUnlock()
 
+	// Short-circuit for count <= 0 to avoid returning any results
+	if count <= 0 {
+		return nil, nil
+	}
+
 	var results []*NameRecord
 
 	err := ndb.db.View(func(tx *bbolt.Tx) error {
@@ -795,8 +810,11 @@ func (ndb *NameDatabase) GetNameNew(commitHash []byte) (*NameNewRecord, error) {
 		// the codebase. The cast is safe as blockchain heights won't exceed
 		// MaxInt32 (would take ~4000 years at current block rates).
 		height := int32(binary.LittleEndian.Uint32(data))
+		// Copy commitHash to avoid aliasing with caller's slice
+		hashCopy := make([]byte, len(commitHash))
+		copy(hashCopy, commitHash)
 		record = &NameNewRecord{
-			Hash:   commitHash,
+			Hash:   hashCopy,
 			Height: height,
 		}
 		return nil

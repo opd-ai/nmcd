@@ -109,11 +109,11 @@
 
 ### LOW
 
-- [ ] **LOW-1: ScanNames returns one result when count <= 0** — `namedb/namedb.go:358-389` — Off-by-one/API Contract — `ScanNames` appends before enforcing `count`. With `count <= 0`, it returns the first match instead of empty. RPC validates positive counts but direct callers are unprotected. — **Remediation:** Short-circuit `count <= 0` before scanning.
+- [x] **LOW-1: ScanNames returns one result when count <= 0** — COMPLETED — Added short-circuit check at start of ScanNames to return nil when count <= 0. Validated with `go test -race ./namedb/...`.
 
-- [ ] **LOW-2: GetNameNew returns alias of input slice** — `namedb/namedb.go:533-535` — Data Aliasing — Returns `Hash: commitHash` without copying; caller mutation of the input slice corrupts the returned record. — **Remediation:** Copy `commitHash` before assigning.
+- [x] **LOW-2: GetNameNew returns alias of input slice** — COMPLETED — Modified GetNameNew to copy commitHash slice before assigning to record. Prevents caller mutation from corrupting cached state. Validated with `go test -race ./namedb/...`.
 
-- [ ] **LOW-3: Close leaves cache active** — `namedb/namedb.go:134-137` — Resource Lifecycle/API Contract — `Close()` closes bbolt but leaves the cache live. Cached `GetName` calls succeed after close, returning stale data. — **Remediation:** Clear cache and track a closed state.
+- [x] **LOW-3: Close leaves cache active** — COMPLETED — Added closed flag to NameDatabase struct and modified Close() to clear cache and set flag. Prevents stale cached reads after close. Validated with `go test -race ./namedb/...`.
 
 - [ ] **LOW-4: Public methods accept nil pointer arguments without validation** — `namedb/namedb.go:141-161, 402-409`; `namedb/utxo.go:73-82, 105-113` — Nil Safety — Public methods dereference pointer arguments without nil checks. — **Remediation:** Validate pointer args at public entrypoints.
 
