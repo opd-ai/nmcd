@@ -93,7 +93,7 @@
 
 - [x] **MEDIUM-5: Global defaultLogger has unsynchronized read/write** — COMPLETED — Added `defaultLoggerMu` RWMutex. `GetDefault()` acquires read lock, `SetDefault()` acquires write lock. Prevents concurrent read/write data races. Validated with `go test -race ./internal/logging/...`.
 
-- [ ] **MEDIUM-6: SMTP readDataBody allows unbounded memory allocation** — `mail/smtp.go:512-536` — Security/Resource Lifecycle — The SMTP server buffers the entire DATA payload before enforcing `MaxMessageSize`. A client can force unbounded memory growth. — **Remediation:** Enforce size limit during the read loop and abort when exceeded. Validate with `go test -race ./mail/...`.
+- [x] **MEDIUM-6: SMTP readDataBody allows unbounded memory allocation** — COMPLETED — Modified `readDataBody()` to track cumulative size during read loop and return error when `MaxMessageSize` is exceeded. Updated `handleData()` to send 552 response on size limit error. Prevents unbounded memory allocation. Validated with `go test -race ./mail/...`.
 
 - [x] **MEDIUM-7: findNameNewUTXOIndex returns 0 on failure** — COMPLETED — Changed return value from 0 to -1 on failure. Added validation in caller to reject RPC with descriptive error when no NAME_NEW UTXO found. Validated with `go test -race ./rpc/...`.
 

@@ -365,12 +365,11 @@ func (s *smtpSession) handleData() error {
 	// Read message body until "." on a line by itself
 	body, err := s.readDataBody()
 	if err != nil {
+		// If size limit exceeded during read, send 552 response
+		if strings.Contains(err.Error(), "exceeds maximum size") {
+			return s.writeLine("552 Message exceeds maximum size")
+		}
 		return err
-	}
-
-	// Check message size
-	if int64(len(body)) > s.relay.config.MaxMessageSize {
-		return s.writeLine("552 Message exceeds maximum size")
 	}
 
 	// Forward to each recipient
@@ -511,6 +510,7 @@ func (s *smtpSession) writeLine(line string) error {
 // readDataBody reads the message body until end-of-data marker.
 func (s *smtpSession) readDataBody() ([]byte, error) {
 	var body []byte
+	maxSize := s.relay.config.MaxMessageSize
 
 	for {
 		line, err := s.reader.ReadString('\n')
@@ -526,6 +526,11 @@ func (s *smtpSession) readDataBody() ([]byte, error) {
 		trimmed = strings.TrimSuffix(trimmed, "\n")
 		if trimmed == "." {
 			return body, nil
+		}
+
+		// Enforce size limit before appending
+		if int64(len(body)+len(line)) > maxSize {
+			return nil, fmt.Errorf("message exceeds maximum size of %d bytes", maxSize)
 		}
 
 		// Add line to body (keep CRLF for proper email format)
