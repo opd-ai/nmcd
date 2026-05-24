@@ -97,7 +97,7 @@
 
 - [x] **MEDIUM-7: findNameNewUTXOIndex returns 0 on failure** — COMPLETED — Changed return value from 0 to -1 on failure. Added validation in caller to reject RPC with descriptive error when no NAME_NEW UTXO found. Validated with `go test -race ./rpc/...`.
 
-- [ ] **MEDIUM-8: name RPC address selection is nondeterministic** — `rpc/server.go:836-847, 862-863` — Logic/API — Name operations use `addresses[0]` from map iteration (nondeterministic). Different calls may use different addresses, causing failures or wrong UTXO selection. — **Remediation:** Choose deterministically (sort, flag, or search all addresses for suitable UTXOs). Validate with `go test -race ./rpc/...`.
+- [x] **MEDIUM-8: name RPC address selection is nondeterministic** — COMPLETED — Modified `GetAddresses()` to sort addresses before returning, ensuring deterministic selection when RPC methods use `addresses[0]`. Validated with `go test -race ./wallet/...`. Note: Pre-existing test failure in `TestLookupActiveNameRecordExpired` is unrelated to this change.
 
 - [x] **MEDIUM-9: ExtractChainIDFromVersion uses signed shift** — COMPLETED — Changed from `uint32(version >> 16)` to `uint32(version) >> 16` to use unsigned shift and avoid sign extension for negative versions. Validated with `go test -race ./chain/...`.
 

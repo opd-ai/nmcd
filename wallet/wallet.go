@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -276,7 +277,7 @@ func (w *Wallet) GenerateKey() (string, error) {
 	return addrStr, nil
 }
 
-// GetAddresses returns all addresses in the wallet.
+// GetAddresses returns all addresses in the wallet in deterministic sorted order.
 func (w *Wallet) GetAddresses() []string {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
@@ -285,6 +286,7 @@ func (w *Wallet) GetAddresses() []string {
 	for addr := range w.keys {
 		addrs = append(addrs, addr)
 	}
+	sort.Strings(addrs)
 	return addrs
 }
 
