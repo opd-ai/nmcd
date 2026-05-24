@@ -54,6 +54,9 @@ type Server struct {
 	maxRequestSize int64
 	logger         *logging.Logger
 	mu             sync.RWMutex
+	autoLockTimer  *time.Timer // Auto-lock timer for walletpassphrase
+	autoLockMu     sync.Mutex  // Protects autoLockTimer and autoLockGen
+	autoLockGen    uint64      // Generation counter to invalidate superseded timers
 }
 
 // Config holds RPC server configuration
@@ -1405,9 +1408,36 @@ func (s *Server) walletPassphrase(req *Request) *Response {
 		return errorResponse(req.ID, -14, fmt.Sprintf("Failed to unlock wallet: %v", err))
 	}
 
-	time.AfterFunc(time.Duration(timeout)*time.Second, func() {
-		s.wallet.Lock()
+	// Cancel any existing auto-lock timer and create a new one.
+	// Lock ordering: always acquire autoLockMu before the wallet lock to
+	// prevent deadlock between the callback and walletLock.
+	// A generation counter ensures a superseded callback is a no-op even
+	// when Stop() returns false (the callback has already started running).
+	s.autoLockMu.Lock()
+	if s.autoLockTimer != nil {
+		s.autoLockTimer.Stop()
+		s.autoLockTimer = nil
+	}
+	s.autoLockGen++
+	gen := s.autoLockGen
+	s.autoLockTimer = time.AfterFunc(time.Duration(timeout)*time.Second, func() {
+		// Take autoLockMu first (consistent lock order: autoLockMu then wallet).
+		s.autoLockMu.Lock()
+		if s.autoLockGen != gen {
+			// This timer was superseded by a newer walletpassphrase or walletlock call.
+			s.autoLockMu.Unlock()
+			return
+		}
+		s.autoLockTimer = nil
+		s.autoLockMu.Unlock()
+		// Lock the wallet outside autoLockMu to avoid lock-order inversion.
+		if err := s.wallet.Lock(); err != nil {
+			if s.logger != nil {
+				s.logger.Error("auto-lock: failed to lock wallet", "error", err)
+			}
+		}
 	})
+	s.autoLockMu.Unlock()
 
 	return successResponse(req.ID, nil)
 }
@@ -1456,6 +1486,16 @@ func (s *Server) walletLock(req *Request) *Response {
 			ID: req.ID,
 		}
 	}
+
+	// Cancel any active auto-lock timer when manually locking.
+	// Incrementing the generation invalidates any in-flight callback.
+	s.autoLockMu.Lock()
+	if s.autoLockTimer != nil {
+		s.autoLockTimer.Stop()
+		s.autoLockTimer = nil
+	}
+	s.autoLockGen++
+	s.autoLockMu.Unlock()
 
 	if err := s.wallet.Lock(); err != nil {
 		return &Response{

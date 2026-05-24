@@ -69,7 +69,7 @@
 
 - [x] **HIGH-3: GetNameUTXO always fetches output index 0** — `namedb/utxo.go:217-220` — Logic/API Contract — `GetNameUTXO` ignores `record.OutIndex` and always calls `GetUTXO(&record.TxHash, 0)`. Names stored at non-zero output indices will get wrong UTXO lookups or false "not found" errors. — **Remediation:** Call `GetUTXO(&record.TxHash, record.OutIndex)`. Validate with `go test -race ./namedb/...`.
 
-- [ ] **HIGH-4: Reorg rollback never restores expired names** — `chain/blockchain.go:974-988, 1760-1773` — Reorg/Data Lifecycle — Expiration processing deletes names and history, but the disconnect (rollback) path never restores entries that were expired by a now-disconnected block. Reorgs across expiration heights permanently lose names and corrupt state. — **Remediation:** Persist expired records for rollback restoration, or reconstruct them from history on disconnect. Validate with `go test -race ./chain/...`.
+- [x] **HIGH-4: Reorg rollback never restores expired names** — COMPLETED — Added `expiredNamesBucket` and `expiredNamesIdxBucket` to track expired names by block height. `handleExpiredNames()` now calls `StoreExpiredName()` before deletion. `rollbackNameOperations()` calls `RestoreExpiredNamesForBlock()` to restore names during reorg. Added comprehensive tests in `namedb/expiration_reorg_test.go`. Validated with `go test -race ./chain/... ./namedb/...`.
 
 - [x] **HIGH-5: Rollback paths discard database errors** — `chain/blockchain.go:1779, 1809, 1816-1820, 1839-1844` — Error Handling — Reorg rollback operations (e.g., `RemoveLastHistoryEntry`) discard errors and continue. A failed rollback silently leaves the name database inconsistent. — **Remediation:** Propagate or aggregate rollback failures and abort claiming success when DB operations fail. Validate with `go test -race ./chain/...`.
 
@@ -89,7 +89,7 @@
 
 - [x] **MEDIUM-3: lookupActiveNameRecord off-by-one in expiration check** — COMPLETED — Changed expiration check from `ExpiresAt <= bestHeight` to `ExpiresAt < bestHeight` to match project convention. Added explanatory comment. Validated with `go test -race ./rpc/...`.
 
-- [ ] **MEDIUM-4: walletpassphrase timer accumulation** — `rpc/server.go:1398-1400` — Resource Lifecycle/Logic — Each `walletpassphrase` call creates a new auto-lock timer without cancelling prior timers. Earlier timers can still fire and lock the wallet sooner than expected. — **Remediation:** Store the timer handle and cancel/reset it on subsequent calls. Validate with `go test -race ./rpc/...`.
+- [x] **MEDIUM-4: walletpassphrase timer accumulation** — COMPLETED — Added `autoLockTimer` and `autoLockMu` fields to Server struct. Updated `walletpassphrase` handler to cancel existing timer before creating new one. Updated `walletlock` handler to cancel timer on manual lock. Timer clears itself after firing. Validated with `go test -race ./rpc/... -run Wallet`.
 
 - [x] **MEDIUM-5: Global defaultLogger has unsynchronized read/write** — COMPLETED — Added `defaultLoggerMu` RWMutex. `GetDefault()` acquires read lock, `SetDefault()` acquires write lock. Prevents concurrent read/write data races. Validated with `go test -race ./internal/logging/...`.
 
