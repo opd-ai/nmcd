@@ -54,6 +54,8 @@ type Server struct {
 	maxRequestSize int64
 	logger         *logging.Logger
 	mu             sync.RWMutex
+	autoLockTimer  *time.Timer // Auto-lock timer for walletpassphrase
+	autoLockMu     sync.Mutex  // Protects autoLockTimer
 }
 
 // Config holds RPC server configuration
@@ -1405,9 +1407,21 @@ func (s *Server) walletPassphrase(req *Request) *Response {
 		return errorResponse(req.ID, -14, fmt.Sprintf("Failed to unlock wallet: %v", err))
 	}
 
-	time.AfterFunc(time.Duration(timeout)*time.Second, func() {
+	// Cancel any existing auto-lock timer before creating a new one
+	s.autoLockMu.Lock()
+	if s.autoLockTimer != nil {
+		s.autoLockTimer.Stop()
+		s.autoLockTimer = nil
+	}
+	// Create new auto-lock timer
+	s.autoLockTimer = time.AfterFunc(time.Duration(timeout)*time.Second, func() {
 		s.wallet.Lock()
+		// Clear the timer reference after it fires
+		s.autoLockMu.Lock()
+		s.autoLockTimer = nil
+		s.autoLockMu.Unlock()
 	})
+	s.autoLockMu.Unlock()
 
 	return successResponse(req.ID, nil)
 }
@@ -1456,6 +1470,14 @@ func (s *Server) walletLock(req *Request) *Response {
 			ID: req.ID,
 		}
 	}
+
+	// Cancel any active auto-lock timer when manually locking
+	s.autoLockMu.Lock()
+	if s.autoLockTimer != nil {
+		s.autoLockTimer.Stop()
+		s.autoLockTimer = nil
+	}
+	s.autoLockMu.Unlock()
 
 	if err := s.wallet.Lock(); err != nil {
 		return &Response{

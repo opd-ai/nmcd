@@ -89,7 +89,7 @@
 
 - [x] **MEDIUM-3: lookupActiveNameRecord off-by-one in expiration check** — COMPLETED — Changed expiration check from `ExpiresAt <= bestHeight` to `ExpiresAt < bestHeight` to match project convention. Added explanatory comment. Validated with `go test -race ./rpc/...`.
 
-- [ ] **MEDIUM-4: walletpassphrase timer accumulation** — `rpc/server.go:1398-1400` — Resource Lifecycle/Logic — Each `walletpassphrase` call creates a new auto-lock timer without cancelling prior timers. Earlier timers can still fire and lock the wallet sooner than expected. — **Remediation:** Store the timer handle and cancel/reset it on subsequent calls. Validate with `go test -race ./rpc/...`.
+- [x] **MEDIUM-4: walletpassphrase timer accumulation** — COMPLETED — Added `autoLockTimer` and `autoLockMu` fields to Server struct. Updated `walletpassphrase` handler to cancel existing timer before creating new one. Updated `walletlock` handler to cancel timer on manual lock. Timer clears itself after firing. Validated with `go test -race ./rpc/... -run Wallet`.
 
 - [x] **MEDIUM-5: Global defaultLogger has unsynchronized read/write** — COMPLETED — Added `defaultLoggerMu` RWMutex. `GetDefault()` acquires read lock, `SetDefault()` acquires write lock. Prevents concurrent read/write data races. Validated with `go test -race ./internal/logging/...`.
 
