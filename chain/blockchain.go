@@ -997,6 +997,8 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 }
 
 // handleExpiredNames deletes expired names and their history at given height.
+// Before deletion, names are stored in the expired names bucket for potential
+// restoration during blockchain reorganizations.
 func (bc *BlockChain) handleExpiredNames(height int32) error {
 	expired, err := bc.nameDB.GetExpiredNames(height)
 	if err != nil {
@@ -1004,6 +1006,19 @@ func (bc *BlockChain) handleExpiredNames(height int32) error {
 	}
 
 	for _, name := range expired {
+		// Get the name record before deletion for rollback support
+		record, err := bc.nameDB.GetName(name)
+		if err != nil {
+			// Name may have been deleted already, skip
+			continue
+		}
+
+		// Store the expired name for potential restoration during reorg
+		if err := bc.nameDB.StoreExpiredName(record, height); err != nil {
+			return fmt.Errorf("failed to store expired name %s for rollback: %w", name, err)
+		}
+
+		// Now delete the name and its history
 		if err := bc.nameDB.DeleteName(name); err != nil {
 			return err
 		}
@@ -1786,6 +1801,11 @@ func (bc *BlockChain) HandleBlockchainNotification(notification *blockchain.Noti
 func (bc *BlockChain) rollbackNameOperations(block *btcutil.Block) {
 	restoredCommitments := make(map[string]bool)
 	var rollbackErrors []error
+
+	// First, restore any names that were expired at this block height
+	if err := bc.nameDB.RestoreExpiredNamesForBlock(block.Height()); err != nil {
+		rollbackErrors = append(rollbackErrors, fmt.Errorf("failed to restore expired names for block %d: %w", block.Height(), err))
+	}
 
 	txs := block.Transactions()
 	for i := len(txs) - 1; i >= 0; i-- {

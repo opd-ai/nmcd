@@ -18,11 +18,13 @@ var (
 	historyBucket      = []byte("history")
 	historyIndexBucket = []byte("history_index")
 	expirationBucket   = []byte("expiration")
-	nameNewBucket      = []byte("name_new")       // Tracks NAME_NEW commitments
-	utxoBucket         = []byte("utxo")           // Tracks unspent transaction outputs
-	utxoAddrBucket     = []byte("utxo_addr")      // Index: address -> UTXOs
-	spentUtxoBucket    = []byte("spent_utxo")     // Tracks spent UTXOs for reorg restoration (indexed by block height)
-	spentUtxoIdxBucket = []byte("spent_utxo_idx") // Index: height -> list of spent UTXO keys
+	nameNewBucket      = []byte("name_new")         // Tracks NAME_NEW commitments
+	utxoBucket         = []byte("utxo")             // Tracks unspent transaction outputs
+	utxoAddrBucket     = []byte("utxo_addr")        // Index: address -> UTXOs
+	spentUtxoBucket    = []byte("spent_utxo")       // Tracks spent UTXOs for reorg restoration (indexed by block height)
+	spentUtxoIdxBucket = []byte("spent_utxo_idx")   // Index: height -> list of spent UTXO keys
+	expiredNamesBucket = []byte("expired_names")    // Tracks expired names for reorg restoration (indexed by block height)
+	expiredNamesIdxBucket = []byte("expired_names_idx") // Index: height -> list of expired name keys
 )
 
 // Sentinel errors for namedb operations
@@ -150,7 +152,7 @@ func NewNameDatabase(dbPath string) (*NameDatabase, error) {
 
 	// Initialize buckets
 	err = db.Update(func(tx *bbolt.Tx) error {
-		for _, bucket := range [][]byte{namesBucket, historyBucket, historyIndexBucket, expirationBucket, nameNewBucket, utxoBucket, utxoAddrBucket, spentUtxoBucket, spentUtxoIdxBucket} {
+		for _, bucket := range [][]byte{namesBucket, historyBucket, historyIndexBucket, expirationBucket, nameNewBucket, utxoBucket, utxoAddrBucket, spentUtxoBucket, spentUtxoIdxBucket, expiredNamesBucket, expiredNamesIdxBucket} {
 			if _, err := tx.CreateBucketIfNotExists(bucket); err != nil {
 				return err
 			}
@@ -366,6 +368,155 @@ func (ndb *NameDatabase) GetExpiredNames(height int32) ([]string, error) {
 		return nil
 	})
 	return expired, err
+}
+
+// StoreExpiredName stores an expired name record for potential restoration during reorganization.
+// The name record is indexed by the block height where it expired, allowing efficient
+// restoration during reorgs. This should be called before DeleteName during expiration processing.
+func (ndb *NameDatabase) StoreExpiredName(record *NameRecord, expiredAtHeight int32) error {
+	ndb.mu.Lock()
+	defer ndb.mu.Unlock()
+
+	return ndb.db.Update(func(tx *bbolt.Tx) error {
+		expiredBkt := tx.Bucket(expiredNamesBucket)
+		idxBkt := tx.Bucket(expiredNamesIdxBucket)
+
+		// Encode name record
+		data := encodeNameRecord(record)
+
+		// Store in expired names bucket
+		// Key: name (as string)
+		if err := expiredBkt.Put([]byte(record.Name), data); err != nil {
+			return err
+		}
+
+		// Add to height index for efficient lookup and cleanup
+		// Key: height(4) + name
+		nameBytes := []byte(record.Name)
+		heightKey := make([]byte, 4+len(nameBytes))
+		binary.BigEndian.PutUint32(heightKey[0:4], uint32(expiredAtHeight))
+		copy(heightKey[4:], nameBytes)
+
+		return idxBkt.Put(heightKey, []byte{1}) // Value doesn't matter, just presence
+	})
+}
+
+// RestoreExpiredNamesForBlock restores all names that were expired at the given height.
+// This is called during blockchain reorganization to undo expiration processing.
+// Names are restored to both the names bucket and expiration index, then removed from
+// the expired names tracking buckets.
+func (ndb *NameDatabase) RestoreExpiredNamesForBlock(height int32) error {
+	ndb.mu.Lock()
+	defer ndb.mu.Unlock()
+
+	return ndb.db.Update(func(tx *bbolt.Tx) error {
+		namesBkt := tx.Bucket(namesBucket)
+		expirationBkt := tx.Bucket(expirationBucket)
+		expiredBkt := tx.Bucket(expiredNamesBucket)
+		idxBkt := tx.Bucket(expiredNamesIdxBucket)
+
+		// Find all names expired at this height using the index
+		heightPrefix := make([]byte, 4)
+		binary.BigEndian.PutUint32(heightPrefix, uint32(height))
+
+		c := idxBkt.Cursor()
+		var namesToRestore []string
+
+		// Collect all names expired at this height
+		for k, _ := c.Seek(heightPrefix); k != nil && bytes.HasPrefix(k, heightPrefix); k, _ = c.Next() {
+			// Extract name from key (skip height prefix)
+			name := string(k[4:])
+			namesToRestore = append(namesToRestore, name)
+		}
+
+		// Restore each name
+		for _, name := range namesToRestore {
+			// Get the stored expired name record
+			data := expiredBkt.Get([]byte(name))
+			if data == nil {
+				continue // Already cleaned up or never stored
+			}
+
+			// Decode the record
+			record, err := decodeNameRecord(data)
+			if err != nil {
+				return fmt.Errorf("failed to decode expired name %s: %w", name, err)
+			}
+			record.Name = name
+
+			// Restore to names bucket
+			if err := namesBkt.Put([]byte(name), data); err != nil {
+				return fmt.Errorf("failed to restore name %s: %w", name, err)
+			}
+
+			// Restore to expiration index
+			expirationKey := makeExpirationKey(record.ExpiresAt, name)
+			if err := expirationBkt.Put(expirationKey, []byte{1}); err != nil {
+				return fmt.Errorf("failed to restore expiration index for %s: %w", name, err)
+			}
+
+			// Remove from expired names bucket
+			if err := expiredBkt.Delete([]byte(name)); err != nil {
+				return fmt.Errorf("failed to delete from expired names bucket: %w", err)
+			}
+
+			// Remove from expired names index
+			heightKey := make([]byte, 4+len(name))
+			binary.BigEndian.PutUint32(heightKey[0:4], uint32(height))
+			copy(heightKey[4:], name)
+			if err := idxBkt.Delete(heightKey); err != nil {
+				return fmt.Errorf("failed to delete from expired names index: %w", err)
+			}
+
+			// Invalidate cache entry since we're restoring the name
+			ndb.cache.Delete(name)
+		}
+
+		return nil
+	})
+}
+
+// CleanupOldExpiredNames removes expired name backups older than the given height.
+// This should be called periodically to prevent unbounded growth of the expired names storage.
+// Typical usage: keep the last 100-200 blocks worth of expired names for reorg safety.
+func (ndb *NameDatabase) CleanupOldExpiredNames(keepFromHeight int32) error {
+	ndb.mu.Lock()
+	defer ndb.mu.Unlock()
+
+	return ndb.db.Update(func(tx *bbolt.Tx) error {
+		expiredBkt := tx.Bucket(expiredNamesBucket)
+		idxBkt := tx.Bucket(expiredNamesIdxBucket)
+
+		c := idxBkt.Cursor()
+		var keysToDelete [][]byte
+		var namesToDelete []string
+
+		// Scan index for entries older than keepFromHeight
+		for k, _ := c.First(); k != nil; k, _ = c.Next() {
+			if len(k) < 4 {
+				continue // Invalid key
+			}
+
+			height := int32(binary.BigEndian.Uint32(k[:4]))
+			if height < keepFromHeight {
+				keysToDelete = append(keysToDelete, append([]byte(nil), k...))
+				name := string(k[4:])
+				namesToDelete = append(namesToDelete, name)
+			}
+		}
+
+		// Delete expired names and index entries
+		for i, key := range keysToDelete {
+			if err := idxBkt.Delete(key); err != nil {
+				return err
+			}
+			if err := expiredBkt.Delete([]byte(namesToDelete[i])); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 }
 
 // ListNames returns all names in the database
