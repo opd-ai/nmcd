@@ -165,10 +165,17 @@ func (sm *SyncManager) HandleHeaders(p *peer.Peer, msg *wire.MsgHeaders) {
 		return
 	}
 
-	// Only accept headers from the active sync peer to prevent spam
-	if sm.syncPeer != nil && p.Addr() != sm.syncPeer.Addr() {
-		log.Printf("Ignoring headers from non-sync peer %s (sync peer is %s)", p.Addr(), sm.syncPeer.Addr())
-		return
+	// Only accept headers from the active sync peer to prevent spam.
+	// During headers-first sync, reject all headers unless a sync peer is selected.
+	if sm.headersFirstMode {
+		if sm.syncPeer == nil {
+			log.Printf("Ignoring headers from %s: no active sync peer", p.Addr())
+			return
+		}
+		if p.Addr() != sm.syncPeer.Addr() {
+			log.Printf("Ignoring headers from non-sync peer %s (sync peer is %s)", p.Addr(), sm.syncPeer.Addr())
+			return
+		}
 	}
 
 	if p != nil {
@@ -258,9 +265,31 @@ func (sm *SyncManager) OnPeerDisconnected(p *peer.Peer) {
 	// Clear best peer if it disconnected
 	if sm.bestPeer != nil && sm.bestPeer.Addr() == p.Addr() {
 		log.Printf("Best peer %s disconnected, will reselect", p.Addr())
-		sm.bestPeer = nil
-		sm.bestHeight = 0
+		sm.bestPeer = sm.findReplacementPeer(p)
 	}
+}
+
+// findReplacementPeer selects another connected peer to continue syncing.
+// This method must be called while holding sm.mu lock.
+func (sm *SyncManager) findReplacementPeer(disconnected *peer.Peer) *peer.Peer {
+	if sm.pm == nil {
+		return nil
+	}
+
+	sm.pm.mu.RLock()
+	defer sm.pm.mu.RUnlock()
+
+	for _, candidate := range sm.pm.peers {
+		if candidate == nil {
+			continue
+		}
+		if disconnected != nil && candidate.Addr() == disconnected.Addr() {
+			continue
+		}
+		return candidate
+	}
+
+	return nil
 }
 
 // cleanupOldRequests removes block requests older than 2 minutes

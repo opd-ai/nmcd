@@ -75,31 +75,31 @@
 
 - [x] **HIGH-6: Batch writer stores caller-owned pointers** — `namedb/batch.go:55-56, 73-74, 81-83, 90-91` — Data Aliasing/API Contract — `BatchWriter` queues caller-owned pointers and writes them during `Commit`. Caller mutation between enqueue and commit changes what gets persisted, causing silent corruption. — **Remediation:** Copy inputs when enqueueing, or document ownership transfer explicitly. Validate with `go test -race ./namedb/...`.
 
-- [ ] **HIGH-7: Sync peer never reselected on disconnect** — COMPLETED — Added `SyncManager.OnPeerDisconnected()` method called by `PeerManager` when peers disconnect. Clears both `syncPeer` and `bestPeer` references to enable reselection. Validated with `go test -race ./network/...`.
+- [x] **HIGH-7: Sync peer never reselected on disconnect** — COMPLETED — Added `SyncManager.OnPeerDisconnected()` method called by `PeerManager` when peers disconnect. Clears both `syncPeer` and `bestPeer` references to enable reselection. Validated with `go test -race ./network/...`.
 
-- [ ] **HIGH-8: HandleHeaders accepts unvalidated headers from any peer** — COMPLETED — Modified `HandleHeaders()` to only accept headers from the active sync peer, rejecting headers from other peers with log message. Prevents header spam attacks. Validated with `go test -race ./network/...`.
+- [x] **HIGH-8: HandleHeaders accepts unvalidated headers from any peer** — COMPLETED — Modified `HandleHeaders()` to only accept headers from the active sync peer, rejecting headers from other peers with log message. Prevents header spam attacks. Validated with `go test -race ./network/...`.
 
-- [ ] **HIGH-9: Mempool stores mutable transaction pointers** — COMPLETED — Modified `AddTx()` to deep-copy transactions using `tx.Copy()` on insert. Modified `GetTx()` and `GetAll()` to return copies. Prevents external mutation of mempool state. Validated with `go test -race ./network/...`.
+- [x] **HIGH-9: Mempool stores mutable transaction pointers** — COMPLETED — Modified `AddTx()` to deep-copy transactions using `tx.Copy()` on insert. Modified `GetTx()` and `GetAll()` to return copies. Prevents external mutation of mempool state. Validated with `go test -race ./network/...`.
 
 ### MEDIUM
 
-- [ ] **MEDIUM-1: getinfo returns compact target bits as "difficulty"** — COMPLETED — Modified `getinfo` RPC handler to compute actual difficulty ratio (max_target / current_target) using `blockchain.CompactToBig()`. Returns human-readable float64 instead of raw bits. Validated with `go test -race ./rpc/...`.
+- [x] **MEDIUM-1: getinfo returns compact target bits as "difficulty"** — COMPLETED — Modified `getinfo` RPC handler to compute actual difficulty ratio (max_target / current_target) using `blockchain.CompactToBig()`. Returns human-readable float64 instead of raw bits. Validated with `go test -race ./rpc/...`.
 
-- [ ] **MEDIUM-2: name_history dereferences blockchain without guard** — COMPLETED — Added `requireBlockchain` guard at the start of `nameHistory` method. Prevents panic when server created without blockchain. Validated with `go test -race ./rpc/...`.
+- [x] **MEDIUM-2: name_history dereferences blockchain without guard** — COMPLETED — Added `requireBlockchain` guard at the start of `nameHistory` method. Prevents panic when server created without blockchain. Validated with `go test -race ./rpc/...`.
 
-- [ ] **MEDIUM-3: lookupActiveNameRecord off-by-one in expiration check** — COMPLETED — Changed expiration check from `ExpiresAt <= bestHeight` to `ExpiresAt < bestHeight` to match project convention. Added explanatory comment. Validated with `go test -race ./rpc/...`.
+- [x] **MEDIUM-3: lookupActiveNameRecord off-by-one in expiration check** — COMPLETED — Changed expiration check from `ExpiresAt <= bestHeight` to `ExpiresAt < bestHeight` to match project convention. Added explanatory comment. Validated with `go test -race ./rpc/...`.
 
 - [ ] **MEDIUM-4: walletpassphrase timer accumulation** — `rpc/server.go:1398-1400` — Resource Lifecycle/Logic — Each `walletpassphrase` call creates a new auto-lock timer without cancelling prior timers. Earlier timers can still fire and lock the wallet sooner than expected. — **Remediation:** Store the timer handle and cancel/reset it on subsequent calls. Validate with `go test -race ./rpc/...`.
 
-- [ ] **MEDIUM-5: Global defaultLogger has unsynchronized read/write** — COMPLETED — Added `defaultLoggerMu` RWMutex. `GetDefault()` acquires read lock, `SetDefault()` acquires write lock. Prevents concurrent read/write data races. Validated with `go test -race ./internal/logging/...`.
+- [x] **MEDIUM-5: Global defaultLogger has unsynchronized read/write** — COMPLETED — Added `defaultLoggerMu` RWMutex. `GetDefault()` acquires read lock, `SetDefault()` acquires write lock. Prevents concurrent read/write data races. Validated with `go test -race ./internal/logging/...`.
 
 - [ ] **MEDIUM-6: SMTP readDataBody allows unbounded memory allocation** — `mail/smtp.go:512-536` — Security/Resource Lifecycle — The SMTP server buffers the entire DATA payload before enforcing `MaxMessageSize`. A client can force unbounded memory growth. — **Remediation:** Enforce size limit during the read loop and abort when exceeded. Validate with `go test -race ./mail/...`.
 
-- [ ] **MEDIUM-7: findNameNewUTXOIndex returns 0 on failure** — COMPLETED — Changed return value from 0 to -1 on failure. Added validation in caller to reject RPC with descriptive error when no NAME_NEW UTXO found. Validated with `go test -race ./rpc/...`.
+- [x] **MEDIUM-7: findNameNewUTXOIndex returns 0 on failure** — COMPLETED — Changed return value from 0 to -1 on failure. Added validation in caller to reject RPC with descriptive error when no NAME_NEW UTXO found. Validated with `go test -race ./rpc/...`.
 
 - [ ] **MEDIUM-8: name RPC address selection is nondeterministic** — `rpc/server.go:836-847, 862-863` — Logic/API — Name operations use `addresses[0]` from map iteration (nondeterministic). Different calls may use different addresses, causing failures or wrong UTXO selection. — **Remediation:** Choose deterministically (sort, flag, or search all addresses for suitable UTXOs). Validate with `go test -race ./rpc/...`.
 
-- [ ] **MEDIUM-9: ExtractChainIDFromVersion uses signed shift** — COMPLETED — Changed from `uint32(version >> 16)` to `uint32(version) >> 16` to use unsigned shift and avoid sign extension for negative versions. Validated with `go test -race ./chain/...`.
+- [x] **MEDIUM-9: ExtractChainIDFromVersion uses signed shift** — COMPLETED — Changed from `uint32(version >> 16)` to `uint32(version) >> 16` to use unsigned shift and avoid sign extension for negative versions. Validated with `go test -race ./chain/...`.
 
 - [ ] **MEDIUM-10: Mempool validation skipped when blockchain is nil** — `network/peermgr.go:50-56, 401-418` + `network/mempool.go:159-171` — Security/Initialization — `NewPeerManager` allows `cfg.Blockchain == nil`, leaving mempool validator nil. `onTx` still accepts and relays unvalidated transactions. — **Remediation:** Require non-nil blockchain for live networking, or reject tx handling without a validator. Validate with `go test -race ./network/...`.
 

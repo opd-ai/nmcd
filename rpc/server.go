@@ -524,25 +524,11 @@ func (s *Server) getInfo(req *Request) *Response {
 		connections = s.peerMgr.GetConnectedPeers()
 	}
 
-	// Calculate difficulty from compact bits
-	// Difficulty = max_target / current_target
-	// For Namecoin/Bitcoin, max_target is the genesis difficulty (0x1d00ffff)
-	maxTarget := blockchain.CompactToBig(0x1d00ffff)
-	currentTarget := blockchain.CompactToBig(best.Bits)
-	
-	// Avoid division by zero
-	difficulty := float64(1.0)
-	if currentTarget.Sign() > 0 {
-		// difficulty = max_target / current_target
-		ratio := new(big.Rat).SetFrac(maxTarget, currentTarget)
-		difficulty, _ = ratio.Float64()
-	}
-
 	info := map[string]interface{}{
 		"version":     "0.1.0",
 		"blocks":      best.Height,
 		"connections": connections,
-		"difficulty":  difficulty,
+		"difficulty":  getDifficultyRatio(best.Bits, s.blockchain.ChainParams()),
 	}
 
 	return &Response{
