@@ -1,13 +1,16 @@
 package network
 
 import (
+	"fmt"
 	"net"
 	"testing"
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/peer"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/opd-ai/nmcd/chain"
 	"github.com/opd-ai/nmcd/internal/logging"
 )
 
@@ -30,7 +33,7 @@ func TestPeerManagerCreation(t *testing.T) {
 		maxPeers:    10,
 		logger:      logging.GetDefault().WithComponent("network"),
 		quit:        make(chan struct{}),
-		mempool:     NewMempoolWithConfig(&MempoolConfig{
+		mempool: NewMempoolWithConfig(&MempoolConfig{
 			Validator:   nil,
 			MaxTxs:      5000,
 			TxExpiry:    24 * time.Hour,
@@ -130,7 +133,7 @@ func TestPeerManagerBlockchainReference(t *testing.T) {
 		maxPeers:    10,
 		logger:      logging.GetDefault().WithComponent("network"),
 		quit:        make(chan struct{}),
-		mempool:     NewMempoolWithConfig(&MempoolConfig{
+		mempool: NewMempoolWithConfig(&MempoolConfig{
 			Validator:   nil,
 			MaxTxs:      5000,
 			TxExpiry:    24 * time.Hour,
@@ -185,6 +188,43 @@ func TestConfigStruct(t *testing.T) {
 
 	if cfg.MaxPeers != 25 {
 		t.Errorf("Expected MaxPeers to be 25, got %d", cfg.MaxPeers)
+	}
+}
+
+func TestNewPeerManagerRequiresBlockchain(t *testing.T) {
+	cfg := &Config{
+		ChainParams: &chaincfg.MainNetParams,
+		Blockchain:  nil,
+		MaxPeers:    8,
+	}
+
+	pm, err := NewPeerManager(cfg)
+	if err == nil {
+		t.Fatal("Expected error when Blockchain is nil")
+	}
+	if pm != nil {
+		t.Fatal("Expected nil peer manager when Blockchain is nil")
+	}
+}
+
+func TestNewPeerManagerWithBlockchain(t *testing.T) {
+	cfg := &Config{
+		ChainParams: &chaincfg.MainNetParams,
+		Blockchain:  &chain.BlockChain{},
+		MaxPeers:    8,
+	}
+
+	pm, err := NewPeerManager(cfg)
+	if err != nil {
+		t.Fatalf("NewPeerManager failed with blockchain: %v", err)
+	}
+	defer pm.Stop()
+
+	if pm.blockchain != cfg.Blockchain {
+		t.Fatal("Expected peer manager to retain configured blockchain")
+	}
+	if pm.mempool == nil {
+		t.Fatal("Expected peer manager to initialize mempool")
 	}
 }
 
@@ -297,6 +337,141 @@ func TestOnBlockBufferParameter(t *testing.T) {
 	}
 }
 
+func TestOnInvFiltersAndQueuesGetData(t *testing.T) {
+	pm := &PeerManager{
+		logger:      logging.GetDefault().WithComponent("test"),
+		peers:       make(map[int32]*peer.Peer),
+		chainParams: &chaincfg.MainNetParams,
+		maxPeers:    10,
+		quit:        make(chan struct{}),
+		mempool: NewMempoolWithConfig(&MempoolConfig{
+			MaxTxs:      100,
+			TxExpiry:    time.Hour,
+			CleanupTick: time.Minute,
+		}),
+	}
+	defer pm.mempool.Stop()
+
+	p, err := peer.NewOutboundPeer(&peer.Config{
+		UserAgentName:    "nmcd-test",
+		UserAgentVersion: "0.1.0",
+		ChainParams:      &chaincfg.MainNetParams,
+	}, "127.0.0.1:8334")
+	if err != nil {
+		t.Fatalf("Failed to create peer: %v", err)
+	}
+	peerConn, remoteConn := net.Pipe()
+	p.AssociateConnection(peerConn)
+	getDataCh := make(chan *wire.MsgGetData, 1)
+	handshakeDone := make(chan struct{})
+	helperErrCh := make(chan error, 1)
+	go func() {
+		defer remoteConn.Close()
+
+		remoteVersion := wire.NewMsgVersion(
+			wire.NewNetAddressIPPort(net.ParseIP("127.0.0.1"), 8334, wire.SFNodeNetwork),
+			wire.NewNetAddressIPPort(net.ParseIP("127.0.0.1"), 8333, wire.SFNodeNetwork),
+			1,
+			0,
+		)
+
+		msg, _, err := wire.ReadMessage(remoteConn, wire.ProtocolVersion, chaincfg.MainNetParams.Net)
+		if err != nil {
+			helperErrCh <- err
+			return
+		}
+		if _, ok := msg.(*wire.MsgVersion); !ok {
+			helperErrCh <- fmt.Errorf("expected version message, got %T", msg)
+			return
+		}
+		if err := wire.WriteMessage(remoteConn, remoteVersion, wire.ProtocolVersion, chaincfg.MainNetParams.Net); err != nil {
+			helperErrCh <- err
+			return
+		}
+
+		for {
+			msg, _, err = wire.ReadMessage(remoteConn, wire.ProtocolVersion, chaincfg.MainNetParams.Net)
+			if err != nil {
+				helperErrCh <- err
+				return
+			}
+			if _, ok := msg.(*wire.MsgVerAck); ok {
+				break
+			}
+		}
+
+		if err := wire.WriteMessage(remoteConn, wire.NewMsgVerAck(), wire.ProtocolVersion, chaincfg.MainNetParams.Net); err != nil {
+			helperErrCh <- err
+			return
+		}
+		close(handshakeDone)
+
+		for {
+			msg, _, err = wire.ReadMessage(remoteConn, wire.ProtocolVersion, chaincfg.MainNetParams.Net)
+			if err != nil {
+				helperErrCh <- err
+				return
+			}
+			if gd, ok := msg.(*wire.MsgGetData); ok {
+				getDataCh <- gd
+				return
+			}
+		}
+	}()
+	defer func() {
+		p.Disconnect()
+		_ = peerConn.Close()
+		_ = remoteConn.Close()
+	}()
+
+	select {
+	case <-handshakeDone:
+	case err := <-helperErrCh:
+		t.Fatalf("Failed during peer handshake setup: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timed out waiting for peer handshake")
+	}
+
+	mempoolTx := wire.NewMsgTx(wire.TxVersion)
+	if err := pm.mempool.AddTx(mempoolTx); err != nil {
+		t.Fatalf("Failed to add mempool transaction: %v", err)
+	}
+	mempoolTxHash := mempoolTx.TxHash()
+
+	var newTxHash, blockHash chainhash.Hash
+	newTxHash[0] = 0x02
+	blockHash[0] = 0x03
+
+	inv := wire.NewMsgInv()
+	inv.AddInvVect(wire.NewInvVect(wire.InvTypeTx, &mempoolTxHash))       // should be skipped (already in mempool)
+	inv.AddInvVect(wire.NewInvVect(wire.InvTypeTx, &newTxHash))           // should be requested
+	inv.AddInvVect(wire.NewInvVect(wire.InvTypeBlock, &blockHash))        // should be requested
+	inv.AddInvVect(wire.NewInvVect(wire.InvTypeWitnessBlock, &blockHash)) // should be ignored
+
+	pm.onInv(p, inv)
+	var gotGetData *wire.MsgGetData
+	select {
+	case gotGetData = <-getDataCh:
+	case err := <-helperErrCh:
+		t.Fatalf("Peer helper failed while waiting for getdata: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timed out waiting for getdata message")
+	}
+
+	if gotGetData == nil {
+		t.Fatal("Expected queued getdata message")
+	}
+	if len(gotGetData.InvList) != 2 {
+		t.Fatalf("Expected 2 inventory vectors in getdata, got %d", len(gotGetData.InvList))
+	}
+	if gotGetData.InvList[0].Type != wire.InvTypeTx || gotGetData.InvList[0].Hash != newTxHash {
+		t.Fatalf("Expected first inventory vector to be new tx %s, got type=%v hash=%s", newTxHash, gotGetData.InvList[0].Type, gotGetData.InvList[0].Hash)
+	}
+	if gotGetData.InvList[1].Type != wire.InvTypeBlock || gotGetData.InvList[1].Hash != blockHash {
+		t.Fatalf("Expected second inventory vector to be block %s, got type=%v hash=%s", blockHash, gotGetData.InvList[1].Type, gotGetData.InvList[1].Hash)
+	}
+}
+
 // TestEdgeCaseBugAcceptLoopRace tests that the accept loop goroutine
 // properly handles shutdown without races or goroutine leaks.
 // This test reproduces the race condition where the accept goroutine may try
@@ -326,7 +501,7 @@ func TestEdgeCaseBugAcceptLoopRace(t *testing.T) {
 			maxPeers:    10,
 			logger:      logging.GetDefault().WithComponent("network"),
 			quit:        make(chan struct{}),
-			mempool:     NewMempoolWithConfig(&MempoolConfig{
+			mempool: NewMempoolWithConfig(&MempoolConfig{
 				Validator:   nil,
 				MaxTxs:      5000,
 				TxExpiry:    24 * time.Hour,

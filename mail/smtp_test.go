@@ -584,3 +584,63 @@ func TestSMTPMessageSizeLimit(t *testing.T) {
 	fmt.Fprintf(conn, "QUIT\r\n")
 	reader.ReadString('\n')
 }
+
+// TestSMTPMessageSizeLimitDrainsData verifies oversized DATA is fully consumed
+// so subsequent SMTP commands remain in sync.
+func TestSMTPMessageSizeLimitDrainsData(t *testing.T) {
+	resolver := &mockSMTPResolver{
+		lookups: map[string]bridge.MailConfig{
+			"alice": {ForwardTo: "alice@gmail.com"},
+		},
+	}
+	router := NewRouter(resolver, 0)
+	config := DefaultRelayConfig()
+	config.ListenAddr = "localhost:0"
+	config.MaxMessageSize = 100 // Small limit for testing
+
+	relay := NewRelay(router, config)
+	if err := relay.Start(); err != nil {
+		t.Fatalf("Failed to start relay: %v", err)
+	}
+	defer relay.Stop()
+
+	conn, reader := setupTestConnection(t, relay.listener.Addr().String())
+	defer conn.Close()
+
+	sendEHLO(t, conn, reader)
+
+	fmt.Fprintf(conn, "MAIL FROM:<sender@example.com>\r\n")
+	reader.ReadString('\n')
+	fmt.Fprintf(conn, "RCPT TO:<alice@mail.bit>\r\n")
+	reader.ReadString('\n')
+
+	fmt.Fprintf(conn, "DATA\r\n")
+	reader.ReadString('\n')
+
+	// Exceed the limit, then include another complete DATA line before terminator.
+	oversizedLine := strings.Repeat("A", 200) + "\r\n"
+	fmt.Fprintf(conn, "%s", oversizedLine)
+	fmt.Fprintf(conn, "This line must be drained too\r\n")
+	fmt.Fprintf(conn, ".\r\n")
+
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("Failed to read response: %v", err)
+	}
+	if !strings.HasPrefix(line, "552 ") {
+		t.Fatalf("Expected 552 error for oversized message, got: %s", line)
+	}
+
+	// If DATA wasn't drained correctly, this NOOP would be parsed from leftover body bytes.
+	fmt.Fprintf(conn, "NOOP\r\n")
+	line, err = reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("Failed to read NOOP response: %v", err)
+	}
+	if !strings.HasPrefix(line, "250 ") {
+		t.Errorf("Expected 250 response to NOOP after oversized DATA, got: %s", line)
+	}
+
+	fmt.Fprintf(conn, "QUIT\r\n")
+	reader.ReadString('\n')
+}

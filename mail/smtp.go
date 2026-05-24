@@ -15,6 +15,20 @@ import (
 	"time"
 )
 
+var errMessageSizeExceeded = errors.New("message exceeds maximum size")
+
+type messageSizeExceededError struct {
+	maxSize int64
+}
+
+func (e *messageSizeExceededError) Error() string {
+	return fmt.Sprintf("message exceeds maximum size of %d bytes", e.maxSize)
+}
+
+func (e *messageSizeExceededError) Is(target error) bool {
+	return target == errMessageSizeExceeded
+}
+
 // RelayConfig contains configuration for the SMTP relay server.
 type RelayConfig struct {
 	// ListenAddr is the address to listen on (e.g., ":2525" or "localhost:2525")
@@ -365,8 +379,11 @@ func (s *smtpSession) handleData() error {
 	// Read message body until "." on a line by itself
 	body, err := s.readDataBody()
 	if err != nil {
-		// If size limit exceeded during read, send 552 response
-		if strings.Contains(err.Error(), "exceeds maximum size") {
+		// If size limit exceeded during read, send 552 response.
+		// readDataBody drains the DATA payload before returning this error.
+		if errors.Is(err, errMessageSizeExceeded) {
+			s.from = ""
+			s.to = nil
 			return s.writeLine("552 Message exceeds maximum size")
 		}
 		return err
@@ -511,6 +528,7 @@ func (s *smtpSession) writeLine(line string) error {
 func (s *smtpSession) readDataBody() ([]byte, error) {
 	var body []byte
 	maxSize := s.relay.config.MaxMessageSize
+	var sizeErr error
 
 	for {
 		line, err := s.reader.ReadString('\n')
@@ -525,16 +543,29 @@ func (s *smtpSession) readDataBody() ([]byte, error) {
 		trimmed := strings.TrimSuffix(line, "\r\n")
 		trimmed = strings.TrimSuffix(trimmed, "\n")
 		if trimmed == "." {
+			if sizeErr != nil {
+				return nil, sizeErr
+			}
 			return body, nil
 		}
 
-		// Enforce size limit before appending
+		// Continue draining until end marker once size exceeded.
+		if sizeErr != nil {
+			continue
+		}
+
+		// Enforce size limit before appending.
 		if int64(len(body)+len(line)) > maxSize {
-			return nil, fmt.Errorf("message exceeds maximum size of %d bytes", maxSize)
+			sizeErr = &messageSizeExceededError{maxSize: maxSize}
+			continue
 		}
 
 		// Add line to body (keep CRLF for proper email format)
 		body = append(body, []byte(line)...)
+	}
+
+	if sizeErr != nil {
+		return nil, sizeErr
 	}
 
 	return body, nil
