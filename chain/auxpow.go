@@ -417,7 +417,8 @@ func ExtractChainIDFromVersion(version int32) uint32 {
 	// Chain ID is in bits 16+ of the version
 	// For Namecoin (chain ID 1), version looks like: 0x0001XXXX
 	// where XXXX includes the AuxPoW bit (0x100) and base version
-	return uint32(version >> 16)
+	// Use unsigned shift to avoid sign extension for negative versions
+	return uint32(version) >> 16
 }
 
 // CheckMerkleBranch verifies a merkle branch proof.

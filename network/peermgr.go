@@ -210,6 +210,11 @@ func (pm *PeerManager) handleInboundPeer(conn net.Conn) {
 	pm.updatePeerMetrics()
 	metrics.Get().RecordPeerDisconnect()
 	pm.mu.Unlock()
+
+	// Notify sync manager about peer disconnect
+	if pm.syncManager != nil {
+		pm.syncManager.OnPeerDisconnected(p)
+	}
 }
 
 // ConnectPeer connects to an outbound peer
@@ -271,6 +276,11 @@ func (pm *PeerManager) ConnectPeer(addr string) error {
 		pm.updatePeerMetrics()
 		metrics.Get().RecordPeerDisconnect()
 		pm.mu.Unlock()
+
+		// Notify sync manager about peer disconnect
+		if pm.syncManager != nil {
+			pm.syncManager.OnPeerDisconnected(p)
+		}
 	}()
 
 	return nil

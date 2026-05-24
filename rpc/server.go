@@ -528,7 +528,7 @@ func (s *Server) getInfo(req *Request) *Response {
 		"version":     "0.1.0",
 		"blocks":      best.Height,
 		"connections": connections,
-		"difficulty":  best.Bits,
+		"difficulty":  getDifficultyRatio(best.Bits, s.blockchain.ChainParams()),
 	}
 
 	return &Response{
@@ -770,7 +770,10 @@ func (s *Server) lookupActiveNameRecord(name string, reqID interface{}) (*namedb
 		return nil, errorResponse(reqID, -4, fmt.Sprintf("Name not found: %s", name))
 	}
 	bestHeight := s.blockchain.BestSnapshot().Height
-	if record.ExpiresAt <= bestHeight {
+	// Names are valid through ExpiresAt and expire after.
+	// A name with ExpiresAt=100 is valid at height 100 but expired at 101.
+	// Use strict less-than to match project convention: ExpiresAt < currentHeight means expired.
+	if record.ExpiresAt < bestHeight {
 		return nil, errorResponse(reqID, -4, fmt.Sprintf("Name expired at block %d (current: %d)", record.ExpiresAt, bestHeight))
 	}
 	return record, nil
@@ -1015,6 +1018,9 @@ func (s *Server) nameFirstUpdate(req *Request) *Response {
 	}
 
 	nameNewUtxoIndex := findNameNewUTXOIndex(utxos)
+	if nameNewUtxoIndex < 0 {
+		return errorResponse(req.ID, -1, "No NAME_NEW UTXO found in wallet. Did you run name_new first?")
+	}
 
 	feeRate := int64(1)
 	tx, err := s.wallet.CreateNameFirstUpdateTx(name, randHex, value, utxos, nameNewUtxoIndex, feeRate, addr)
@@ -1051,14 +1057,14 @@ func (s *Server) validateNameNewCommitment(randBytes []byte, name string, reqID 
 }
 
 // findNameNewUTXOIndex locates the NAME_NEW UTXO index by checking for OP_NAME_NEW opcode in scripts.
-// Falls back to index 0 if no NAME_NEW UTXO is found.
+// Returns -1 if no NAME_NEW UTXO is found.
 func findNameNewUTXOIndex(utxos []wallet.UTXO) int {
 	for i, utxo := range utxos {
 		if len(utxo.PkScript) > 22 && utxo.PkScript[0] == opNameNew {
 			return i
 		}
 	}
-	return 0
+	return -1
 }
 
 // nameList returns all names in the database
@@ -1109,6 +1115,10 @@ func (s *Server) nameList(req *Request) *Response {
 // nameHistory returns the history of a name, including all past operations.
 // Each entry in the history represents a NAME_FIRSTUPDATE or NAME_UPDATE operation.
 func (s *Server) nameHistory(req *Request) *Response {
+	if errResp := s.requireBlockchain(req.ID); errResp != nil {
+		return errResp
+	}
+
 	var params []string
 	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
 		return &Response{
