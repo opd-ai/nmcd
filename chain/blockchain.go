@@ -992,6 +992,7 @@ func (bc *BlockChain) updateNameDatabase(block *btcutil.Block) error {
 	}
 
 	bc.cleanupSpentUTXOsIfNeeded(height)
+	bc.cleanupOldExpiredNamesIfNeeded(height)
 
 	return nil
 }
@@ -1006,19 +1007,21 @@ func (bc *BlockChain) handleExpiredNames(height int32) error {
 	}
 
 	for _, name := range expired {
-		// Get the name record before deletion for rollback support
+		// Get the name record before deletion for rollback support.
+		// Only skip if the name is genuinely not found (already deleted).
+		// For decode corruption or other errors, log and still proceed with
+		// deletion to prevent an expired name from remaining active.
 		record, err := bc.nameDB.GetName(name)
-		if err != nil {
-			// Name may have been deleted already, skip
-			continue
+		if err == nil {
+			// Store the expired name for potential restoration during reorg
+			if storeErr := bc.nameDB.StoreExpiredName(record, height); storeErr != nil {
+				return fmt.Errorf("failed to store expired name %s for rollback: %w", name, storeErr)
+			}
+		} else if !errors.Is(err, namedb.ErrNameNotFound) {
+			log.Printf("Warning: failed to get name %s before expiration (possible corruption): %v; proceeding with deletion", name, err)
 		}
 
-		// Store the expired name for potential restoration during reorg
-		if err := bc.nameDB.StoreExpiredName(record, height); err != nil {
-			return fmt.Errorf("failed to store expired name %s for rollback: %w", name, err)
-		}
-
-		// Now delete the name and its history
+		// Delete the name and its history regardless of whether we got the record.
 		if err := bc.nameDB.DeleteName(name); err != nil {
 			return err
 		}
@@ -1220,6 +1223,17 @@ func (bc *BlockChain) cleanupSpentUTXOsIfNeeded(height int32) {
 		cleanupHeight := height - spentUtxoRetentionDepth
 		if err := bc.nameDB.CleanupOldSpentUTXOs(cleanupHeight); err != nil {
 			log.Printf("Warning: Failed to cleanup old spent UTXOs at height %d: %v", height, err)
+		}
+	}
+}
+
+// cleanupOldExpiredNamesIfNeeded periodically removes old expired-name backups to prevent unbounded growth.
+func (bc *BlockChain) cleanupOldExpiredNamesIfNeeded(height int32) {
+	const expiredNameRetentionDepth = 1000
+	if height > expiredNameRetentionDepth && height%100 == 0 {
+		cleanupHeight := height - expiredNameRetentionDepth
+		if err := bc.nameDB.CleanupOldExpiredNames(cleanupHeight); err != nil {
+			log.Printf("Warning: Failed to cleanup old expired name backups at height %d: %v", height, err)
 		}
 	}
 }

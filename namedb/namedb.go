@@ -23,8 +23,10 @@ var (
 	utxoAddrBucket     = []byte("utxo_addr")        // Index: address -> UTXOs
 	spentUtxoBucket    = []byte("spent_utxo")       // Tracks spent UTXOs for reorg restoration (indexed by block height)
 	spentUtxoIdxBucket = []byte("spent_utxo_idx")   // Index: height -> list of spent UTXO keys
-	expiredNamesBucket = []byte("expired_names")    // Tracks expired names for reorg restoration (indexed by block height)
-	expiredNamesIdxBucket = []byte("expired_names_idx") // Index: height -> list of expired name keys
+	expiredNamesBucket    = []byte("expired_names")      // Tracks expired names for reorg restoration (indexed by block height)
+	expiredNamesIdxBucket = []byte("expired_names_idx")  // Index: height+name -> presence marker
+	expiredHistBucket     = []byte("expired_hist")       // History records for expired names (keyed by txHash)
+	expiredHistIdxBucket  = []byte("expired_hist_idx")   // Index: height+name -> list of txHashes for history restoration
 )
 
 // Sentinel errors for namedb operations
@@ -152,7 +154,7 @@ func NewNameDatabase(dbPath string) (*NameDatabase, error) {
 
 	// Initialize buckets
 	err = db.Update(func(tx *bbolt.Tx) error {
-		for _, bucket := range [][]byte{namesBucket, historyBucket, historyIndexBucket, expirationBucket, nameNewBucket, utxoBucket, utxoAddrBucket, spentUtxoBucket, spentUtxoIdxBucket, expiredNamesBucket, expiredNamesIdxBucket} {
+		for _, bucket := range [][]byte{namesBucket, historyBucket, historyIndexBucket, expirationBucket, nameNewBucket, utxoBucket, utxoAddrBucket, spentUtxoBucket, spentUtxoIdxBucket, expiredNamesBucket, expiredNamesIdxBucket, expiredHistBucket, expiredHistIdxBucket} {
 			if _, err := tx.CreateBucketIfNotExists(bucket); err != nil {
 				return err
 			}
@@ -370,9 +372,10 @@ func (ndb *NameDatabase) GetExpiredNames(height int32) ([]string, error) {
 	return expired, err
 }
 
-// StoreExpiredName stores an expired name record for potential restoration during reorganization.
-// The name record is indexed by the block height where it expired, allowing efficient
-// restoration during reorgs. This should be called before DeleteName during expiration processing.
+// StoreExpiredName stores an expired name record and its history for potential
+// restoration during reorganization. The backup is keyed by (height+name) so
+// multiple expirations of the same name at different heights never collide.
+// This should be called before DeleteName/DeleteHistory during expiration processing.
 func (ndb *NameDatabase) StoreExpiredName(record *NameRecord, expiredAtHeight int32) error {
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
@@ -380,31 +383,62 @@ func (ndb *NameDatabase) StoreExpiredName(record *NameRecord, expiredAtHeight in
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
 		expiredBkt := tx.Bucket(expiredNamesBucket)
 		idxBkt := tx.Bucket(expiredNamesIdxBucket)
+		expiredHistBkt := tx.Bucket(expiredHistBucket)
+		expiredHistIdxBkt := tx.Bucket(expiredHistIdxBucket)
 
-		// Encode name record
-		data := encodeNameRecord(record)
-
-		// Store in expired names bucket
-		// Key: name (as string)
-		if err := expiredBkt.Put([]byte(record.Name), data); err != nil {
-			return err
-		}
-
-		// Add to height index for efficient lookup and cleanup
-		// Key: height(4) + name
+		// Build the height+name composite key used by both the name bucket and the index.
 		nameBytes := []byte(record.Name)
 		heightKey := make([]byte, 4+len(nameBytes))
 		binary.BigEndian.PutUint32(heightKey[0:4], uint32(expiredAtHeight))
 		copy(heightKey[4:], nameBytes)
 
-		return idxBkt.Put(heightKey, []byte{1}) // Value doesn't matter, just presence
+		// Store the name record in the expired names bucket keyed by height+name.
+		data := encodeNameRecord(record)
+		if err := expiredBkt.Put(heightKey, data); err != nil {
+			return err
+		}
+
+		// Add to the height index (value is a presence marker).
+		if err := idxBkt.Put(heightKey, []byte{1}); err != nil {
+			return err
+		}
+
+		// Backup the history for this name so it can be restored on reorg.
+		histIdxBkt := tx.Bucket(historyIndexBucket)
+		histBkt := tx.Bucket(historyBucket)
+
+		txHashList := histIdxBkt.Get(nameBytes)
+		if len(txHashList) > 0 {
+			// Store the tx-hash list keyed by height+name.
+			txHashListCopy := make([]byte, len(txHashList))
+			copy(txHashListCopy, txHashList)
+			if err := expiredHistIdxBkt.Put(heightKey, txHashListCopy); err != nil {
+				return err
+			}
+
+			// Store each history record keyed by txHash.
+			for i := 0; i+txHashSize <= len(txHashList); i += txHashSize {
+				txHashBytes := txHashList[i : i+txHashSize]
+				histData := histBkt.Get(txHashBytes)
+				if histData == nil {
+					continue // Missing record – skip, best-effort backup.
+				}
+				histDataCopy := make([]byte, len(histData))
+				copy(histDataCopy, histData)
+				if err := expiredHistBkt.Put(txHashBytes, histDataCopy); err != nil {
+					return err
+				}
+			}
+		}
+
+		return nil
 	})
 }
 
 // RestoreExpiredNamesForBlock restores all names that were expired at the given height.
 // This is called during blockchain reorganization to undo expiration processing.
-// Names are restored to both the names bucket and expiration index, then removed from
-// the expired names tracking buckets.
+// Names are restored to both the names bucket and expiration index, their history is
+// restored to the history buckets, and all backup data is removed.
 func (ndb *NameDatabase) RestoreExpiredNamesForBlock(height int32) error {
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
@@ -414,61 +448,89 @@ func (ndb *NameDatabase) RestoreExpiredNamesForBlock(height int32) error {
 		expirationBkt := tx.Bucket(expirationBucket)
 		expiredBkt := tx.Bucket(expiredNamesBucket)
 		idxBkt := tx.Bucket(expiredNamesIdxBucket)
+		expiredHistBkt := tx.Bucket(expiredHistBucket)
+		expiredHistIdxBkt := tx.Bucket(expiredHistIdxBucket)
+		histBkt := tx.Bucket(historyBucket)
+		histIdxBkt := tx.Bucket(historyIndexBucket)
 
-		// Find all names expired at this height using the index
+		// Find all names expired at this height using the index.
 		heightPrefix := make([]byte, 4)
 		binary.BigEndian.PutUint32(heightPrefix, uint32(height))
 
 		c := idxBkt.Cursor()
-		var namesToRestore []string
+		var heightKeys [][]byte
 
-		// Collect all names expired at this height
+		// Collect all height+name keys for this height.
 		for k, _ := c.Seek(heightPrefix); k != nil && bytes.HasPrefix(k, heightPrefix); k, _ = c.Next() {
-			// Extract name from key (skip height prefix)
-			name := string(k[4:])
-			namesToRestore = append(namesToRestore, name)
+			heightKeys = append(heightKeys, append([]byte(nil), k...))
 		}
 
-		// Restore each name
-		for _, name := range namesToRestore {
-			// Get the stored expired name record
-			data := expiredBkt.Get([]byte(name))
+		// Restore each name.
+		for _, heightKey := range heightKeys {
+			name := string(heightKey[4:])
+
+			// Get the stored expired name record (keyed by height+name).
+			data := expiredBkt.Get(heightKey)
 			if data == nil {
-				continue // Already cleaned up or never stored
+				continue // Already cleaned up or never stored.
 			}
 
-			// Decode the record
+			// Decode the record.
 			record, err := decodeNameRecord(data)
 			if err != nil {
 				return fmt.Errorf("failed to decode expired name %s: %w", name, err)
 			}
 			record.Name = name
 
-			// Restore to names bucket
+			// Restore to names bucket.
 			if err := namesBkt.Put([]byte(name), data); err != nil {
 				return fmt.Errorf("failed to restore name %s: %w", name, err)
 			}
 
-			// Restore to expiration index
+			// Restore to expiration index.
 			expirationKey := makeExpirationKey(record.ExpiresAt, name)
 			if err := expirationBkt.Put(expirationKey, []byte{1}); err != nil {
 				return fmt.Errorf("failed to restore expiration index for %s: %w", name, err)
 			}
 
-			// Remove from expired names bucket
-			if err := expiredBkt.Delete([]byte(name)); err != nil {
-				return fmt.Errorf("failed to delete from expired names bucket: %w", err)
+			// Restore history: put tx-hash list back into history index and
+			// each history record back into the history bucket.
+			txHashList := expiredHistIdxBkt.Get(heightKey)
+			if len(txHashList) > 0 {
+				txHashListCopy := make([]byte, len(txHashList))
+				copy(txHashListCopy, txHashList)
+				if err := histIdxBkt.Put([]byte(name), txHashListCopy); err != nil {
+					return fmt.Errorf("failed to restore history index for %s: %w", name, err)
+				}
+				for i := 0; i+txHashSize <= len(txHashList); i += txHashSize {
+					txHashBytes := txHashList[i : i+txHashSize]
+					histData := expiredHistBkt.Get(txHashBytes)
+					if histData == nil {
+						continue // Missing backup record – skip.
+					}
+					histDataCopy := make([]byte, len(histData))
+					copy(histDataCopy, histData)
+					if err := histBkt.Put(txHashBytes, histDataCopy); err != nil {
+						return fmt.Errorf("failed to restore history record for %s: %w", name, err)
+					}
+					if err := expiredHistBkt.Delete(txHashBytes); err != nil {
+						return fmt.Errorf("failed to delete restored history backup for %s: %w", name, err)
+					}
+				}
+				if err := expiredHistIdxBkt.Delete(heightKey); err != nil {
+					return fmt.Errorf("failed to delete expired history index for %s: %w", name, err)
+				}
 			}
 
-			// Remove from expired names index
-			heightKey := make([]byte, 4+len(name))
-			binary.BigEndian.PutUint32(heightKey[0:4], uint32(height))
-			copy(heightKey[4:], name)
+			// Remove backup entries.
+			if err := expiredBkt.Delete(heightKey); err != nil {
+				return fmt.Errorf("failed to delete from expired names bucket: %w", err)
+			}
 			if err := idxBkt.Delete(heightKey); err != nil {
 				return fmt.Errorf("failed to delete from expired names index: %w", err)
 			}
 
-			// Invalidate cache entry since we're restoring the name
+			// Invalidate cache entry since we're restoring the name.
 			ndb.cache.Delete(name)
 		}
 
@@ -476,9 +538,10 @@ func (ndb *NameDatabase) RestoreExpiredNamesForBlock(height int32) error {
 	})
 }
 
-// CleanupOldExpiredNames removes expired name backups older than the given height.
-// This should be called periodically to prevent unbounded growth of the expired names storage.
-// Typical usage: keep the last 100-200 blocks worth of expired names for reorg safety.
+// CleanupOldExpiredNames removes expired name backups (name records and history) older
+// than the given height. This should be called periodically to prevent unbounded growth
+// of the expired names storage. Typical usage: keep the last 100-200 blocks worth of
+// expired names for reorg safety.
 func (ndb *NameDatabase) CleanupOldExpiredNames(keepFromHeight int32) error {
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
@@ -486,31 +549,44 @@ func (ndb *NameDatabase) CleanupOldExpiredNames(keepFromHeight int32) error {
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
 		expiredBkt := tx.Bucket(expiredNamesBucket)
 		idxBkt := tx.Bucket(expiredNamesIdxBucket)
+		expiredHistBkt := tx.Bucket(expiredHistBucket)
+		expiredHistIdxBkt := tx.Bucket(expiredHistIdxBucket)
 
 		c := idxBkt.Cursor()
 		var keysToDelete [][]byte
-		var namesToDelete []string
 
-		// Scan index for entries older than keepFromHeight
+		// Scan index for entries older than keepFromHeight.
 		for k, _ := c.First(); k != nil; k, _ = c.Next() {
 			if len(k) < 4 {
 				continue // Invalid key
 			}
 
-			height := int32(binary.BigEndian.Uint32(k[:4]))
-			if height < keepFromHeight {
+			entryHeight := int32(binary.BigEndian.Uint32(k[:4]))
+			if entryHeight < keepFromHeight {
 				keysToDelete = append(keysToDelete, append([]byte(nil), k...))
-				name := string(k[4:])
-				namesToDelete = append(namesToDelete, name)
 			}
 		}
 
-		// Delete expired names and index entries
-		for i, key := range keysToDelete {
-			if err := idxBkt.Delete(key); err != nil {
+		// Delete expired names, their history backups, and all index entries.
+		for _, heightKey := range keysToDelete {
+			// Remove history backup for this height+name entry.
+			txHashList := expiredHistIdxBkt.Get(heightKey)
+			if len(txHashList) > 0 {
+				for i := 0; i+txHashSize <= len(txHashList); i += txHashSize {
+					if err := expiredHistBkt.Delete(txHashList[i : i+txHashSize]); err != nil {
+						return err
+					}
+				}
+				if err := expiredHistIdxBkt.Delete(heightKey); err != nil {
+					return err
+				}
+			}
+
+			// Remove name backup and index entry (both keyed by height+name).
+			if err := expiredBkt.Delete(heightKey); err != nil {
 				return err
 			}
-			if err := expiredBkt.Delete([]byte(namesToDelete[i])); err != nil {
+			if err := idxBkt.Delete(heightKey); err != nil {
 				return err
 			}
 		}
