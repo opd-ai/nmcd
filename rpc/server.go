@@ -1930,10 +1930,6 @@ func parseBlockHeightParam(param, reqID interface{}) (int32, *Response) {
 			return 0, errorResponse(reqID, -32602, fmt.Sprintf("Invalid params: height out of int32 range: %v", v))
 		}
 		height = int32(v)
-	case int:
-		height = int32(v)
-	case int32:
-		height = v
 	default:
 		return 0, errorResponse(reqID, -32602, fmt.Sprintf("Invalid params: height must be a number, got %T", param))
 	}

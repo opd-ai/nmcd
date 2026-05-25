@@ -802,9 +802,12 @@ func (w *Wallet) CreateNameUpdateTx(
 
 // CreateNameUpdateTxRaw creates a raw NAME_UPDATE transaction that can be signed.
 // This is useful when the wallet doesn't have all the private keys.
+// The changeAddress should typically be the sender's address, not the destination address.
+// If the name is being transferred, destAddress is the new owner and changeAddress should be the current owner.
 func CreateNameUpdateTxRaw(
 	name, newValue string,
 	destAddress btcutil.Address,
+	changeAddress btcutil.Address,
 	utxos []UTXO,
 	feeRate int64,
 ) (*wire.MsgTx, error) {
@@ -849,8 +852,8 @@ func CreateNameUpdateTxRaw(
 	// Create transaction with inputs and name output
 	tx := buildNameTxBase(utxos, nameScript, nameOutValue)
 
-	// Add change output if above dust
-	if err := addChangeOutput(tx, changeValue, destAddress); err != nil {
+	// Add change output to changeAddress (not destAddress)
+	if err := addChangeOutput(tx, changeValue, changeAddress); err != nil {
 		return nil, err
 	}
 

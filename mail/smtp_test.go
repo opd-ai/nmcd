@@ -4,7 +4,11 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
+	"log"
 	"net"
+	"net/smtp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -109,6 +113,89 @@ func TestDefaultRelayConfig(t *testing.T) {
 	}
 	if config.MaxMessageSize != 10*1024*1024 {
 		t.Errorf("Expected MaxMessageSize 10MB, got %d", config.MaxMessageSize)
+	}
+	if config.UpstreamTLS != "" {
+		t.Errorf("Expected UpstreamTLS to be inferred from port by default, got %q", config.UpstreamTLS)
+	}
+}
+
+func TestInferUpstreamTLSMode(t *testing.T) {
+	tests := []struct {
+		name string
+		port int
+		want TLSMode
+	}{
+		{name: "submission port", port: 587, want: TLSModeSTARTTLS},
+		{name: "implicit tls port", port: 465, want: TLSModeImplicit},
+		{name: "other port", port: 25, want: TLSModeDisabled},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := inferUpstreamTLSMode(tt.port); got != tt.want {
+				t.Fatalf("inferUpstreamTLSMode(%d) = %q, want %q", tt.port, got, tt.want)
+			}
+		})
+	}
+}
+
+func startTestSMTPUpstream(t *testing.T) string {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen for test upstream SMTP server: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = listener.Close()
+	})
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = io.WriteString(conn, "220 test upstream ready\r\n")
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		_, _ = io.Copy(io.Discard, conn)
+	}()
+
+	return listener.Addr().String()
+}
+
+func TestConnectUpstreamRefusesAuthWithoutTLS(t *testing.T) {
+	addr := startTestSMTPUpstream(t)
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatalf("failed to split test upstream address: %v", err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatalf("failed to parse test upstream port: %v", err)
+	}
+
+	relay := &Relay{
+		config: RelayConfig{
+			UpstreamHost: host,
+			UpstreamPort: port,
+			UpstreamTLS:  TLSModeDisabled,
+			UpstreamAuth: smtp.PlainAuth("", "user", "pass", host),
+		},
+		logger: log.New(io.Discard, "", 0),
+	}
+
+	session := &smtpSession{
+		relay:  relay,
+		logger: relay.logger,
+	}
+
+	_, err = session.connectUpstream()
+	if err == nil {
+		t.Fatal("expected authentication refusal on cleartext upstream connection, got nil")
+	}
+	if !strings.Contains(err.Error(), "refusing to authenticate over cleartext connection") {
+		t.Fatalf("expected cleartext authentication refusal, got: %v", err)
 	}
 }
 

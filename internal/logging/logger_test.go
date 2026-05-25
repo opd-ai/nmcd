@@ -212,6 +212,49 @@ func TestFileOutput(t *testing.T) {
 	}
 }
 
+func TestInitTightensExistingLogPermissions(t *testing.T) {
+	logDir := filepath.Join(t.TempDir(), "logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("failed to create log directory: %v", err)
+	}
+	if err := os.Chmod(logDir, 0o755); err != nil {
+		t.Fatalf("failed to loosen log directory permissions: %v", err)
+	}
+
+	logPath := filepath.Join(logDir, "nmcd.log")
+	if err := os.WriteFile(logPath, []byte("existing log\n"), 0o644); err != nil {
+		t.Fatalf("failed to create log file: %v", err)
+	}
+	if err := os.Chmod(logPath, 0o644); err != nil {
+		t.Fatalf("failed to loosen log file permissions: %v", err)
+	}
+
+	cfg := DefaultConfig()
+	cfg.Output = logPath
+
+	logger, err := Init(cfg)
+	if err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer logger.Close()
+
+	dirInfo, err := os.Stat(logDir)
+	if err != nil {
+		t.Fatalf("failed to stat log directory: %v", err)
+	}
+	if got := dirInfo.Mode().Perm(); got != 0o700 {
+		t.Fatalf("expected log directory permissions 0700, got %04o", got)
+	}
+
+	fileInfo, err := os.Stat(logPath)
+	if err != nil {
+		t.Fatalf("failed to stat log file: %v", err)
+	}
+	if got := fileInfo.Mode().Perm(); got != 0o600 {
+		t.Fatalf("expected log file permissions 0600, got %04o", got)
+	}
+}
+
 func TestWithContext(t *testing.T) {
 	var buf bytes.Buffer
 
