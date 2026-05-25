@@ -174,6 +174,10 @@ func (ndb *NameDatabase) GetUTXO(txHash *chainhash.Hash, outIndex uint32) (*UTXO
 
 // GetUTXOsForAddress retrieves all UTXOs for a specific address
 func (ndb *NameDatabase) GetUTXOsForAddress(address string) ([]*UTXO, error) {
+	if address == "" {
+		return nil, fmt.Errorf("address cannot be empty")
+	}
+	
 	ndb.mu.RLock()
 	defer ndb.mu.RUnlock()
 
@@ -187,11 +191,13 @@ func (ndb *NameDatabase) GetUTXOsForAddress(address string) ([]*UTXO, error) {
 		c := addrBkt.Cursor()
 
 		for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
-			// Extract txhash and outindex from the key
-			if len(k) < len(address)+txHashSize+4 {
+			// Verify key is exactly address + txhash + outindex (no partial matches)
+			expectedKeyLen := len(address) + txHashSize + 4
+			if len(k) != expectedKeyLen {
 				continue
 			}
-
+			
+			// Extract txhash and outindex from the key
 			var txHash chainhash.Hash
 			copy(txHash[:], k[len(address):len(address)+txHashSize])
 			outIndex := binary.BigEndian.Uint32(k[len(address)+txHashSize:])

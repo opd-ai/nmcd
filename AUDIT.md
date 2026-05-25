@@ -119,7 +119,7 @@
 
 - [x] **LOW-5: Version-3 records with truncated NameNewHeight decoded silently** — COMPLETED — Modified `decodeNameRecord` to return error if version >= 3 and fewer than 4 bytes remain for NameNewHeight. Prevents silent corruption with `NameNewHeight == 0`. Validated with `go test -race ./namedb/...`.
 
-- [ ] **LOW-6: GetUTXOsForAddress prefix scan overmatches** — `namedb/utxo.go:173-177` — Logic/Security — Empty or short addresses match unintended entries due to raw prefix scanning. — **Remediation:** Reject empty addresses and encode keys with a delimiter or length prefix.
+- [x] **LOW-6: GetUTXOsForAddress prefix scan overmatches** — COMPLETED — Added empty address validation and changed key length check from `<` to `!=` to ensure exact matches only. Prevents unintended matches from short/empty addresses. Validated with `go test -race ./namedb/...`.
 
 - [ ] **LOW-7: Wallet loadKeys accepts any private key length** — `wallet/wallet.go:145-164` — Input Validation/Integrity — `loadKeys` accepts any decoded byte length and ignores stored address. Corrupted wallet files can load silently with wrong keys. — **Remediation:** Require 32-byte private keys and verify derived address matches stored address.
 
