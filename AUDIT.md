@@ -135,7 +135,7 @@
 
 - [x] **LOW-13: Mempool validateNameFirstUpdate missing timing enforcement** — COMPLETED — Added validation to enforce min/max reveal timing window (12-36000 blocks) using `nameNewRecord.Height`. Prevents too-early or expired NAME_FIRSTUPDATE transactions. Validated with `go test -race ./chain/...`.
 
-- [ ] **LOW-14: Block/AuxPow serialization mismatch** — `chain/block.go:180-183, 217-220` — API Contract/Serialization — `Serialize()` writes AuxPow whenever `auxPow != nil` even if the version bit is unset. Won't round-trip with `NewBlockFromReader`. — **Remediation:** Serialize AuxPow only when `HasAuxPow()` is true.
+- [x] **LOW-14: Block/AuxPow serialization mismatch** — COMPLETED — Changed `Serialize()` to use `HasAuxPow()` instead of checking `auxPow != nil`, ensuring AuxPow is only serialized when version bit is set. Enables proper round-trip with `NewBlockFromReader`. Validated with `go test -race ./chain/...`.
 
 ## Metrics Snapshot
 
