@@ -150,6 +150,11 @@ func (w *Wallet) loadKeys(wd *walletData) error {
 			return err
 		}
 
+		// Validate private key length
+		if len(privKeyBytes) != 32 {
+			return fmt.Errorf("invalid private key length: expected 32 bytes, got %d", len(privKeyBytes))
+		}
+
 		privKey, pubKey := btcec.PrivKeyFromBytes(privKeyBytes)
 		pubKeyHash := btcutil.Hash160(pubKey.SerializeCompressed())
 		addr, err := btcutil.NewAddressPubKeyHash(pubKeyHash, w.chainParams)
@@ -157,7 +162,13 @@ func (w *Wallet) loadKeys(wd *walletData) error {
 			return fmt.Errorf("failed to create address: %w", err)
 		}
 
-		w.keys[addr.EncodeAddress()] = &KeyPair{
+		// Verify derived address matches stored address
+		derivedAddr := addr.EncodeAddress()
+		if derivedAddr != kd.Address {
+			return fmt.Errorf("address mismatch: derived %s, stored %s", derivedAddr, kd.Address)
+		}
+
+		w.keys[derivedAddr] = &KeyPair{
 			PrivateKey: privKey,
 			PublicKey:  pubKey,
 			Address:    addr,

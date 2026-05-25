@@ -121,7 +121,7 @@
 
 - [x] **LOW-6: GetUTXOsForAddress prefix scan overmatches** — COMPLETED — Added empty address validation and changed key length check from `<` to `!=` to ensure exact matches only. Prevents unintended matches from short/empty addresses. Validated with `go test -race ./namedb/...`.
 
-- [ ] **LOW-7: Wallet loadKeys accepts any private key length** — `wallet/wallet.go:145-164` — Input Validation/Integrity — `loadKeys` accepts any decoded byte length and ignores stored address. Corrupted wallet files can load silently with wrong keys. — **Remediation:** Require 32-byte private keys and verify derived address matches stored address.
+- [x] **LOW-7: Wallet loadKeys accepts any private key length** — COMPLETED — Added validation to require 32-byte private keys and verify derived address matches stored address. Prevents corrupted wallet files from loading silently with wrong keys. Validated with `go test -race ./wallet/...`.
 
 - [ ] **LOW-8: Wallet GetKey returns internal pointer** — `wallet/wallet.go:299-308` — Data Aliasing/Concurrency — `GetKey` returns the internal `*KeyPair`. Callers can mutate wallet state without locks. — **Remediation:** Return a copy or expose read-only accessors.
 
