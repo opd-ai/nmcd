@@ -194,6 +194,10 @@ func (ndb *NameDatabase) Close() error {
 
 // PutName stores a name record
 func (ndb *NameDatabase) PutName(name string, record *NameRecord) error {
+	if record == nil {
+		return fmt.Errorf("record cannot be nil")
+	}
+	
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
 
@@ -390,6 +394,10 @@ func (ndb *NameDatabase) GetExpiredNames(height int32) ([]string, error) {
 // multiple expirations of the same name at different heights never collide.
 // This should be called before DeleteName/DeleteHistory during expiration processing.
 func (ndb *NameDatabase) StoreExpiredName(record *NameRecord, expiredAtHeight int32) error {
+	if record == nil {
+		return fmt.Errorf("record cannot be nil")
+	}
+	
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
 
@@ -683,6 +691,10 @@ func (ndb *NameDatabase) ScanNames(prefix string, count int) ([]*NameRecord, err
 // The history is stored keyed by transaction hash, and an index entry is added to map
 // the name to its list of transaction hashes for efficient retrieval.
 func (ndb *NameDatabase) AddHistory(txHash chainhash.Hash, record *NameRecord) error {
+	if record == nil {
+		return fmt.Errorf("record cannot be nil")
+	}
+	
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
 

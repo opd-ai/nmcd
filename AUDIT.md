@@ -115,7 +115,7 @@
 
 - [x] **LOW-3: Close leaves cache active** — COMPLETED — Added closed flag to NameDatabase struct and modified Close() to clear cache and set flag. Prevents stale cached reads after close. Validated with `go test -race ./namedb/...`.
 
-- [ ] **LOW-4: Public methods accept nil pointer arguments without validation** — `namedb/namedb.go:141-161, 402-409`; `namedb/utxo.go:73-82, 105-113` — Nil Safety — Public methods dereference pointer arguments without nil checks. — **Remediation:** Validate pointer args at public entrypoints.
+- [x] **LOW-4: Public methods accept nil pointer arguments without validation** — COMPLETED — Added nil pointer validation to `PutName`, `StoreExpiredName`, `AddHistory`, `AddUTXO`, `RemoveUTXO`, `GetUTXO`, and `StoreSpentUTXO` in namedb package. All methods now return error for nil pointer arguments. Validated with `go test -race ./namedb/...`.
 
 - [ ] **LOW-5: Version-3 records with truncated NameNewHeight decoded silently** — `namedb/namedb.go:722-724` — Error Handling/Data Corruption — V3 records missing final bytes decode with `NameNewHeight == 0` instead of erroring, enabling silent corruption during reorgs. — **Remediation:** Return error if version >= 3 and fewer than 4 bytes remain for NameNewHeight.
 
