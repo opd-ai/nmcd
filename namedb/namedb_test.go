@@ -412,6 +412,12 @@ func TestNameNew(t *testing.T) {
 	if record.Height != height {
 		t.Errorf("Original height should be preserved: expected %d, got %d", height, record.Height)
 	}
+
+	// Verify returned hash is not aliased to caller slice.
+	commitHash[0] = 0xff
+	if record.Hash[0] == commitHash[0] {
+		t.Error("Expected GetNameNew to return a copy of commit hash, but hash was aliased")
+	}
 }
 
 func TestNameNewNotFound(t *testing.T) {
@@ -1090,6 +1096,25 @@ func TestScanNames(t *testing.T) {
 		}
 		if len(results) != 2 {
 			t.Errorf("Expected 2 names (limited by count), got %d", len(results))
+		}
+	})
+
+	// Test scanning with non-positive count
+	t.Run("scan with non-positive count", func(t *testing.T) {
+		results, err := db.ScanNames("d/", 0)
+		if err != nil {
+			t.Fatalf("ScanNames failed: %v", err)
+		}
+		if len(results) != 0 {
+			t.Errorf("Expected 0 names with count=0, got %d", len(results))
+		}
+
+		results, err = db.ScanNames("d/", -1)
+		if err != nil {
+			t.Fatalf("ScanNames failed: %v", err)
+		}
+		if len(results) != 0 {
+			t.Errorf("Expected 0 names with count=-1, got %d", len(results))
 		}
 	})
 

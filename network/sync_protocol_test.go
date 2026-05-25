@@ -82,6 +82,11 @@ func (m *mockBlockchain) SetBlockAuxPowFromBytes(hash *chainhash.Hash, buf []byt
 	return nil
 }
 
+func (m *mockBlockchain) ValidateMempoolTransaction(tx *wire.MsgTx) error {
+	// Mock implementation - always accept transactions
+	return nil
+}
+
 // createTestPeerManagerWithSyncManager creates a PeerManager with sync manager for testing
 func createTestPeerManagerWithSyncManager(t *testing.T) *PeerManager {
 	t.Helper()
@@ -104,7 +109,7 @@ func createTestPeerManagerWithSyncManager(t *testing.T) *PeerManager {
 
 	pm := &PeerManager{
 		logger:      logging.GetDefault().WithComponent("test"),
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		blockchain:  nil,
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    10,
@@ -333,7 +338,7 @@ func TestBroadcastTxMempoolValidation(t *testing.T) {
 
 	pm := &PeerManager{
 		logger:      logging.GetDefault().WithComponent("test"),
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    10,
 		quit:        make(chan struct{}),
@@ -458,7 +463,7 @@ func TestPeerManagerStopWithSyncManager(t *testing.T) {
 func TestPeerManagerStopWithNilComponents(t *testing.T) {
 	pm := &PeerManager{
 		logger:      logging.GetDefault().WithComponent("test"),
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    10,
 		quit:        make(chan struct{}),
@@ -490,7 +495,7 @@ func TestOnTxWithValidation(t *testing.T) {
 
 	pm := &PeerManager{
 		logger:      logging.GetDefault().WithComponent("test"),
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    10,
 		quit:        make(chan struct{}),
@@ -528,7 +533,7 @@ func TestOnTxValidationFailure(t *testing.T) {
 
 	pm := &PeerManager{
 		logger:      logging.GetDefault().WithComponent("test"),
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    10,
 		quit:        make(chan struct{}),
@@ -749,8 +754,8 @@ func TestUpdatePeerMetricsWithPeers(t *testing.T) {
 
 	// Add some nil peer entries (simulating disconnected peers)
 	pm.mu.Lock()
-	pm.peers["peer1"] = nil
-	pm.peers["peer2"] = nil
+	pm.peers[1] = nil
+	pm.peers[2] = nil
 	pm.mu.Unlock()
 
 	// Should not panic even with nil peers
@@ -762,7 +767,7 @@ func TestUpdatePeerMetricsWithPeers(t *testing.T) {
 
 	pm.mu.Lock()
 	// Clear peers since nil pointers cause issues
-	pm.peers = make(map[string]*peer.Peer)
+	pm.peers = make(map[int32]*peer.Peer)
 	pm.updatePeerMetrics()
 	pm.mu.Unlock()
 }

@@ -17,7 +17,7 @@ func TestSyncManagerCreation(t *testing.T) {
 	// Create a minimal peer manager for testing
 	pm := &PeerManager{
 		logger:      logging.GetDefault().WithComponent("test"),
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		blockchain:  nil, // Can be nil for this test
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    8,
@@ -47,7 +47,7 @@ func TestSyncManagerCreation(t *testing.T) {
 func TestSyncManagerUpdatePeerHeight(t *testing.T) {
 	pm := &PeerManager{
 		logger:      logging.GetDefault().WithComponent("test"),
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		blockchain:  nil,
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    8,
@@ -93,7 +93,7 @@ func TestSyncManagerUpdatePeerHeight(t *testing.T) {
 func TestSyncManagerBlockReceived(t *testing.T) {
 	pm := &PeerManager{
 		logger:      logging.GetDefault().WithComponent("test"),
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		blockchain:  nil,
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    8,
@@ -134,7 +134,7 @@ func TestSyncManagerBlockReceived(t *testing.T) {
 func TestSyncManagerCleanupOldRequests(t *testing.T) {
 	pm := &PeerManager{
 		logger:      logging.GetDefault().WithComponent("test"),
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		blockchain:  nil,
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    8,
@@ -176,7 +176,7 @@ func TestSyncManagerCleanupOldRequests(t *testing.T) {
 func TestSyncManagerHandleHeaders(t *testing.T) {
 	pm := &PeerManager{
 		logger:      logging.GetDefault().WithComponent("test"),
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		blockchain:  nil,
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    8,
@@ -198,7 +198,7 @@ func TestSyncManagerHandleHeaders(t *testing.T) {
 func TestSyncManagerHandleHeadersRequiresActiveSyncPeer(t *testing.T) {
 	pm := &PeerManager{
 		logger:      logging.GetDefault().WithComponent("test"),
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		blockchain:  nil,
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    8,
@@ -255,7 +255,7 @@ func TestSyncManagerHandleHeadersRequiresActiveSyncPeer(t *testing.T) {
 func TestSyncManagerOnPeerDisconnectedReselectsBestPeerWithoutResettingHeight(t *testing.T) {
 	pm := &PeerManager{
 		logger:      logging.GetDefault().WithComponent("test"),
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		blockchain:  nil,
 		chainParams: &chaincfg.MainNetParams,
 		maxPeers:    8,
@@ -284,7 +284,7 @@ func TestSyncManagerOnPeerDisconnectedReselectsBestPeerWithoutResettingHeight(t 
 
 	// PeerManager removes the disconnected peer before notifying SyncManager.
 	pm.mu.Lock()
-	pm.peers[remainingPeer.Addr()] = remainingPeer
+	pm.peers[remainingPeer.ID()] = remainingPeer
 	pm.mu.Unlock()
 
 	sm.mu.Lock()

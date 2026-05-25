@@ -20,7 +20,7 @@ import (
 
 // PeerManager manages network peers using btcd/peer
 type PeerManager struct {
-	peers       map[string]*peer.Peer
+	peers       map[int32]*peer.Peer
 	listeners   []net.Listener
 	blockchain  *chain.BlockChain
 	mempool     *Mempool
@@ -47,6 +47,11 @@ func NewPeerManager(cfg *Config) (*PeerManager, error) {
 	// Get logger
 	logger := logging.GetDefault().WithComponent("network")
 
+	// Require non-nil blockchain for mempool validation
+	if cfg.Blockchain == nil {
+		return nil, fmt.Errorf("blockchain is required for peer manager")
+	}
+
 	// Create mempool with validation
 	mempoolCfg := &MempoolConfig{
 		Validator:   cfg.Blockchain, // BlockChain implements TxValidator
@@ -56,7 +61,7 @@ func NewPeerManager(cfg *Config) (*PeerManager, error) {
 	}
 
 	pm := &PeerManager{
-		peers:       make(map[string]*peer.Peer),
+		peers:       make(map[int32]*peer.Peer),
 		blockchain:  cfg.Blockchain,
 		mempool:     NewMempoolWithConfig(mempoolCfg),
 		chainParams: cfg.ChainParams,
@@ -195,7 +200,7 @@ func (pm *PeerManager) handleInboundPeer(conn net.Conn) {
 		conn.Close()
 		return
 	}
-	pm.peers[p.Addr()] = p
+	pm.peers[p.ID()] = p
 	// Update peer count metrics
 	pm.updatePeerMetrics()
 	pm.mu.Unlock()
@@ -205,7 +210,7 @@ func (pm *PeerManager) handleInboundPeer(conn net.Conn) {
 
 	// Remove from peer list
 	pm.mu.Lock()
-	delete(pm.peers, p.Addr())
+	delete(pm.peers, p.ID())
 	// Update peer count metrics and record disconnect
 	pm.updatePeerMetrics()
 	metrics.Get().RecordPeerDisconnect()
@@ -260,7 +265,7 @@ func (pm *PeerManager) ConnectPeer(addr string) error {
 		conn.Close()
 		return fmt.Errorf("max peers limit (%d) reached", pm.maxPeers)
 	}
-	pm.peers[p.Addr()] = p
+	pm.peers[p.ID()] = p
 	// Update peer count metrics
 	pm.updatePeerMetrics()
 	pm.mu.Unlock()
@@ -271,7 +276,7 @@ func (pm *PeerManager) ConnectPeer(addr string) error {
 		p.WaitForDisconnect()
 
 		pm.mu.Lock()
-		delete(pm.peers, p.Addr())
+		delete(pm.peers, p.ID())
 		// Update peer count metrics and record disconnect
 		pm.updatePeerMetrics()
 		metrics.Get().RecordPeerDisconnect()
@@ -316,7 +321,26 @@ func (pm *PeerManager) onInv(p *peer.Peer, msg *wire.MsgInv) {
 	}
 	gdmsg := wire.NewMsgGetData()
 	for _, inv := range msg.InvList {
-		gdmsg.AddInvVect(inv)
+		// Filter by type - only request blocks and transactions
+		switch inv.Type {
+		case wire.InvTypeBlock, wire.InvTypeTx:
+			// Check if we already have this item
+			if inv.Type == wire.InvTypeTx {
+				// Check mempool first
+				if pm.mempool.HasTx(&inv.Hash) {
+					continue
+				}
+			}
+			// For blocks, the blockchain will handle duplicates during ProcessBlock
+			// Add to getdata request
+			gdmsg.AddInvVect(inv)
+		default:
+			// Ignore other inventory types
+			pm.logger.Debug("ignoring inventory type",
+				"type", inv.Type,
+				"hash", inv.Hash.String(),
+				"peer_id", p.Addr())
+		}
 	}
 	if len(gdmsg.InvList) > 0 {
 		p.QueueMessage(gdmsg, nil)

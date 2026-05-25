@@ -93,27 +93,27 @@
 
 - [x] **MEDIUM-5: Global defaultLogger has unsynchronized read/write** — COMPLETED — Added `defaultLoggerMu` RWMutex. `GetDefault()` acquires read lock, `SetDefault()` acquires write lock. Prevents concurrent read/write data races. Validated with `go test -race ./internal/logging/...`.
 
-- [ ] **MEDIUM-6: SMTP readDataBody allows unbounded memory allocation** — `mail/smtp.go:512-536` — Security/Resource Lifecycle — The SMTP server buffers the entire DATA payload before enforcing `MaxMessageSize`. A client can force unbounded memory growth. — **Remediation:** Enforce size limit during the read loop and abort when exceeded. Validate with `go test -race ./mail/...`.
+- [x] **MEDIUM-6: SMTP readDataBody allows unbounded memory allocation** — COMPLETED — Modified `readDataBody()` to track cumulative size during read loop and return error when `MaxMessageSize` is exceeded. Updated `handleData()` to send 552 response on size limit error. Prevents unbounded memory allocation. Validated with `go test -race ./mail/...`.
 
 - [x] **MEDIUM-7: findNameNewUTXOIndex returns 0 on failure** — COMPLETED — Changed return value from 0 to -1 on failure. Added validation in caller to reject RPC with descriptive error when no NAME_NEW UTXO found. Validated with `go test -race ./rpc/...`.
 
-- [ ] **MEDIUM-8: name RPC address selection is nondeterministic** — `rpc/server.go:836-847, 862-863` — Logic/API — Name operations use `addresses[0]` from map iteration (nondeterministic). Different calls may use different addresses, causing failures or wrong UTXO selection. — **Remediation:** Choose deterministically (sort, flag, or search all addresses for suitable UTXOs). Validate with `go test -race ./rpc/...`.
+- [x] **MEDIUM-8: name RPC address selection is nondeterministic** — COMPLETED — Modified `GetAddresses()` to sort addresses before returning, ensuring deterministic selection when RPC methods use `addresses[0]`. Validated with `go test -race ./wallet/...`. Note: Pre-existing test failure in `TestLookupActiveNameRecordExpired` is unrelated to this change.
 
 - [x] **MEDIUM-9: ExtractChainIDFromVersion uses signed shift** — COMPLETED — Changed from `uint32(version >> 16)` to `uint32(version) >> 16` to use unsigned shift and avoid sign extension for negative versions. Validated with `go test -race ./chain/...`.
 
-- [ ] **MEDIUM-10: Mempool validation skipped when blockchain is nil** — `network/peermgr.go:50-56, 401-418` + `network/mempool.go:159-171` — Security/Initialization — `NewPeerManager` allows `cfg.Blockchain == nil`, leaving mempool validator nil. `onTx` still accepts and relays unvalidated transactions. — **Remediation:** Require non-nil blockchain for live networking, or reject tx handling without a validator. Validate with `go test -race ./network/...`.
+- [x] **MEDIUM-10: Mempool validation skipped when blockchain is nil** — COMPLETED — Added check in `NewPeerManager` to require non-nil blockchain, preventing unvalidated transaction relay. Updated affected tests to create PeerManager directly or use mock blockchain. Validated with `go test -race ./network/...`.
 
-- [ ] **MEDIUM-11: onInv requests all announced inventory unconditionally** — `network/peermgr.go:301-313` — Security/Performance — `onInv` requests every announced inventory item without checking if already known, already requested, or worth fetching. A peer can force redundant bandwidth/CPU use. — **Remediation:** Filter by type and known state before queueing getdata. Validate with `go test -race ./network/...`.
+- [x] **MEDIUM-11: onInv requests all announced inventory unconditionally** — COMPLETED — Modified `onInv` to filter inventory by type (only blocks/transactions) and check mempool for duplicate transactions before requesting. Ignores other inventory types with debug logging. Validated with `go test -race ./network/...`.
 
-- [ ] **MEDIUM-12: Peer map keyed by address allows overwrites** — `network/peermgr.go:198, 208, 258, 269` — Logic/Resource Lifecycle — `pm.peers` keyed by `p.Addr()` allows duplicate connections to overwrite each other. Disconnect handling can remove wrong peer entries. — **Remediation:** Key by unique connection/peer ID or reject duplicates before insertion. Validate with `go test -race ./network/...`.
+- [x] **MEDIUM-12: Peer map keyed by address allows overwrites** — COMPLETED — Changed peers map from `map[string]*peer.Peer` to `map[int32]*peer.Peer`, using unique peer ID as key instead of address. Prevents duplicate connections from same address overwriting each other. Updated all tests. Validated with `go test -race ./network/...`.
 
 ### LOW
 
-- [ ] **LOW-1: ScanNames returns one result when count <= 0** — `namedb/namedb.go:358-389` — Off-by-one/API Contract — `ScanNames` appends before enforcing `count`. With `count <= 0`, it returns the first match instead of empty. RPC validates positive counts but direct callers are unprotected. — **Remediation:** Short-circuit `count <= 0` before scanning.
+- [x] **LOW-1: ScanNames returns one result when count <= 0** — COMPLETED — Added short-circuit check at start of ScanNames to return nil when count <= 0. Validated with `go test -race ./namedb/...`.
 
-- [ ] **LOW-2: GetNameNew returns alias of input slice** — `namedb/namedb.go:533-535` — Data Aliasing — Returns `Hash: commitHash` without copying; caller mutation of the input slice corrupts the returned record. — **Remediation:** Copy `commitHash` before assigning.
+- [x] **LOW-2: GetNameNew returns alias of input slice** — COMPLETED — Modified GetNameNew to copy commitHash slice before assigning to record. Prevents caller mutation from corrupting cached state. Validated with `go test -race ./namedb/...`.
 
-- [ ] **LOW-3: Close leaves cache active** — `namedb/namedb.go:134-137` — Resource Lifecycle/API Contract — `Close()` closes bbolt but leaves the cache live. Cached `GetName` calls succeed after close, returning stale data. — **Remediation:** Clear cache and track a closed state.
+- [x] **LOW-3: Close leaves cache active** — COMPLETED — Added closed flag to NameDatabase struct and modified Close() to clear cache and set flag. Prevents stale cached reads after close. Validated with `go test -race ./namedb/...`.
 
 - [ ] **LOW-4: Public methods accept nil pointer arguments without validation** — `namedb/namedb.go:141-161, 402-409`; `namedb/utxo.go:73-82, 105-113` — Nil Safety — Public methods dereference pointer arguments without nil checks. — **Remediation:** Validate pointer args at public entrypoints.
 

@@ -14,19 +14,19 @@ import (
 )
 
 var (
-	namesBucket        = []byte("names")
-	historyBucket      = []byte("history")
-	historyIndexBucket = []byte("history_index")
-	expirationBucket   = []byte("expiration")
-	nameNewBucket      = []byte("name_new")         // Tracks NAME_NEW commitments
-	utxoBucket         = []byte("utxo")             // Tracks unspent transaction outputs
-	utxoAddrBucket     = []byte("utxo_addr")        // Index: address -> UTXOs
-	spentUtxoBucket    = []byte("spent_utxo")       // Tracks spent UTXOs for reorg restoration (indexed by block height)
-	spentUtxoIdxBucket = []byte("spent_utxo_idx")   // Index: height -> list of spent UTXO keys
-	expiredNamesBucket    = []byte("expired_names")      // Tracks expired names for reorg restoration (indexed by block height)
-	expiredNamesIdxBucket = []byte("expired_names_idx")  // Index: height+name -> presence marker
-	expiredHistBucket     = []byte("expired_hist")       // History records for expired names (keyed by txHash)
-	expiredHistIdxBucket  = []byte("expired_hist_idx")   // Index: height+name -> list of txHashes for history restoration
+	namesBucket           = []byte("names")
+	historyBucket         = []byte("history")
+	historyIndexBucket    = []byte("history_index")
+	expirationBucket      = []byte("expiration")
+	nameNewBucket         = []byte("name_new")          // Tracks NAME_NEW commitments
+	utxoBucket            = []byte("utxo")              // Tracks unspent transaction outputs
+	utxoAddrBucket        = []byte("utxo_addr")         // Index: address -> UTXOs
+	spentUtxoBucket       = []byte("spent_utxo")        // Tracks spent UTXOs for reorg restoration (indexed by block height)
+	spentUtxoIdxBucket    = []byte("spent_utxo_idx")    // Index: height -> list of spent UTXO keys
+	expiredNamesBucket    = []byte("expired_names")     // Tracks expired names for reorg restoration (indexed by block height)
+	expiredNamesIdxBucket = []byte("expired_names_idx") // Index: height+name -> presence marker
+	expiredHistBucket     = []byte("expired_hist")      // History records for expired names (keyed by txHash)
+	expiredHistIdxBucket  = []byte("expired_hist_idx")  // Index: height+name -> list of txHashes for history restoration
 )
 
 // Sentinel errors for namedb operations
@@ -140,9 +140,10 @@ func (u *UTXO) Copy() *UTXO {
 
 // NameDatabase manages name operations with bbolt storage
 type NameDatabase struct {
-	db    *bbolt.DB
-	mu    sync.RWMutex
-	cache *lruCache // LRU cache for name lookups (10,000 entries)
+	db     *bbolt.DB
+	mu     sync.RWMutex
+	cache  *lruCache // LRU cache for name lookups (10,000 entries)
+	closed bool      // Tracks whether database has been closed
 }
 
 // NewNameDatabase creates a new name database
@@ -176,7 +177,19 @@ func NewNameDatabase(dbPath string) (*NameDatabase, error) {
 func (ndb *NameDatabase) Close() error {
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
-	return ndb.db.Close()
+
+	if ndb.closed {
+		return nil // Already closed
+	}
+
+	if err := ndb.db.Close(); err != nil {
+		return err
+	}
+
+	// Clear cache only after successful close.
+	ndb.cache.Clear()
+	ndb.closed = true
+	return nil
 }
 
 // PutName stores a name record
@@ -624,6 +637,11 @@ func (ndb *NameDatabase) ScanNames(prefix string, count int) ([]*NameRecord, err
 	ndb.mu.RLock()
 	defer ndb.mu.RUnlock()
 
+	// Short-circuit for count <= 0 to avoid returning any results
+	if count <= 0 {
+		return nil, nil
+	}
+
 	var results []*NameRecord
 
 	err := ndb.db.View(func(tx *bbolt.Tx) error {
@@ -795,8 +813,11 @@ func (ndb *NameDatabase) GetNameNew(commitHash []byte) (*NameNewRecord, error) {
 		// the codebase. The cast is safe as blockchain heights won't exceed
 		// MaxInt32 (would take ~4000 years at current block rates).
 		height := int32(binary.LittleEndian.Uint32(data))
+		// Copy commitHash to avoid aliasing with caller's slice
+		hashCopy := make([]byte, len(commitHash))
+		copy(hashCopy, commitHash)
 		record = &NameNewRecord{
-			Hash:   commitHash,
+			Hash:   hashCopy,
 			Height: height,
 		}
 		return nil
