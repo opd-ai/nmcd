@@ -309,7 +309,8 @@ func (w *Wallet) HasKey(address string) bool {
 	return ok
 }
 
-// GetKey returns the key pair for the given address.
+// GetKey returns a copy of the key pair for the given address.
+// Returns a copy to prevent external mutation of wallet state.
 func (w *Wallet) GetKey(address string) (*KeyPair, error) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
@@ -318,7 +319,13 @@ func (w *Wallet) GetKey(address string) (*KeyPair, error) {
 	if !ok {
 		return nil, fmt.Errorf("no key found for address: %s", address)
 	}
-	return kp, nil
+	
+	// Return a copy to prevent external mutation
+	return &KeyPair{
+		PrivateKey: kp.PrivateKey,
+		PublicKey:  kp.PublicKey,
+		Address:    kp.Address,
+	}, nil
 }
 
 // EncryptWallet encrypts the wallet with a password.

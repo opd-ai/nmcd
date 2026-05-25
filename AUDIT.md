@@ -123,7 +123,7 @@
 
 - [x] **LOW-7: Wallet loadKeys accepts any private key length** — COMPLETED — Added validation to require 32-byte private keys and verify derived address matches stored address. Prevents corrupted wallet files from loading silently with wrong keys. Validated with `go test -race ./wallet/...`.
 
-- [ ] **LOW-8: Wallet GetKey returns internal pointer** — `wallet/wallet.go:299-308` — Data Aliasing/Concurrency — `GetKey` returns the internal `*KeyPair`. Callers can mutate wallet state without locks. — **Remediation:** Return a copy or expose read-only accessors.
+- [x] **LOW-8: Wallet GetKey returns internal pointer** — COMPLETED — Modified `GetKey` to return a copy of the KeyPair struct instead of the internal pointer. Prevents external mutation of wallet state without locks. Validated with `go test -race ./wallet/...`.
 
 - [ ] **LOW-9: GenerateKey leaves key in memory on save failure** — `wallet/wallet.go:265-274` — Security/State Consistency — Inserts key into `w.keys` before `save()`. If save fails, the key remains accessible in memory but not on disk. — **Remediation:** Roll back map entry on save failure.
 
