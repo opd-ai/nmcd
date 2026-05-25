@@ -125,7 +125,7 @@
 
 - [x] **LOW-8: Wallet GetKey returns internal pointer** — COMPLETED — Modified `GetKey` to return a copy of the KeyPair struct instead of the internal pointer. Prevents external mutation of wallet state without locks. Validated with `go test -race ./wallet/...`.
 
-- [ ] **LOW-9: GenerateKey leaves key in memory on save failure** — `wallet/wallet.go:265-274` — Security/State Consistency — Inserts key into `w.keys` before `save()`. If save fails, the key remains accessible in memory but not on disk. — **Remediation:** Roll back map entry on save failure.
+- [x] **LOW-9: GenerateKey leaves key in memory on save failure** — COMPLETED — Added rollback logic to delete key from memory map when save() fails. Prevents key from being accessible in memory but not on disk. Validated with `go test -race ./wallet/...`.
 
 - [ ] **LOW-10: Negative feeRate accepted in wallet tx builders** — `wallet/wallet.go:737-747, 795-805, 905-913` — Input Validation — Negative `feeRate` makes fee negative, potentially producing invalid overspending transactions. — **Remediation:** Reject `feeRate < 0` before fee calculation.
 

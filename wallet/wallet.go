@@ -282,6 +282,8 @@ func (w *Wallet) GenerateKey() (string, error) {
 	}
 
 	if err := w.save(); err != nil {
+		// Rollback: remove the key from memory on save failure
+		delete(w.keys, addrStr)
 		return "", fmt.Errorf("failed to save wallet: %w", err)
 	}
 
