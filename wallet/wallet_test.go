@@ -822,6 +822,65 @@ func TestCreateNameFirstUpdateTx(t *testing.T) {
 	}
 }
 
+func TestCreateNameUpdateTxRawUsesChangeAddressForChangeOutput(t *testing.T) {
+	tmpDir := t.TempDir()
+	w, err := NewWallet(tmpDir, &config.NamecoinMainNetParams)
+	if err != nil {
+		t.Fatalf("failed to create wallet: %v", err)
+	}
+
+	changeAddr, err := w.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate change key: %v", err)
+	}
+	destAddr, err := w.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate destination key: %v", err)
+	}
+
+	changeKey, err := w.GetKey(changeAddr)
+	if err != nil {
+		t.Fatalf("failed to get change key: %v", err)
+	}
+	destKey, err := w.GetKey(destAddr)
+	if err != nil {
+		t.Fatalf("failed to get destination key: %v", err)
+	}
+
+	utxos := []UTXO{
+		{
+			TxHash:   mustParseHash(t, "0000000000000000000000000000000000000000000000000000000000000001"),
+			Vout:     0,
+			Value:    2000000,
+			PkScript: mustP2PKHScript(t, changeKey.Address),
+			Address:  changeAddr,
+		},
+	}
+
+	tx, err := CreateNameUpdateTxRaw("d/example", `{"ip":"1.2.3.4"}`, destKey.Address, changeKey.Address, utxos, 1)
+	if err != nil {
+		t.Fatalf("CreateNameUpdateTxRaw failed: %v", err)
+	}
+
+	if len(tx.TxOut) < 2 {
+		t.Fatalf("expected change output, got %d outputs", len(tx.TxOut))
+	}
+
+	_, addrs, _, err := txscript.ExtractPkScriptAddrs(tx.TxOut[1].PkScript, &config.NamecoinMainNetParams)
+	if err != nil {
+		t.Fatalf("failed to decode change output script: %v", err)
+	}
+	if len(addrs) != 1 {
+		t.Fatalf("expected one decoded change address, got %d", len(addrs))
+	}
+	if addrs[0].EncodeAddress() != changeKey.Address.EncodeAddress() {
+		t.Fatalf("expected change output to pay %s, got %s", changeKey.Address.EncodeAddress(), addrs[0].EncodeAddress())
+	}
+	if addrs[0].EncodeAddress() == destKey.Address.EncodeAddress() {
+		t.Fatalf("change output incorrectly paid destination address %s", destKey.Address.EncodeAddress())
+	}
+}
+
 // mustParseHash parses a hex string into a chainhash.Hash and panics on error
 func mustParseHash(t *testing.T, hexStr string) chainhash.Hash {
 	t.Helper()

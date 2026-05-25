@@ -75,10 +75,20 @@ func DefaultRelayConfig() RelayConfig {
 	return RelayConfig{
 		ListenAddr:     ":2525",
 		UpstreamPort:   587,
-		UpstreamTLS:    TLSModeSTARTTLS, // Default to STARTTLS for security
 		ReadTimeout:    5 * time.Minute,
 		WriteTimeout:   5 * time.Minute,
 		MaxMessageSize: 10 * 1024 * 1024, // 10 MB
+	}
+}
+
+func inferUpstreamTLSMode(port int) TLSMode {
+	switch port {
+	case 587:
+		return TLSModeSTARTTLS
+	case 465:
+		return TLSModeImplicit
+	default:
+		return TLSModeDisabled
 	}
 }
 
@@ -462,23 +472,16 @@ func (s *smtpSession) forwardMessage(ctx context.Context, from, to string, body 
 // connectUpstream connects to the upstream SMTP server, optionally upgrading to TLS and authenticating.
 func (s *smtpSession) connectUpstream() (*smtp.Client, error) {
 	addr := fmt.Sprintf("%s:%d", s.relay.config.UpstreamHost, s.relay.config.UpstreamPort)
-	
+
 	// Determine TLS mode (use explicit config or infer from port)
 	tlsMode := s.relay.config.UpstreamTLS
 	if tlsMode == "" {
-		switch s.relay.config.UpstreamPort {
-		case 587:
-			tlsMode = TLSModeSTARTTLS
-		case 465:
-			tlsMode = TLSModeImplicit
-		default:
-			tlsMode = TLSModeDisabled
-		}
+		tlsMode = inferUpstreamTLSMode(s.relay.config.UpstreamPort)
 	}
-	
+
 	var client *smtp.Client
 	var err error
-	
+
 	// Connect with appropriate TLS mode
 	switch tlsMode {
 	case TLSModeImplicit:
@@ -495,7 +498,7 @@ func (s *smtpSession) connectUpstream() (*smtp.Client, error) {
 			conn.Close()
 			return nil, fmt.Errorf("failed to create SMTP client: %w", err)
 		}
-		
+
 	case TLSModeSTARTTLS:
 		// Connect in cleartext then upgrade with STARTTLS
 		client, err = smtp.Dial(addr)
@@ -509,20 +512,20 @@ func (s *smtpSession) connectUpstream() (*smtp.Client, error) {
 			client.Close()
 			return nil, fmt.Errorf("STARTTLS failed: %w", err)
 		}
-		
+
 	case TLSModeDisabled:
 		// Connect without TLS (insecure)
 		client, err = smtp.Dial(addr)
 		if err != nil {
 			return nil, fmt.Errorf("failed to connect to upstream SMTP: %w", err)
 		}
-		
+
 	default:
 		return nil, fmt.Errorf("invalid TLS mode: %s", tlsMode)
 	}
 
 	// Authenticate if credentials provided
-	// Refuse to authenticate over cleartext unless TLS is explicitly disabled
+	// Refuse to authenticate unless the upstream connection is protected with TLS.
 	if s.relay.config.UpstreamAuth != nil {
 		if tlsMode == TLSModeDisabled {
 			client.Close()

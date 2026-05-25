@@ -2,6 +2,7 @@ package logging
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -74,9 +75,9 @@ type Logger struct {
 }
 
 var (
-	defaultLogger *Logger
+	defaultLogger   *Logger
 	defaultLoggerMu sync.RWMutex
-	once          sync.Once
+	once            sync.Once
 )
 
 // Init initializes the global logger with the given configuration
@@ -117,13 +118,22 @@ func Init(cfg *Config) (*Logger, error) {
 		// Create log directory if it doesn't exist
 		logDir := filepath.Dir(cfg.Output)
 		if err := os.MkdirAll(logDir, 0o700); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to create log directory %s: %w", logDir, err)
+		}
+		if logDir != "." {
+			if err := os.Chmod(logDir, 0o700); err != nil {
+				return nil, fmt.Errorf("failed to set permissions on log directory %s: %w", logDir, err)
+			}
 		}
 
 		// Open log file
 		f, err := os.OpenFile(cfg.Output, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to open log file %s: %w", cfg.Output, err)
+		}
+		if err := f.Chmod(0o600); err != nil {
+			f.Close()
+			return nil, fmt.Errorf("failed to set permissions on log file %s: %w", cfg.Output, err)
 		}
 		writer = f
 		closer = f

@@ -1,6 +1,7 @@
 package chain
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1569,6 +1570,68 @@ func TestValidateNameFirstUpdateRejectsFutureNameNewHeight(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "name_firstupdate before name_new") {
 		t.Fatalf("expected 'name_firstupdate before name_new' error, got: %v", err)
+	}
+}
+
+func TestValidateNameFirstUpdateRejectsActiveNameAtExpirationBoundary(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test-firstupdate-boundary.db")
+	ndb, err := namedb.NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer ndb.Close()
+
+	bc := &BlockChain{
+		nameDB:      ndb,
+		chainParams: &config.NamecoinRegTestParams,
+	}
+
+	currentHeight := int32(200)
+	record := &namedb.NameRecord{
+		Name:      "d/example",
+		Value:     `{"ip":"1.2.3.4"}`,
+		Height:    100,
+		ExpiresAt: currentHeight,
+		UpdatedAt: time.Now(),
+	}
+	if err := ndb.PutName(record.Name, record); err != nil {
+		t.Fatalf("Failed to store active name: %v", err)
+	}
+
+	err = bc.validateNameFirstUpdate(record.Name, record.Value, []byte("01234567890123456789"), currentHeight)
+	if err == nil {
+		t.Fatal("expected re-registration at expiration boundary to be rejected")
+	}
+	if !strings.Contains(err.Error(), "name already exists and not expired") {
+		t.Fatalf("expected active-name rejection, got: %v", err)
+	}
+}
+
+func TestValidateNameFirstUpdatePropagatesUnexpectedLookupError(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test-firstupdate-lookup-error.db")
+	ndb, err := namedb.NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+
+	bc := &BlockChain{
+		nameDB:      ndb,
+		chainParams: &config.NamecoinRegTestParams,
+	}
+
+	if err := ndb.Close(); err != nil {
+		t.Fatalf("Failed to close database: %v", err)
+	}
+
+	err = bc.validateNameFirstUpdate("d/example", `{"ip":"1.2.3.4"}`, []byte("01234567890123456789"), 200)
+	if err == nil {
+		t.Fatal("expected lookup error, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to check existing name d/example") {
+		t.Fatalf("expected wrapped lookup error, got: %v", err)
+	}
+	if errors.Is(err, namedb.ErrNameNotFound) {
+		t.Fatalf("unexpected ErrNameNotFound classification: %v", err)
 	}
 }
 
@@ -4070,6 +4133,116 @@ func TestRollbackNameFirstUpdateFallback(t *testing.T) {
 	if restoredNameNew.Height != expectedHeight {
 		t.Errorf("Fallback estimation failed: expected %d, got %d",
 			expectedHeight, restoredNameNew.Height)
+	}
+}
+
+func TestValidateNameUpdateOpAllowsExpirationBoundary(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test-update-boundary.db")
+	ndb, err := namedb.NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer ndb.Close()
+
+	bc := &BlockChain{
+		nameDB:      ndb,
+		chainParams: &config.NamecoinRegTestParams,
+	}
+
+	currentTxHash, err := chainhash.NewHashFromStr("000000000000000000000000000000000000000000000000000000000000000a")
+	if err != nil {
+		t.Fatalf("Failed to parse current tx hash: %v", err)
+	}
+	record := &namedb.NameRecord{
+		Name:      "d/example",
+		Value:     `{"ip":"1.2.3.4"}`,
+		TxHash:    *currentTxHash,
+		OutIndex:  1,
+		Height:    100,
+		ExpiresAt: 200,
+		UpdatedAt: time.Now(),
+	}
+	if err := ndb.PutName(record.Name, record); err != nil {
+		t.Fatalf("Failed to store name record: %v", err)
+	}
+
+	msgTx := wire.NewMsgTx(1)
+	msgTx.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: wire.OutPoint{
+			Hash:  record.TxHash,
+			Index: record.OutIndex,
+		},
+	})
+	txOut := &wire.TxOut{Value: config.DustLimit}
+	ctx := &nameValidationContext{seenNames: make(map[string]bool)}
+	txHash, err := chainhash.NewHashFromStr("000000000000000000000000000000000000000000000000000000000000000b")
+	if err != nil {
+		t.Fatalf("Failed to parse tx hash: %v", err)
+	}
+
+	if err := bc.validateNameUpdateOp(msgTx, txOut, record.Name, *txHash, 200, ctx); err != nil {
+		t.Fatalf("expected NAME_UPDATE at expiration boundary to remain valid, got: %v", err)
+	}
+}
+
+func TestValidateNameUpdateWrapsUnexpectedLookupErrors(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test-update-lookup-error.db")
+	ndb, err := namedb.NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+
+	bc := &BlockChain{
+		nameDB:      ndb,
+		chainParams: &config.NamecoinRegTestParams,
+	}
+
+	if err := ndb.Close(); err != nil {
+		t.Fatalf("Failed to close database: %v", err)
+	}
+
+	err = bc.validateNameUpdate("d/example", `{"ip":"1.2.3.4"}`, wire.NewMsgTx(1), 200)
+	if err == nil {
+		t.Fatal("expected lookup error, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to get name d/example for update") {
+		t.Fatalf("expected wrapped lookup error, got: %v", err)
+	}
+	if errors.Is(err, namedb.ErrNameNotFound) {
+		t.Fatalf("unexpected ErrNameNotFound classification: %v", err)
+	}
+}
+
+func TestValidateNameUpdateOpWrapsUnexpectedLookupErrors(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test-updateop-lookup-error.db")
+	ndb, err := namedb.NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+
+	bc := &BlockChain{
+		nameDB:      ndb,
+		chainParams: &config.NamecoinRegTestParams,
+	}
+
+	if err := ndb.Close(); err != nil {
+		t.Fatalf("Failed to close database: %v", err)
+	}
+
+	ctx := &nameValidationContext{seenNames: make(map[string]bool)}
+	txHash, err := chainhash.NewHashFromStr("000000000000000000000000000000000000000000000000000000000000000c")
+	if err != nil {
+		t.Fatalf("Failed to parse tx hash: %v", err)
+	}
+	err = bc.validateNameUpdateOp(wire.NewMsgTx(1), &wire.TxOut{Value: config.DustLimit}, "d/example", *txHash, 200, ctx)
+	if err == nil {
+		t.Fatal("expected lookup error, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to get name d/example for update") {
+		t.Fatalf("expected wrapped lookup error, got: %v", err)
+	}
+	if errors.Is(err, namedb.ErrNameNotFound) {
+		t.Fatalf("unexpected ErrNameNotFound classification: %v", err)
 	}
 }
 
