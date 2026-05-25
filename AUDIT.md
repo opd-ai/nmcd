@@ -129,7 +129,7 @@
 
 - [x] **LOW-10: Negative feeRate accepted in wallet tx builders** — COMPLETED — Added validation to reject `feeRate < 0` in `CreateNameUpdateTx`, `CreateNameUpdateTxRaw`, and `CreateNameNewTx` before fee calculation. Prevents invalid transactions. Validated with `go test -race ./wallet/...`.
 
-- [ ] **LOW-11: Loadtest latency race** — `loadtest/runner.go:231-235, 249-265` — Concurrency — Result aggregation reads `latencies` slice without holding `latencyMu`. — **Remediation:** Copy slice under lock before computing stats.
+- [x] **LOW-11: Loadtest latency race** — COMPLETED — Modified `populateLoadTestResult` to copy latencies slice under lock before computing statistics. Prevents concurrent read/write data races. Validated with `go test -race ./loadtest/...`.
 
 - [ ] **LOW-12: getbalance/listunspent silently skip failed addresses** — `rpc/server.go:1570-1573, 1686-1688` — Error Handling — UTXO lookup failures for specific addresses are silently skipped, returning incomplete results. — **Remediation:** Propagate or surface partial-failure metadata.
 

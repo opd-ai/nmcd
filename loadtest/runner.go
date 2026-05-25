@@ -246,22 +246,26 @@ func populateLoadTestResult(result *TestResult, counters *loadTestCounters, dura
 	result.FailureCount = atomic.LoadInt64(&counters.failureCount)
 	result.ThroughputRPS = float64(result.RequestCount) / duration.Seconds()
 
-	if len(counters.latencies) == 0 {
+	// Copy latencies slice under lock to prevent race
+	counters.latencyMu.Lock()
+	latenciesCopy := make([]time.Duration, len(counters.latencies))
+	copy(latenciesCopy, counters.latencies)
+	counters.latencyMu.Unlock()
+
+	if len(latenciesCopy) == 0 {
 		return
 	}
 
 	var total time.Duration
-	for _, l := range counters.latencies {
+	for _, l := range latenciesCopy {
 		total += l
 	}
-	result.AvgLatency = total / time.Duration(len(counters.latencies))
+	result.AvgLatency = total / time.Duration(len(latenciesCopy))
 
-	if len(counters.latencies) >= 20 {
-		sorted := make([]time.Duration, len(counters.latencies))
-		copy(sorted, counters.latencies)
-		sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-		result.P95Latency = sorted[int(float64(len(sorted))*0.95)]
-		result.P99Latency = sorted[int(float64(len(sorted))*0.99)]
+	if len(latenciesCopy) >= 20 {
+		sort.Slice(latenciesCopy, func(i, j int) bool { return latenciesCopy[i] < latenciesCopy[j] })
+		result.P95Latency = latenciesCopy[int(float64(len(latenciesCopy))*0.95)]
+		result.P99Latency = latenciesCopy[int(float64(len(latenciesCopy))*0.99)]
 	}
 }
 
