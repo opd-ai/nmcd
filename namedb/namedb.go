@@ -1017,7 +1017,10 @@ func decodeNameRecord(data []byte) (*NameRecord, error) {
 		r.offset += 8
 	}
 
-	if version >= 3 && r.offset+4 <= len(r.data) {
+	if version >= 3 {
+		if r.offset+4 > len(r.data) {
+			return nil, fmt.Errorf("corrupt record: version 3 requires NameNewHeight but data is truncated")
+		}
 		record.NameNewHeight = int32(binary.LittleEndian.Uint32(r.data[r.offset : r.offset+4]))
 	}
 

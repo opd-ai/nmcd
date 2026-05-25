@@ -117,7 +117,7 @@
 
 - [x] **LOW-4: Public methods accept nil pointer arguments without validation** — COMPLETED — Added nil pointer validation to `PutName`, `StoreExpiredName`, `AddHistory`, `AddUTXO`, `RemoveUTXO`, `GetUTXO`, and `StoreSpentUTXO` in namedb package. All methods now return error for nil pointer arguments. Validated with `go test -race ./namedb/...`.
 
-- [ ] **LOW-5: Version-3 records with truncated NameNewHeight decoded silently** — `namedb/namedb.go:722-724` — Error Handling/Data Corruption — V3 records missing final bytes decode with `NameNewHeight == 0` instead of erroring, enabling silent corruption during reorgs. — **Remediation:** Return error if version >= 3 and fewer than 4 bytes remain for NameNewHeight.
+- [x] **LOW-5: Version-3 records with truncated NameNewHeight decoded silently** — COMPLETED — Modified `decodeNameRecord` to return error if version >= 3 and fewer than 4 bytes remain for NameNewHeight. Prevents silent corruption with `NameNewHeight == 0`. Validated with `go test -race ./namedb/...`.
 
 - [ ] **LOW-6: GetUTXOsForAddress prefix scan overmatches** — `namedb/utxo.go:173-177` — Logic/Security — Empty or short addresses match unintended entries due to raw prefix scanning. — **Remediation:** Reject empty addresses and encode keys with a delimiter or length prefix.
 
