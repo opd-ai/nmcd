@@ -29,6 +29,18 @@ func (e *messageSizeExceededError) Is(target error) bool {
 	return target == errMessageSizeExceeded
 }
 
+// TLSMode specifies how to use TLS when connecting to upstream SMTP server.
+type TLSMode string
+
+const (
+	// TLSModeDisabled disables TLS entirely (insecure, not recommended for production)
+	TLSModeDisabled TLSMode = "disabled"
+	// TLSModeSTARTTLS upgrades connection to TLS using STARTTLS (common for port 587)
+	TLSModeSTARTTLS TLSMode = "starttls"
+	// TLSModeImplicit connects with TLS from the start (common for port 465)
+	TLSModeImplicit TLSMode = "implicit"
+)
+
 // RelayConfig contains configuration for the SMTP relay server.
 type RelayConfig struct {
 	// ListenAddr is the address to listen on (e.g., ":2525" or "localhost:2525")
@@ -39,6 +51,10 @@ type RelayConfig struct {
 
 	// UpstreamPort is the port of the upstream SMTP server (typically 587 for TLS)
 	UpstreamPort int
+
+	// UpstreamTLS specifies TLS mode for upstream connection.
+	// If empty, defaults to TLSModeSTARTTLS for port 587, TLSModeImplicit for port 465, and TLSModeDisabled otherwise.
+	UpstreamTLS TLSMode
 
 	// UpstreamAuth contains SMTP authentication credentials for the upstream server
 	// If nil, no authentication is performed
@@ -59,6 +75,7 @@ func DefaultRelayConfig() RelayConfig {
 	return RelayConfig{
 		ListenAddr:     ":2525",
 		UpstreamPort:   587,
+		UpstreamTLS:    TLSModeSTARTTLS, // Default to STARTTLS for security
 		ReadTimeout:    5 * time.Minute,
 		WriteTimeout:   5 * time.Minute,
 		MaxMessageSize: 10 * 1024 * 1024, // 10 MB
@@ -445,12 +462,46 @@ func (s *smtpSession) forwardMessage(ctx context.Context, from, to string, body 
 // connectUpstream connects to the upstream SMTP server, optionally upgrading to TLS and authenticating.
 func (s *smtpSession) connectUpstream() (*smtp.Client, error) {
 	addr := fmt.Sprintf("%s:%d", s.relay.config.UpstreamHost, s.relay.config.UpstreamPort)
-	client, err := smtp.Dial(addr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to upstream SMTP: %w", err)
+	
+	// Determine TLS mode (use explicit config or infer from port)
+	tlsMode := s.relay.config.UpstreamTLS
+	if tlsMode == "" {
+		switch s.relay.config.UpstreamPort {
+		case 587:
+			tlsMode = TLSModeSTARTTLS
+		case 465:
+			tlsMode = TLSModeImplicit
+		default:
+			tlsMode = TLSModeDisabled
+		}
 	}
-
-	if s.relay.config.UpstreamPort == 587 {
+	
+	var client *smtp.Client
+	var err error
+	
+	// Connect with appropriate TLS mode
+	switch tlsMode {
+	case TLSModeImplicit:
+		// Use implicit TLS (direct TLS connection)
+		tlsConfig := &tls.Config{
+			ServerName: s.relay.config.UpstreamHost,
+		}
+		conn, err := tls.Dial("tcp", addr, tlsConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to upstream SMTP with implicit TLS: %w", err)
+		}
+		client, err = smtp.NewClient(conn, s.relay.config.UpstreamHost)
+		if err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("failed to create SMTP client: %w", err)
+		}
+		
+	case TLSModeSTARTTLS:
+		// Connect in cleartext then upgrade with STARTTLS
+		client, err = smtp.Dial(addr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to upstream SMTP: %w", err)
+		}
 		tlsConfig := &tls.Config{
 			ServerName: s.relay.config.UpstreamHost,
 		}
@@ -458,9 +509,25 @@ func (s *smtpSession) connectUpstream() (*smtp.Client, error) {
 			client.Close()
 			return nil, fmt.Errorf("STARTTLS failed: %w", err)
 		}
+		
+	case TLSModeDisabled:
+		// Connect without TLS (insecure)
+		client, err = smtp.Dial(addr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to upstream SMTP: %w", err)
+		}
+		
+	default:
+		return nil, fmt.Errorf("invalid TLS mode: %s", tlsMode)
 	}
 
+	// Authenticate if credentials provided
+	// Refuse to authenticate over cleartext unless TLS is explicitly disabled
 	if s.relay.config.UpstreamAuth != nil {
+		if tlsMode == TLSModeDisabled {
+			client.Close()
+			return nil, fmt.Errorf("refusing to authenticate over cleartext connection (TLS mode: %s)", tlsMode)
+		}
 		if err := client.Auth(s.relay.config.UpstreamAuth); err != nil {
 			client.Close()
 			return nil, fmt.Errorf("upstream authentication failed: %w", err)
