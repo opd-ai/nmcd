@@ -558,7 +558,7 @@ func TestLookupActiveNameRecordExpired(t *testing.T) {
 		TxHash:    *txHash,
 		OutIndex:  0,
 		Height:    1,
-		ExpiresAt: 0, // ExpiresAt=0 is <= bestHeight=0 (genesis), so name is expired
+		ExpiresAt: -1, // ExpiresAt=-1 is < bestHeight=0 (genesis), so name is expired (per strict-< convention)
 		Address:   "n1test1234567890123456789012345678",
 	}
 	if err := bc.GetNameDB().PutName(testName, record); err != nil {
