@@ -1616,14 +1616,24 @@ func (s *Server) getBalance(req *Request) *Response {
 
 	// Sum up UTXOs for all addresses
 	var totalSatoshis int64
+	var errorCount int
 	for _, addr := range addresses {
 		utxos, err := s.blockchain.GetUTXOsForAddress(addr)
 		if err != nil {
+			errorCount++
+			s.logger.Warn("failed to get UTXOs for address",
+				"address", addr,
+				"error", err)
 			continue // Skip addresses with errors
 		}
 		for _, utxo := range utxos {
 			totalSatoshis += utxo.Value
 		}
+	}
+
+	if errorCount > 0 {
+		s.logger.Warn("getbalance returned incomplete results",
+			"skipped_addresses", errorCount)
 	}
 
 	// Convert satoshis to NMC (1 NMC = 100,000,000 satoshis)
@@ -1731,10 +1741,15 @@ func (s *Server) resolveTargetAddresses(filterAddresses []string) []string {
 func (s *Server) collectFilteredUTXOs(addresses []string, minConf, maxConf int) []map[string]interface{} {
 	bestHeight := s.blockchain.BestSnapshot().Height
 	var result []map[string]interface{}
+	var errorCount int
 
 	for _, addr := range addresses {
 		utxos, err := s.blockchain.GetUTXOsForAddress(addr)
 		if err != nil {
+			errorCount++
+			s.logger.Warn("failed to get UTXOs for address",
+				"address", addr,
+				"error", err)
 			continue
 		}
 
@@ -1743,6 +1758,11 @@ func (s *Server) collectFilteredUTXOs(addresses []string, minConf, maxConf int) 
 				result = append(result, utxoObj)
 			}
 		}
+	}
+
+	if errorCount > 0 {
+		s.logger.Warn("listunspent returned incomplete results",
+			"skipped_addresses", errorCount)
 	}
 
 	if result == nil {

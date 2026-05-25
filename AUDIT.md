@@ -131,7 +131,7 @@
 
 - [x] **LOW-11: Loadtest latency race** — COMPLETED — Modified `populateLoadTestResult` to copy latencies slice under lock before computing statistics. Prevents concurrent read/write data races. Validated with `go test -race ./loadtest/...`.
 
-- [ ] **LOW-12: getbalance/listunspent silently skip failed addresses** — `rpc/server.go:1570-1573, 1686-1688` — Error Handling — UTXO lookup failures for specific addresses are silently skipped, returning incomplete results. — **Remediation:** Propagate or surface partial-failure metadata.
+- [x] **LOW-12: getbalance/listunspent silently skip failed addresses** — COMPLETED — Added error counting and structured logging to surface partial-failure warnings in `getBalance` and `collectFilteredUTXOs`. Errors are logged with address and error details. Validated with `go test -race ./rpc/...`.
 
 - [ ] **LOW-13: Mempool validateNameFirstUpdate missing timing enforcement** — `chain/blockchain.go:1987-1991` — Logic/Mempool Policy — Mempool validation fetches `nameNewRecord` but never enforces min/max reveal timing window. — **Remediation:** Validate reveal window using `nameNewRecord.Height`.
 
