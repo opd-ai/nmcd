@@ -71,6 +71,10 @@ func decodeUTXO(txHash *chainhash.Hash, outIndex uint32, data []byte) (*UTXO, er
 
 // AddUTXO adds an unspent transaction output to the database
 func (ndb *NameDatabase) AddUTXO(utxo *UTXO) error {
+	if utxo == nil {
+		return fmt.Errorf("utxo cannot be nil")
+	}
+	
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
 
@@ -103,6 +107,10 @@ func (ndb *NameDatabase) AddUTXO(utxo *UTXO) error {
 
 // RemoveUTXO removes a spent transaction output from the database
 func (ndb *NameDatabase) RemoveUTXO(txHash *chainhash.Hash, outIndex uint32) error {
+	if txHash == nil {
+		return fmt.Errorf("txHash cannot be nil")
+	}
+	
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
 
@@ -140,6 +148,10 @@ func (ndb *NameDatabase) RemoveUTXO(txHash *chainhash.Hash, outIndex uint32) err
 
 // GetUTXO retrieves a specific UTXO
 func (ndb *NameDatabase) GetUTXO(txHash *chainhash.Hash, outIndex uint32) (*UTXO, error) {
+	if txHash == nil {
+		return nil, fmt.Errorf("txHash cannot be nil")
+	}
+	
 	ndb.mu.RLock()
 	defer ndb.mu.RUnlock()
 
@@ -162,6 +174,10 @@ func (ndb *NameDatabase) GetUTXO(txHash *chainhash.Hash, outIndex uint32) (*UTXO
 
 // GetUTXOsForAddress retrieves all UTXOs for a specific address
 func (ndb *NameDatabase) GetUTXOsForAddress(address string) ([]*UTXO, error) {
+	if address == "" {
+		return nil, fmt.Errorf("address cannot be empty")
+	}
+	
 	ndb.mu.RLock()
 	defer ndb.mu.RUnlock()
 
@@ -175,11 +191,13 @@ func (ndb *NameDatabase) GetUTXOsForAddress(address string) ([]*UTXO, error) {
 		c := addrBkt.Cursor()
 
 		for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
-			// Extract txhash and outindex from the key
-			if len(k) < len(address)+txHashSize+4 {
+			// Verify key is exactly address + txhash + outindex (no partial matches)
+			expectedKeyLen := len(address) + txHashSize + 4
+			if len(k) != expectedKeyLen {
 				continue
 			}
-
+			
+			// Extract txhash and outindex from the key
 			var txHash chainhash.Hash
 			copy(txHash[:], k[len(address):len(address)+txHashSize])
 			outIndex := binary.BigEndian.Uint32(k[len(address)+txHashSize:])
@@ -228,6 +246,10 @@ func (ndb *NameDatabase) GetNameUTXO(name string) (*UTXO, error) {
 // The UTXO is indexed by the block height where it was spent, allowing efficient
 // cleanup and restoration. This should be called before RemoveUTXO during block connection.
 func (ndb *NameDatabase) StoreSpentUTXO(utxo *UTXO, spentAtHeight int32) error {
+	if utxo == nil {
+		return fmt.Errorf("utxo cannot be nil")
+	}
+	
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
 

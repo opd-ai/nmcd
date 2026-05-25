@@ -6,7 +6,7 @@ import (
 )
 
 // Test_bug_9_rate_limiter_rapid_ip_changes demonstrates the memory accumulation issue
-// documented in AUDIT.md Issue #9. When rapid IP address changes occur (e.g., 10,000+
+// documented in docs/development/AUDIT.md Issue #9. When rapid IP address changes occur (e.g., 10,000+
 // unique IPs per minute), the cleanup mechanism may not keep pace, allowing unbounded
 // memory growth.
 //

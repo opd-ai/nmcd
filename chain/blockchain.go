@@ -2096,7 +2096,22 @@ func (bc *BlockChain) validateNameFirstUpdate(name, value string, extra []byte, 
 	if err != nil {
 		return fmt.Errorf("no matching name_new found for name: %s", name)
 	}
-	_ = nameNewRecord
+
+	// Enforce timing window: NAME_FIRSTUPDATE must be between MinBlocksBeforeFirstUpdate
+	// and MaxBlocksBeforeFirstUpdate blocks after the NAME_NEW
+	if currentHeight < nameNewRecord.Height {
+		return fmt.Errorf("name_firstupdate before name_new: block %d < name_new block %d (name: '%s')",
+			currentHeight, nameNewRecord.Height, name)
+	}
+	blocksSinceNameNew := currentHeight - nameNewRecord.Height
+	if blocksSinceNameNew < config.MinBlocksBeforeFirstUpdate {
+		return fmt.Errorf("name_firstupdate too early: must wait %d blocks after name_new (current: %d blocks)",
+			config.MinBlocksBeforeFirstUpdate, blocksSinceNameNew)
+	}
+	if blocksSinceNameNew > config.MaxBlocksBeforeFirstUpdate {
+		return fmt.Errorf("name_firstupdate expired: name_new commitment is too old (must reveal within %d blocks, current: %d blocks)",
+			config.MaxBlocksBeforeFirstUpdate, blocksSinceNameNew)
+	}
 
 	if err := validateNameFormat(name, value); err != nil {
 		return fmt.Errorf("invalid name format: %w", err)

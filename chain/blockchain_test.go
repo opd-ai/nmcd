@@ -1538,6 +1538,40 @@ func TestNameFirstUpdateTimingWindow(t *testing.T) {
 	}
 }
 
+func TestValidateNameFirstUpdateRejectsFutureNameNewHeight(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test-future-name-new.db")
+	ndb, err := namedb.NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer ndb.Close()
+
+	bc := &BlockChain{
+		nameDB:      ndb,
+		chainParams: &config.NamecoinRegTestParams,
+	}
+
+	nameStr := "d/example"
+	rand := []byte{
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+		0x11, 0x12, 0x13, 0x14,
+	}
+	commitHash := computeCommitHash(rand, nameStr, bc.chainParams)
+	nameNewHeight := int32(200)
+	if err := ndb.PutNameNew(commitHash, nameNewHeight); err != nil {
+		t.Fatalf("Failed to store NAME_NEW: %v", err)
+	}
+
+	err = bc.validateNameFirstUpdate(nameStr, `{"ip":"1.2.3.4"}`, rand, nameNewHeight-1)
+	if err == nil {
+		t.Fatal("expected error for NAME_FIRSTUPDATE before NAME_NEW height, got nil")
+	}
+	if !strings.Contains(err.Error(), "name_firstupdate before name_new") {
+		t.Fatalf("expected 'name_firstupdate before name_new' error, got: %v", err)
+	}
+}
+
 // createBlockWithNameFirstUpdate creates a test block containing a NAME_FIRSTUPDATE operation
 func createBlockWithNameFirstUpdate(t *testing.T, name string, rand []byte, height int32) *btcutil.Block {
 	t.Helper()

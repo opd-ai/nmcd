@@ -150,6 +150,11 @@ func (w *Wallet) loadKeys(wd *walletData) error {
 			return err
 		}
 
+		// Validate private key length
+		if len(privKeyBytes) != 32 {
+			return fmt.Errorf("invalid private key length: expected 32 bytes, got %d", len(privKeyBytes))
+		}
+
 		privKey, pubKey := btcec.PrivKeyFromBytes(privKeyBytes)
 		pubKeyHash := btcutil.Hash160(pubKey.SerializeCompressed())
 		addr, err := btcutil.NewAddressPubKeyHash(pubKeyHash, w.chainParams)
@@ -157,7 +162,13 @@ func (w *Wallet) loadKeys(wd *walletData) error {
 			return fmt.Errorf("failed to create address: %w", err)
 		}
 
-		w.keys[addr.EncodeAddress()] = &KeyPair{
+		// Verify derived address matches stored address
+		derivedAddr := addr.EncodeAddress()
+		if derivedAddr != kd.Address {
+			return fmt.Errorf("address mismatch: derived %s, stored %s", derivedAddr, kd.Address)
+		}
+
+		w.keys[derivedAddr] = &KeyPair{
 			PrivateKey: privKey,
 			PublicKey:  pubKey,
 			Address:    addr,
@@ -271,6 +282,8 @@ func (w *Wallet) GenerateKey() (string, error) {
 	}
 
 	if err := w.save(); err != nil {
+		// Rollback: remove the key from memory on save failure
+		delete(w.keys, addrStr)
 		return "", fmt.Errorf("failed to save wallet: %w", err)
 	}
 
@@ -298,7 +311,8 @@ func (w *Wallet) HasKey(address string) bool {
 	return ok
 }
 
-// GetKey returns the key pair for the given address.
+// GetKey returns a copy of the key pair for the given address.
+// Returns a copy to prevent external mutation of wallet state.
 func (w *Wallet) GetKey(address string) (*KeyPair, error) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
@@ -307,7 +321,13 @@ func (w *Wallet) GetKey(address string) (*KeyPair, error) {
 	if !ok {
 		return nil, fmt.Errorf("no key found for address: %s", address)
 	}
-	return kp, nil
+
+	// Return a copy to prevent external mutation
+	return &KeyPair{
+		PrivateKey: kp.PrivateKey,
+		PublicKey:  kp.PublicKey,
+		Address:    kp.Address,
+	}, nil
 }
 
 // EncryptWallet encrypts the wallet with a password.
@@ -699,6 +719,10 @@ func (w *Wallet) CreateNameUpdateTx(
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 
+	if feeRate < 0 {
+		return nil, fmt.Errorf("feeRate cannot be negative: %d", feeRate)
+	}
+
 	if nameUtxoIndex < 0 || nameUtxoIndex >= len(utxos) {
 		return nil, fmt.Errorf("invalid name UTXO index: %d", nameUtxoIndex)
 	}
@@ -734,7 +758,7 @@ func (w *Wallet) CreateNameUpdateTx(
 		// Keep at current address (simple value update without ownership transfer)
 		pubKeyHash = btcutil.Hash160(kp.PublicKey.SerializeCompressed())
 	}
-	
+
 	// Always send change back to the current owner's address (from wallet)
 	// This prevents accidentally sending change to the destination address during transfers
 	changeAddr := kp.Address
@@ -784,6 +808,10 @@ func CreateNameUpdateTxRaw(
 	utxos []UTXO,
 	feeRate int64,
 ) (*wire.MsgTx, error) {
+	if feeRate < 0 {
+		return nil, fmt.Errorf("feeRate cannot be negative: %d", feeRate)
+	}
+
 	// Get pubkey hash from destination address
 	var pubKeyHash []byte
 	switch addr := destAddress.(type) {
@@ -852,6 +880,10 @@ func (w *Wallet) CreateNameNewTx(
 ) (*wire.MsgTx, []byte, error) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
+
+	if feeRate < 0 {
+		return nil, nil, fmt.Errorf("feeRate cannot be negative: %d", feeRate)
+	}
 
 	if err := validateNameNewInputs(name, randBytes, utxos); err != nil {
 		return nil, nil, err
@@ -972,6 +1004,10 @@ func (w *Wallet) CreateNameFirstUpdateTx(
 ) (*wire.MsgTx, error) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
+
+	if feeRate < 0 {
+		return nil, fmt.Errorf("feeRate cannot be negative: %d", feeRate)
+	}
 
 	if err := validateNameFirstUpdateInputs(name, randHex, value, utxos, nameNewUtxoIndex); err != nil {
 		return nil, err

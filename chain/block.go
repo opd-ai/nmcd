@@ -214,7 +214,8 @@ func (b *Block) Serialize(w io.Writer) error {
 	}
 
 	// Step 2: Serialize AuxPow if present (BEFORE transactions)
-	if b.auxPow != nil {
+	// Only serialize AuxPow if both the version bit is set AND auxPow is not nil
+	if b.HasAuxPow() {
 		if err := b.auxPow.SerializeAuxPow(w); err != nil {
 			return fmt.Errorf("failed to serialize AuxPow: %w", err)
 		}
