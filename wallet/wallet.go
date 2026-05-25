@@ -719,6 +719,10 @@ func (w *Wallet) CreateNameUpdateTx(
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 
+	if feeRate < 0 {
+		return nil, fmt.Errorf("feeRate cannot be negative: %d", feeRate)
+	}
+
 	if nameUtxoIndex < 0 || nameUtxoIndex >= len(utxos) {
 		return nil, fmt.Errorf("invalid name UTXO index: %d", nameUtxoIndex)
 	}
@@ -804,6 +808,10 @@ func CreateNameUpdateTxRaw(
 	utxos []UTXO,
 	feeRate int64,
 ) (*wire.MsgTx, error) {
+	if feeRate < 0 {
+		return nil, fmt.Errorf("feeRate cannot be negative: %d", feeRate)
+	}
+
 	// Get pubkey hash from destination address
 	var pubKeyHash []byte
 	switch addr := destAddress.(type) {
@@ -872,6 +880,10 @@ func (w *Wallet) CreateNameNewTx(
 ) (*wire.MsgTx, []byte, error) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
+
+	if feeRate < 0 {
+		return nil, nil, fmt.Errorf("feeRate cannot be negative: %d", feeRate)
+	}
 
 	if err := validateNameNewInputs(name, randBytes, utxos); err != nil {
 		return nil, nil, err

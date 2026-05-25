@@ -127,7 +127,7 @@
 
 - [x] **LOW-9: GenerateKey leaves key in memory on save failure** — COMPLETED — Added rollback logic to delete key from memory map when save() fails. Prevents key from being accessible in memory but not on disk. Validated with `go test -race ./wallet/...`.
 
-- [ ] **LOW-10: Negative feeRate accepted in wallet tx builders** — `wallet/wallet.go:737-747, 795-805, 905-913` — Input Validation — Negative `feeRate` makes fee negative, potentially producing invalid overspending transactions. — **Remediation:** Reject `feeRate < 0` before fee calculation.
+- [x] **LOW-10: Negative feeRate accepted in wallet tx builders** — COMPLETED — Added validation to reject `feeRate < 0` in `CreateNameUpdateTx`, `CreateNameUpdateTxRaw`, and `CreateNameNewTx` before fee calculation. Prevents invalid transactions. Validated with `go test -race ./wallet/...`.
 
 - [ ] **LOW-11: Loadtest latency race** — `loadtest/runner.go:231-235, 249-265` — Concurrency — Result aggregation reads `latencies` slice without holding `latencyMu`. — **Remediation:** Copy slice under lock before computing stats.
 
