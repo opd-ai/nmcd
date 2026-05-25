@@ -197,7 +197,7 @@ func (ndb *NameDatabase) PutName(name string, record *NameRecord) error {
 	if record == nil {
 		return fmt.Errorf("record cannot be nil")
 	}
-	
+
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
 
@@ -397,7 +397,7 @@ func (ndb *NameDatabase) StoreExpiredName(record *NameRecord, expiredAtHeight in
 	if record == nil {
 		return fmt.Errorf("record cannot be nil")
 	}
-	
+
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
 
@@ -694,7 +694,7 @@ func (ndb *NameDatabase) AddHistory(txHash chainhash.Hash, record *NameRecord) e
 	if record == nil {
 		return fmt.Errorf("record cannot be nil")
 	}
-	
+
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
 

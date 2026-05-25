@@ -74,7 +74,7 @@ func (ndb *NameDatabase) AddUTXO(utxo *UTXO) error {
 	if utxo == nil {
 		return fmt.Errorf("utxo cannot be nil")
 	}
-	
+
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
 
@@ -110,7 +110,7 @@ func (ndb *NameDatabase) RemoveUTXO(txHash *chainhash.Hash, outIndex uint32) err
 	if txHash == nil {
 		return fmt.Errorf("txHash cannot be nil")
 	}
-	
+
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
 
@@ -151,7 +151,7 @@ func (ndb *NameDatabase) GetUTXO(txHash *chainhash.Hash, outIndex uint32) (*UTXO
 	if txHash == nil {
 		return nil, fmt.Errorf("txHash cannot be nil")
 	}
-	
+
 	ndb.mu.RLock()
 	defer ndb.mu.RUnlock()
 
@@ -177,7 +177,7 @@ func (ndb *NameDatabase) GetUTXOsForAddress(address string) ([]*UTXO, error) {
 	if address == "" {
 		return nil, fmt.Errorf("address cannot be empty")
 	}
-	
+
 	ndb.mu.RLock()
 	defer ndb.mu.RUnlock()
 
@@ -196,7 +196,7 @@ func (ndb *NameDatabase) GetUTXOsForAddress(address string) ([]*UTXO, error) {
 			if len(k) != expectedKeyLen {
 				continue
 			}
-			
+
 			// Extract txhash and outindex from the key
 			var txHash chainhash.Hash
 			copy(txHash[:], k[len(address):len(address)+txHashSize])
@@ -249,7 +249,7 @@ func (ndb *NameDatabase) StoreSpentUTXO(utxo *UTXO, spentAtHeight int32) error {
 	if utxo == nil {
 		return fmt.Errorf("utxo cannot be nil")
 	}
-	
+
 	ndb.mu.Lock()
 	defer ndb.mu.Unlock()
 
