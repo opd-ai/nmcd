@@ -732,7 +732,7 @@ func (bc *BlockChain) validateNameUpdateOp(msgTx *wire.MsgTx, txOut *wire.TxOut,
 	if err != nil {
 		return fmt.Errorf("name not found for update: %s (tx: %s)", name, txHash)
 	}
-	if record.ExpiresAt <= height {
+	if record.ExpiresAt < height {
 		return fmt.Errorf("name expired: %s (expires at block %d, current %d, tx: %s)",
 			name, record.ExpiresAt, height, txHash)
 	}
@@ -765,7 +765,7 @@ func (bc *BlockChain) validateNameUpdateOp(msgTx *wire.MsgTx, txOut *wire.TxOut,
 func (bc *BlockChain) validateNameOperations(block *btcutil.Block) error {
 	height, err := bc.determineBlockHeight(block)
 	if err != nil {
-		return nil
+		return fmt.Errorf("cannot determine block height for name validation: %w", err)
 	}
 
 	ctx := newNameValidationContext()
@@ -2085,7 +2085,7 @@ func (bc *BlockChain) validateNameNew(commitHash []byte) error {
 // validateNameFirstUpdate validates NAME_FIRSTUPDATE operations.
 func (bc *BlockChain) validateNameFirstUpdate(name, value string, extra []byte, currentHeight int32) error {
 	if existingRecord, err := bc.nameDB.GetName(name); err == nil {
-		if existingRecord.ExpiresAt > currentHeight {
+		if existingRecord.ExpiresAt >= currentHeight {
 			return fmt.Errorf("name already exists and not expired: %s (expires at block %d)",
 				name, existingRecord.ExpiresAt)
 		}
@@ -2126,7 +2126,7 @@ func (bc *BlockChain) validateNameUpdate(name, value string, tx *wire.MsgTx, cur
 	if err != nil {
 		return fmt.Errorf("name not found for update: %s", name)
 	}
-	if record.ExpiresAt <= currentHeight {
+	if record.ExpiresAt < currentHeight {
 		return fmt.Errorf("name expired: %s (expired at block %d, current %d)",
 			name, record.ExpiresAt, currentHeight)
 	}
