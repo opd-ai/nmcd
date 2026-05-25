@@ -133,7 +133,7 @@
 
 - [x] **LOW-12: getbalance/listunspent silently skip failed addresses** — COMPLETED — Added error counting and structured logging to surface partial-failure warnings in `getBalance` and `collectFilteredUTXOs`. Errors are logged with address and error details. Validated with `go test -race ./rpc/...`.
 
-- [ ] **LOW-13: Mempool validateNameFirstUpdate missing timing enforcement** — `chain/blockchain.go:1987-1991` — Logic/Mempool Policy — Mempool validation fetches `nameNewRecord` but never enforces min/max reveal timing window. — **Remediation:** Validate reveal window using `nameNewRecord.Height`.
+- [x] **LOW-13: Mempool validateNameFirstUpdate missing timing enforcement** — COMPLETED — Added validation to enforce min/max reveal timing window (12-36000 blocks) using `nameNewRecord.Height`. Prevents too-early or expired NAME_FIRSTUPDATE transactions. Validated with `go test -race ./chain/...`.
 
 - [ ] **LOW-14: Block/AuxPow serialization mismatch** — `chain/block.go:180-183, 217-220` — API Contract/Serialization — `Serialize()` writes AuxPow whenever `auxPow != nil` even if the version bit is unset. Won't round-trip with `NewBlockFromReader`. — **Remediation:** Serialize AuxPow only when `HasAuxPow()` is true.
 
