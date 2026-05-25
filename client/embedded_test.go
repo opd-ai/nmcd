@@ -305,7 +305,7 @@ func TestEmbeddedClient_ResolveExpiredName(t *testing.T) {
 }
 
 func TestEmbeddedClient_ExpiresInZero(t *testing.T) {
-	// This test addresses Gap #1 from AUDIT.md:
+	// This test addresses Gap #1 from docs/development/AUDIT.md:
 	// Verifies that names with ExpiresIn=0 (expires at current block)
 	// are treated as still valid, matching daemon mode behavior.
 
@@ -1946,7 +1946,7 @@ func mustParseHashFromString(t *testing.T, hexStr string) *chainhash.Hash {
 
 // TestEmbeddedClient_GetInfo_ConnectionCount verifies that GetInfo returns
 // the actual number of connected peers from the peer manager instead of
-// a hardcoded value. This test addresses Gap #11 from AUDIT.md.
+// a hardcoded value. This test addresses Gap #11 from docs/development/AUDIT.md.
 func TestEmbeddedClient_GetInfo_ConnectionCount(t *testing.T) {
 	// Create temporary directory for test
 	tmpDir := t.TempDir()

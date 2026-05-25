@@ -321,7 +321,7 @@ func (w *Wallet) GetKey(address string) (*KeyPair, error) {
 	if !ok {
 		return nil, fmt.Errorf("no key found for address: %s", address)
 	}
-	
+
 	// Return a copy to prevent external mutation
 	return &KeyPair{
 		PrivateKey: kp.PrivateKey,
@@ -758,7 +758,7 @@ func (w *Wallet) CreateNameUpdateTx(
 		// Keep at current address (simple value update without ownership transfer)
 		pubKeyHash = btcutil.Hash160(kp.PublicKey.SerializeCompressed())
 	}
-	
+
 	// Always send change back to the current owner's address (from wallet)
 	// This prevents accidentally sending change to the destination address during transfers
 	changeAddr := kp.Address
@@ -1004,6 +1004,10 @@ func (w *Wallet) CreateNameFirstUpdateTx(
 ) (*wire.MsgTx, error) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
+
+	if feeRate < 0 {
+		return nil, fmt.Errorf("feeRate cannot be negative: %d", feeRate)
+	}
 
 	if err := validateNameFirstUpdateInputs(name, randHex, value, utxos, nameNewUtxoIndex); err != nil {
 		return nil, err

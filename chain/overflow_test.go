@@ -8,7 +8,7 @@ import (
 )
 
 // Test_bug_8_height_overflow_in_expiration_calculation demonstrates the integer overflow
-// bug documented in AUDIT.md Issue #8. When a very large block height (close to max int32)
+// bug documented in docs/development/AUDIT.md Issue #8. When a very large block height (close to max int32)
 // is used to calculate ExpiresAt, adding NameExpirationBlocks causes int32 overflow.
 //
 // This test first demonstrates the overflow condition using int64 to avoid undefined

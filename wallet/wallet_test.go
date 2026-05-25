@@ -729,6 +729,25 @@ func TestCreateNameFirstUpdateTx(t *testing.T) {
 			errContains:    "invalid randHex",
 		},
 		{
+			name:      "negative fee rate",
+			nameToReg: "d/example",
+			randHex:   "0123456789abcdef0123456789abcdef01234567",
+			value:     "test",
+			utxos: []UTXO{
+				{
+					TxHash:   mustParseHash(t, "0000000000000000000000000000000000000000000000000000000000000001"),
+					Vout:     0,
+					Value:    2000000,
+					PkScript: mustP2PKHScript(t, kp.Address),
+					Address:  addr,
+				},
+			},
+			nameNewUtxoIdx: 0,
+			feeRate:        -1,
+			wantErr:        true,
+			errContains:    "feeRate cannot be negative",
+		},
+		{
 			name:      "insufficient funds",
 			nameToReg: "d/example",
 			randHex:   "0123456789abcdef0123456789abcdef01234567",
