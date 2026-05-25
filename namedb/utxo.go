@@ -362,9 +362,13 @@ func (ndb *NameDatabase) RestoreSpentUTXOsForBlock(height int32) error {
 				copy(txHash[:], k[4:36])
 				outIndex := binary.BigEndian.Uint32(k[36:40])
 				utxoKey := makeUTXOKey(&txHash, outIndex)
-				_ = spentBkt.Delete(utxoKey)
+				if err := spentBkt.Delete(utxoKey); err != nil {
+					return fmt.Errorf("failed to delete spent UTXO %s:%d: %w", txHash, outIndex, err)
+				}
 			}
-			_ = idxBkt.Delete(k)
+			if err := idxBkt.Delete(k); err != nil {
+				return fmt.Errorf("failed to delete spent UTXO index entry: %w", err)
+			}
 		}
 
 		return nil
@@ -408,9 +412,13 @@ func (ndb *NameDatabase) CleanupOldSpentUTXOs(keepFromHeight int32) error {
 				copy(txHash[:], k[4:36])
 				outIndex := binary.BigEndian.Uint32(k[36:40])
 				utxoKey := makeUTXOKey(&txHash, outIndex)
-				_ = spentBkt.Delete(utxoKey)
+				if err := spentBkt.Delete(utxoKey); err != nil {
+					return fmt.Errorf("failed to delete old spent UTXO %s:%d: %w", txHash, outIndex, err)
+				}
 			}
-			_ = idxBkt.Delete(k)
+			if err := idxBkt.Delete(k); err != nil {
+				return fmt.Errorf("failed to delete old spent UTXO index entry: %w", err)
+			}
 		}
 
 		return nil

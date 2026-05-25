@@ -116,12 +116,12 @@ func Init(cfg *Config) (*Logger, error) {
 
 		// Create log directory if it doesn't exist
 		logDir := filepath.Dir(cfg.Output)
-		if err := os.MkdirAll(logDir, 0o755); err != nil {
+		if err := os.MkdirAll(logDir, 0o700); err != nil {
 			return nil, err
 		}
 
 		// Open log file
-		f, err := os.OpenFile(cfg.Output, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		f, err := os.OpenFile(cfg.Output, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
 			return nil, err
 		}
