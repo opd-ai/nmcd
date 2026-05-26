@@ -200,7 +200,7 @@ The `MaxValueLengthUI` constant (520 bytes, matching Namecoin Core's `MAX_VALUE_
   - `getTransaction`: Not-found and invalid cases
   - Target: Cover error paths and edge cases
 
-- [ ] **rpc/ratelimit.go** Add rate limiting tests:
+- [x] **rpc/ratelimit.go** Add rate limiting tests:
   - Test IP extraction edge cases
   - Test rate limit exhaustion
   - Test cleanup of stale entries
