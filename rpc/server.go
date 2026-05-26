@@ -196,6 +196,9 @@ func validateValueSize(value string, reqID interface{}) *Response {
 
 // broadcastAndRespond broadcasts a transaction and returns a success or error response.
 func (s *Server) broadcastAndRespond(tx *wire.MsgTx, reqID interface{}, result map[string]interface{}) *Response {
+	if s.peerMgr == nil {
+		return errorResponse(reqID, -1, "Network not available: peer manager not initialized")
+	}
 	if err := s.peerMgr.BroadcastTx(tx); err != nil {
 		return errorResponse(reqID, -1, fmt.Sprintf("Failed to broadcast transaction: %v", err))
 	}

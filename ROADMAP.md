@@ -194,7 +194,7 @@ The `MaxValueLengthUI` constant (520 bytes, matching Namecoin Core's `MAX_VALUE_
   - Target: rpc 60.1% → 75%+
   - Validation: `go test -cover ./rpc` shows ≥75% (achieved 76.0%)
 
-- [ ] **rpc/server.go** Add unit tests for standard RPC handlers:
+- [x] **rpc/server.go** Add unit tests for standard RPC handlers:
   - `getBlock` verbose mode: Currently low coverage
   - `sendRawTransaction`: Error path tests
   - `getTransaction`: Not-found and invalid cases
