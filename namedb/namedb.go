@@ -35,6 +35,16 @@ var (
 	ErrNameNotFound = errors.New("name not found")
 )
 
+// requireBucket returns the named bucket from tx, or an error if it is nil.
+// A nil bucket indicates database corruption or a missing migration.
+func requireBucket(tx *bbolt.Tx, name []byte) (*bbolt.Bucket, error) {
+	b := tx.Bucket(name)
+	if b == nil {
+		return nil, fmt.Errorf("required bucket %q not found: database may be corrupted or requires migration", name)
+	}
+	return b, nil
+}
+
 // txHashSize is the size of a transaction hash in bytes.
 // Bitcoin/Namecoin use double SHA256 (SHA256(SHA256(data))) which produces
 // a 32-byte result, same as a single SHA256.
@@ -202,8 +212,14 @@ func (ndb *NameDatabase) PutName(name string, record *NameRecord) error {
 	defer ndb.mu.Unlock()
 
 	err := ndb.db.Update(func(tx *bbolt.Tx) error {
-		namesBucket := tx.Bucket(namesBucket)
-		expirationBucket := tx.Bucket(expirationBucket)
+		namesBucket, err := requireBucket(tx, namesBucket)
+		if err != nil {
+			return err
+		}
+		expirationBucket, err := requireBucket(tx, expirationBucket)
+		if err != nil {
+			return err
+		}
 
 		// Check if name already exists to update expiration index
 		existingData := namesBucket.Get([]byte(name))
@@ -260,7 +276,10 @@ func (ndb *NameDatabase) GetName(name string) (*NameRecord, error) {
 
 	var record *NameRecord
 	err := ndb.db.View(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket(namesBucket)
+		bucket, err := requireBucket(tx, namesBucket)
+		if err != nil {
+			return err
+		}
 		data := bucket.Get([]byte(name))
 		if data == nil {
 			return ErrNameNotFound
@@ -288,8 +307,14 @@ func (ndb *NameDatabase) DeleteName(name string) error {
 	defer ndb.mu.Unlock()
 
 	err := ndb.db.Update(func(tx *bbolt.Tx) error {
-		namesBucket := tx.Bucket(namesBucket)
-		expirationBucket := tx.Bucket(expirationBucket)
+		namesBucket, err := requireBucket(tx, namesBucket)
+		if err != nil {
+			return err
+		}
+		expirationBucket, err := requireBucket(tx, expirationBucket)
+		if err != nil {
+			return err
+		}
 
 		// Get existing record to remove from expiration index
 		existingData := namesBucket.Get([]byte(name))
@@ -321,8 +346,14 @@ func (ndb *NameDatabase) DeleteHistory(name string) error {
 	defer ndb.mu.Unlock()
 
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
-		indexBucket := tx.Bucket(historyIndexBucket)
-		histBucket := tx.Bucket(historyBucket)
+		indexBucket, err := requireBucket(tx, historyIndexBucket)
+		if err != nil {
+			return err
+		}
+		histBucket, err := requireBucket(tx, historyBucket)
+		if err != nil {
+			return err
+		}
 
 		// Get the list of txHashes from the index
 		indexData := indexBucket.Get([]byte(name))
@@ -358,7 +389,10 @@ func (ndb *NameDatabase) GetExpiredNames(height int32) ([]string, error) {
 
 	var expired []string
 	err := ndb.db.View(func(tx *bbolt.Tx) error {
-		expirationBucket := tx.Bucket(expirationBucket)
+		expirationBucket, err := requireBucket(tx, expirationBucket)
+		if err != nil {
+			return err
+		}
 
 		// Use cursor to scan expiration index up to the given height
 		c := expirationBucket.Cursor()
@@ -402,10 +436,22 @@ func (ndb *NameDatabase) StoreExpiredName(record *NameRecord, expiredAtHeight in
 	defer ndb.mu.Unlock()
 
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
-		expiredBkt := tx.Bucket(expiredNamesBucket)
-		idxBkt := tx.Bucket(expiredNamesIdxBucket)
-		expiredHistBkt := tx.Bucket(expiredHistBucket)
-		expiredHistIdxBkt := tx.Bucket(expiredHistIdxBucket)
+		expiredBkt, err := requireBucket(tx, expiredNamesBucket)
+		if err != nil {
+			return err
+		}
+		idxBkt, err := requireBucket(tx, expiredNamesIdxBucket)
+		if err != nil {
+			return err
+		}
+		expiredHistBkt, err := requireBucket(tx, expiredHistBucket)
+		if err != nil {
+			return err
+		}
+		expiredHistIdxBkt, err := requireBucket(tx, expiredHistIdxBucket)
+		if err != nil {
+			return err
+		}
 
 		// Build the height+name composite key used by both the name bucket and the index.
 		nameBytes := []byte(record.Name)
@@ -425,8 +471,14 @@ func (ndb *NameDatabase) StoreExpiredName(record *NameRecord, expiredAtHeight in
 		}
 
 		// Backup the history for this name so it can be restored on reorg.
-		histIdxBkt := tx.Bucket(historyIndexBucket)
-		histBkt := tx.Bucket(historyBucket)
+		histIdxBkt, err := requireBucket(tx, historyIndexBucket)
+		if err != nil {
+			return err
+		}
+		histBkt, err := requireBucket(tx, historyBucket)
+		if err != nil {
+			return err
+		}
 
 		txHashList := histIdxBkt.Get(nameBytes)
 		if len(txHashList) > 0 {
@@ -465,14 +517,38 @@ func (ndb *NameDatabase) RestoreExpiredNamesForBlock(height int32) error {
 	defer ndb.mu.Unlock()
 
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
-		namesBkt := tx.Bucket(namesBucket)
-		expirationBkt := tx.Bucket(expirationBucket)
-		expiredBkt := tx.Bucket(expiredNamesBucket)
-		idxBkt := tx.Bucket(expiredNamesIdxBucket)
-		expiredHistBkt := tx.Bucket(expiredHistBucket)
-		expiredHistIdxBkt := tx.Bucket(expiredHistIdxBucket)
-		histBkt := tx.Bucket(historyBucket)
-		histIdxBkt := tx.Bucket(historyIndexBucket)
+		namesBkt, err := requireBucket(tx, namesBucket)
+		if err != nil {
+			return err
+		}
+		expirationBkt, err := requireBucket(tx, expirationBucket)
+		if err != nil {
+			return err
+		}
+		expiredBkt, err := requireBucket(tx, expiredNamesBucket)
+		if err != nil {
+			return err
+		}
+		idxBkt, err := requireBucket(tx, expiredNamesIdxBucket)
+		if err != nil {
+			return err
+		}
+		expiredHistBkt, err := requireBucket(tx, expiredHistBucket)
+		if err != nil {
+			return err
+		}
+		expiredHistIdxBkt, err := requireBucket(tx, expiredHistIdxBucket)
+		if err != nil {
+			return err
+		}
+		histBkt, err := requireBucket(tx, historyBucket)
+		if err != nil {
+			return err
+		}
+		histIdxBkt, err := requireBucket(tx, historyIndexBucket)
+		if err != nil {
+			return err
+		}
 
 		// Find all names expired at this height using the index.
 		heightPrefix := make([]byte, 4)
@@ -568,10 +644,22 @@ func (ndb *NameDatabase) CleanupOldExpiredNames(keepFromHeight int32) error {
 	defer ndb.mu.Unlock()
 
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
-		expiredBkt := tx.Bucket(expiredNamesBucket)
-		idxBkt := tx.Bucket(expiredNamesIdxBucket)
-		expiredHistBkt := tx.Bucket(expiredHistBucket)
-		expiredHistIdxBkt := tx.Bucket(expiredHistIdxBucket)
+		expiredBkt, err := requireBucket(tx, expiredNamesBucket)
+		if err != nil {
+			return err
+		}
+		idxBkt, err := requireBucket(tx, expiredNamesIdxBucket)
+		if err != nil {
+			return err
+		}
+		expiredHistBkt, err := requireBucket(tx, expiredHistBucket)
+		if err != nil {
+			return err
+		}
+		expiredHistIdxBkt, err := requireBucket(tx, expiredHistIdxBucket)
+		if err != nil {
+			return err
+		}
 
 		c := idxBkt.Cursor()
 		var keysToDelete [][]byte
@@ -623,7 +711,10 @@ func (ndb *NameDatabase) ListNames() ([]*NameRecord, error) {
 
 	var names []*NameRecord
 	err := ndb.db.View(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket(namesBucket)
+		bucket, err := requireBucket(tx, namesBucket)
+		if err != nil {
+			return err
+		}
 		c := bucket.Cursor()
 		for k, v := c.First(); k != nil; k, v = c.Next() {
 			record, decodeErr := decodeNameRecord(v)
@@ -700,7 +791,10 @@ func (ndb *NameDatabase) AddHistory(txHash chainhash.Hash, record *NameRecord) e
 
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
 		// Store the history record keyed by txHash
-		histBucket := tx.Bucket(historyBucket)
+		histBucket, err := requireBucket(tx, historyBucket)
+		if err != nil {
+			return err
+		}
 		data := encodeNameRecord(record)
 		if err := histBucket.Put(txHash[:], data); err != nil {
 			return err
@@ -708,7 +802,10 @@ func (ndb *NameDatabase) AddHistory(txHash chainhash.Hash, record *NameRecord) e
 
 		// Update the name-to-history index
 		// The index stores a list of txHashes for each name
-		indexBucket := tx.Bucket(historyIndexBucket)
+		indexBucket, err := requireBucket(tx, historyIndexBucket)
+		if err != nil {
+			return err
+		}
 		nameKey := []byte(record.Name)
 		existing := indexBucket.Get(nameKey)
 
@@ -728,7 +825,10 @@ func (ndb *NameDatabase) GetHistory(name string) ([]*NameRecord, error) {
 	var records []*NameRecord
 	err := ndb.db.View(func(tx *bbolt.Tx) error {
 		// Get the list of txHashes from the index
-		indexBucket := tx.Bucket(historyIndexBucket)
+		indexBucket, err := requireBucket(tx, historyIndexBucket)
+		if err != nil {
+			return err
+		}
 		indexData := indexBucket.Get([]byte(name))
 		if indexData == nil {
 			return nil // No history for this name
@@ -738,7 +838,10 @@ func (ndb *NameDatabase) GetHistory(name string) ([]*NameRecord, error) {
 			return fmt.Errorf("corrupt history index for name: %s", name)
 		}
 
-		histBucket := tx.Bucket(historyBucket)
+		histBucket, err := requireBucket(tx, historyBucket)
+		if err != nil {
+			return err
+		}
 		for i := 0; i < len(indexData); i += txHashSize {
 			txHashBytes := indexData[i : i+txHashSize]
 			data := histBucket.Get(txHashBytes)
@@ -774,7 +877,10 @@ func (ndb *NameDatabase) PutNameNew(commitHash []byte, height int32) error {
 	defer ndb.mu.Unlock()
 
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket(nameNewBucket)
+		bucket, err := requireBucket(tx, nameNewBucket)
+		if err != nil {
+			return err
+		}
 		// Check if commitment already exists to prevent replacement attacks
 		if bucket.Get(commitHash) != nil {
 			return fmt.Errorf("name_new commitment already exists")
@@ -797,7 +903,10 @@ func (ndb *NameDatabase) RestoreNameNew(commitHash []byte, height int32) error {
 	defer ndb.mu.Unlock()
 
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket(nameNewBucket)
+		bucket, err := requireBucket(tx, nameNewBucket)
+		if err != nil {
+			return err
+		}
 		// Store height as 4-byte little-endian (overwriting if exists)
 		data := make([]byte, 4)
 		binary.LittleEndian.PutUint32(data, uint32(height))
@@ -813,7 +922,10 @@ func (ndb *NameDatabase) GetNameNew(commitHash []byte) (*NameNewRecord, error) {
 
 	var record *NameNewRecord
 	err := ndb.db.View(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket(nameNewBucket)
+		bucket, err := requireBucket(tx, nameNewBucket)
+		if err != nil {
+			return err
+		}
 		data := bucket.Get(commitHash)
 		if data == nil {
 			return fmt.Errorf("name_new commitment not found")
@@ -844,7 +956,10 @@ func (ndb *NameDatabase) DeleteNameNew(commitHash []byte) error {
 	defer ndb.mu.Unlock()
 
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket(nameNewBucket)
+		bucket, err := requireBucket(tx, nameNewBucket)
+		if err != nil {
+			return err
+		}
 		return bucket.Delete(commitHash)
 	})
 }
@@ -859,8 +974,14 @@ func (ndb *NameDatabase) RemoveLastHistoryEntry(name string) (*NameRecord, error
 
 	var prevRecord *NameRecord
 	err := ndb.db.Update(func(tx *bbolt.Tx) error {
-		indexBucket := tx.Bucket(historyIndexBucket)
-		histBucket := tx.Bucket(historyBucket)
+		indexBucket, err := requireBucket(tx, historyIndexBucket)
+		if err != nil {
+			return err
+		}
+		histBucket, err := requireBucket(tx, historyBucket)
+		if err != nil {
+			return err
+		}
 
 		indexData := indexBucket.Get([]byte(name))
 		if len(indexData) == 0 {
@@ -875,7 +996,6 @@ func (ndb *NameDatabase) RemoveLastHistoryEntry(name string) (*NameRecord, error
 			return err
 		}
 
-		var err error
 		prevRecord, err = truncateHistoryIndex(indexBucket, histBucket, name, indexData)
 		return err
 	})

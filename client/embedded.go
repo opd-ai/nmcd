@@ -192,8 +192,10 @@ func initWallet(cfg *Config, chainParams *chaincfg.Params) (*wallet.Wallet, erro
 }
 
 // resolveBootstrapPeers determines bootstrap peers from config or DNS seeds.
+// If BootstrapPeers is provided, they are used directly.
+// MaxPeers == 0 is honoured at the peer-manager level, not here.
 func resolveBootstrapPeers(cfg *Config) []string {
-	if len(cfg.BootstrapPeers) > 0 || cfg.MaxPeers == 0 {
+	if len(cfg.BootstrapPeers) > 0 {
 		return cfg.BootstrapPeers
 	}
 	dnsSeeds := config.DNSSeeds(cfg.Network)

@@ -79,8 +79,14 @@ func (ndb *NameDatabase) AddUTXO(utxo *UTXO) error {
 	defer ndb.mu.Unlock()
 
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
-		utxoBkt := tx.Bucket(utxoBucket)
-		addrBkt := tx.Bucket(utxoAddrBucket)
+		utxoBkt, err := requireBucket(tx, utxoBucket)
+		if err != nil {
+			return err
+		}
+		addrBkt, err := requireBucket(tx, utxoAddrBucket)
+		if err != nil {
+			return err
+		}
 
 		// Encode UTXO
 		data, err := encodeUTXO(utxo)
@@ -115,8 +121,14 @@ func (ndb *NameDatabase) RemoveUTXO(txHash *chainhash.Hash, outIndex uint32) err
 	defer ndb.mu.Unlock()
 
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
-		utxoBkt := tx.Bucket(utxoBucket)
-		addrBkt := tx.Bucket(utxoAddrBucket)
+		utxoBkt, err := requireBucket(tx, utxoBucket)
+		if err != nil {
+			return err
+		}
+		addrBkt, err := requireBucket(tx, utxoAddrBucket)
+		if err != nil {
+			return err
+		}
 
 		key := makeUTXOKey(txHash, outIndex)
 
@@ -157,14 +169,16 @@ func (ndb *NameDatabase) GetUTXO(txHash *chainhash.Hash, outIndex uint32) (*UTXO
 
 	var utxo *UTXO
 	err := ndb.db.View(func(tx *bbolt.Tx) error {
-		utxoBkt := tx.Bucket(utxoBucket)
+		utxoBkt, err := requireBucket(tx, utxoBucket)
+		if err != nil {
+			return err
+		}
 		key := makeUTXOKey(txHash, outIndex)
 		data := utxoBkt.Get(key)
 		if data == nil {
 			return fmt.Errorf("UTXO not found: %s:%d", txHash, outIndex)
 		}
 
-		var err error
 		utxo, err = decodeUTXO(txHash, outIndex, data)
 		return err
 	})
@@ -183,8 +197,14 @@ func (ndb *NameDatabase) GetUTXOsForAddress(address string) ([]*UTXO, error) {
 
 	var utxos []*UTXO
 	err := ndb.db.View(func(tx *bbolt.Tx) error {
-		utxoBkt := tx.Bucket(utxoBucket)
-		addrBkt := tx.Bucket(utxoAddrBucket)
+		utxoBkt, err := requireBucket(tx, utxoBucket)
+		if err != nil {
+			return err
+		}
+		addrBkt, err := requireBucket(tx, utxoAddrBucket)
+		if err != nil {
+			return err
+		}
 
 		// Seek to the address prefix
 		prefix := []byte(address)
@@ -254,8 +274,14 @@ func (ndb *NameDatabase) StoreSpentUTXO(utxo *UTXO, spentAtHeight int32) error {
 	defer ndb.mu.Unlock()
 
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
-		spentBkt := tx.Bucket(spentUtxoBucket)
-		idxBkt := tx.Bucket(spentUtxoIdxBucket)
+		spentBkt, err := requireBucket(tx, spentUtxoBucket)
+		if err != nil {
+			return err
+		}
+		idxBkt, err := requireBucket(tx, spentUtxoIdxBucket)
+		if err != nil {
+			return err
+		}
 
 		// Encode UTXO
 		data, err := encodeUTXO(utxo)
@@ -289,10 +315,22 @@ func (ndb *NameDatabase) RestoreSpentUTXOsForBlock(height int32) error {
 	defer ndb.mu.Unlock()
 
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
-		spentBkt := tx.Bucket(spentUtxoBucket)
-		idxBkt := tx.Bucket(spentUtxoIdxBucket)
-		utxoBkt := tx.Bucket(utxoBucket)
-		addrBkt := tx.Bucket(utxoAddrBucket)
+		spentBkt, err := requireBucket(tx, spentUtxoBucket)
+		if err != nil {
+			return err
+		}
+		idxBkt, err := requireBucket(tx, spentUtxoIdxBucket)
+		if err != nil {
+			return err
+		}
+		utxoBkt, err := requireBucket(tx, utxoBucket)
+		if err != nil {
+			return err
+		}
+		addrBkt, err := requireBucket(tx, utxoAddrBucket)
+		if err != nil {
+			return err
+		}
 
 		// Seek to height prefix in index
 		heightPrefix := make([]byte, 4)
@@ -383,8 +421,14 @@ func (ndb *NameDatabase) CleanupOldSpentUTXOs(keepFromHeight int32) error {
 	defer ndb.mu.Unlock()
 
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
-		spentBkt := tx.Bucket(spentUtxoBucket)
-		idxBkt := tx.Bucket(spentUtxoIdxBucket)
+		spentBkt, err := requireBucket(tx, spentUtxoBucket)
+		if err != nil {
+			return err
+		}
+		idxBkt, err := requireBucket(tx, spentUtxoIdxBucket)
+		if err != nil {
+			return err
+		}
 
 		c := idxBkt.Cursor()
 		var keysToDelete [][]byte

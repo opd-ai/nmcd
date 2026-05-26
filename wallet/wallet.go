@@ -311,8 +311,9 @@ func (w *Wallet) HasKey(address string) bool {
 	return ok
 }
 
-// GetKey returns a copy of the key pair for the given address.
-// Returns a copy to prevent external mutation of wallet state.
+// GetKey returns a shallow copy of the key pair for the given address.
+// The struct fields are copied but PrivateKey and PublicKey share the same
+// underlying pointers as the wallet's internal map. Do not mutate the key objects.
 func (w *Wallet) GetKey(address string) (*KeyPair, error) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
@@ -322,7 +323,7 @@ func (w *Wallet) GetKey(address string) (*KeyPair, error) {
 		return nil, fmt.Errorf("no key found for address: %s", address)
 	}
 
-	// Return a copy to prevent external mutation
+	// Return a shallow copy; the key pointers are shared. Callers must not mutate them.
 	return &KeyPair{
 		PrivateKey: kp.PrivateKey,
 		PublicKey:  kp.PublicKey,

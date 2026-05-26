@@ -5,7 +5,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -202,9 +201,7 @@ func hashPassword(password []byte, salt []byte) []byte {
 	// N=16384 is strong enough to resist brute-force when combined with a unique salt
 	hash, err := scrypt.Key(password, salt, 16384, 8, 1, 32)
 	if err != nil {
-		// Fallback to SHA-256 if scrypt fails (should never happen)
-		h := sha256.Sum256(append(salt, password...))
-		return h[:]
+		panic(fmt.Sprintf("scrypt password hashing failed with fixed parameters: %v", err))
 	}
 	return hash
 }

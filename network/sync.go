@@ -108,6 +108,9 @@ func (sm *SyncManager) syncTick() {
 
 // startSync begins syncing from the specified peer
 func (sm *SyncManager) startSync(p *peer.Peer) {
+	if p == nil {
+		return
+	}
 	sm.syncPeer = p
 	log.Printf("Starting sync with peer %s (height: %d)", p.Addr(), sm.bestHeight)
 

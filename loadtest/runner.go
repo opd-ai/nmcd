@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"sort"
 	"sync"
@@ -264,8 +265,17 @@ func populateLoadTestResult(result *TestResult, counters *loadTestCounters, dura
 
 	if len(latenciesCopy) >= 20 {
 		sort.Slice(latenciesCopy, func(i, j int) bool { return latenciesCopy[i] < latenciesCopy[j] })
-		result.P95Latency = latenciesCopy[int(float64(len(latenciesCopy))*0.95)]
-		result.P99Latency = latenciesCopy[int(float64(len(latenciesCopy))*0.99)]
+		n := len(latenciesCopy)
+		p95idx := int(math.Ceil(float64(n)*0.95)) - 1
+		if p95idx >= n {
+			p95idx = n - 1
+		}
+		p99idx := int(math.Ceil(float64(n)*0.99)) - 1
+		if p99idx >= n {
+			p99idx = n - 1
+		}
+		result.P95Latency = latenciesCopy[p95idx]
+		result.P99Latency = latenciesCopy[p99idx]
 	}
 }
 

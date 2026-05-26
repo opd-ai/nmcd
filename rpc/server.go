@@ -317,13 +317,15 @@ func (s *Server) withPanicRecovery(handler http.HandlerFunc) http.HandlerFunc {
 		defer func() {
 			if err := recover(); err != nil {
 				// Log the panic with full context
-				s.logger.Error("panic recovered in HTTP handler",
-					"error", err,
-					"method", r.Method,
-					"path", r.URL.Path,
-					"remote_addr", r.RemoteAddr,
-					"stack", string(debug.Stack()),
-				)
+				if s.logger != nil {
+					s.logger.Error("panic recovered in HTTP handler",
+						"error", err,
+						"method", r.Method,
+						"path", r.URL.Path,
+						"remote_addr", r.RemoteAddr,
+						"stack", string(debug.Stack()),
+					)
+				}
 
 				// Record error metric
 				metrics.Get().RecordValidationError("panic")
@@ -1624,9 +1626,11 @@ func (s *Server) getBalance(req *Request) *Response {
 		utxos, err := s.blockchain.GetUTXOsForAddress(addr)
 		if err != nil {
 			errorCount++
-			s.logger.Warn("failed to get UTXOs for address",
-				"address", addr,
-				"error", err)
+			if s.logger != nil {
+				s.logger.Warn("failed to get UTXOs for address",
+					"address", addr,
+					"error", err)
+			}
 			continue // Skip addresses with errors
 		}
 		for _, utxo := range utxos {
@@ -1635,8 +1639,10 @@ func (s *Server) getBalance(req *Request) *Response {
 	}
 
 	if errorCount > 0 {
-		s.logger.Warn("getbalance returned incomplete results",
-			"skipped_addresses", errorCount)
+		if s.logger != nil {
+			s.logger.Warn("getbalance returned incomplete results",
+				"skipped_addresses", errorCount)
+		}
 	}
 
 	// Convert satoshis to NMC (1 NMC = 100,000,000 satoshis)
@@ -1750,9 +1756,11 @@ func (s *Server) collectFilteredUTXOs(addresses []string, minConf, maxConf int) 
 		utxos, err := s.blockchain.GetUTXOsForAddress(addr)
 		if err != nil {
 			errorCount++
-			s.logger.Warn("failed to get UTXOs for address",
-				"address", addr,
-				"error", err)
+			if s.logger != nil {
+				s.logger.Warn("failed to get UTXOs for address",
+					"address", addr,
+					"error", err)
+			}
 			continue
 		}
 
@@ -1764,8 +1772,10 @@ func (s *Server) collectFilteredUTXOs(addresses []string, minConf, maxConf int) 
 	}
 
 	if errorCount > 0 {
-		s.logger.Warn("listunspent returned incomplete results",
-			"skipped_addresses", errorCount)
+		if s.logger != nil {
+			s.logger.Warn("listunspent returned incomplete results",
+				"skipped_addresses", errorCount)
+		}
 	}
 
 	if result == nil {

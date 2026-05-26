@@ -1452,19 +1452,15 @@ func parseNameScriptFull(script []byte) (namedb.NameOperation, string, string, [
 
 	case opNameFirstUpdate:
 		// NAME_FIRSTUPDATE: OP_NAME_FIRSTUPDATE <name> <rand> <value> OP_2DROP OP_2DROP <P2PKH>
-		offset := 1
-
-		nameBytes, newOffset, err := readPushDataWithError(script, offset, "name")
+		nameBytes, offset, err := readPushDataWithError(script, 1, "name")
 		if err != nil {
 			return 0, "", "", nil, err
 		}
-		offset = newOffset
 
-		rand, newOffset, err := readPushDataWithError(script, offset, "rand")
+		rand, offset, err := readPushDataWithError(script, offset, "rand")
 		if err != nil {
 			return 0, "", "", nil, err
 		}
-		offset = newOffset
 
 		valueBytes, newOffset, err := readPushDataWithError(script, offset, "value")
 		if err != nil {
@@ -1479,23 +1475,12 @@ func parseNameScriptFull(script []byte) (namedb.NameOperation, string, string, [
 
 	case opNameUpdate:
 		// NAME_UPDATE: OP_NAME_UPDATE <name> <value> OP_2DROP OP_DROP <P2PKH>
-		offset := 1
-
-		nameBytes, newOffset, err := readPushDataWithError(script, offset, "name")
+		var err error
+		name, value, dataEndOffset, err = parseNameValue(script, 1)
 		if err != nil {
 			return 0, "", "", nil, err
 		}
-		offset = newOffset
-
-		valueBytes, newOffset, err := readPushDataWithError(script, offset, "value")
-		if err != nil {
-			return 0, "", "", nil, err
-		}
-
 		opType = namedb.NameUpdate
-		name = string(nameBytes)
-		value = string(valueBytes)
-		dataEndOffset = newOffset
 
 	default:
 		return 0, "", "", nil, fmt.Errorf("not a name operation")
@@ -1508,6 +1493,20 @@ func parseNameScriptFull(script []byte) (namedb.NameOperation, string, string, [
 	}
 
 	return opType, name, value, extra, nil
+}
+
+// parseNameValue reads the name and value push-data fields from a name-operation script
+// starting at startOffset. Returns the field strings and the offset after both fields.
+func parseNameValue(script []byte, startOffset int) (name, value string, offset int, err error) {
+	nameBytes, newOffset, readErr := readPushDataWithError(script, startOffset, "name")
+	if readErr != nil {
+		return "", "", 0, readErr
+	}
+	valueBytes, finalOffset, readErr := readPushDataWithError(script, newOffset, "value")
+	if readErr != nil {
+		return "", "", 0, readErr
+	}
+	return string(nameBytes), string(valueBytes), finalOffset, nil
 }
 
 // skipPushDataFields skips the specified number of push data fields in the script.

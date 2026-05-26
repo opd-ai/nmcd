@@ -163,8 +163,14 @@ func (bw *BatchWriter) writeNames(tx *bbolt.Tx) error {
 		return nil
 	}
 
-	namesBucket := tx.Bucket(namesBucket)
-	expirationBucket := tx.Bucket(expirationBucket)
+	namesBucket, err := requireBucket(tx, namesBucket)
+	if err != nil {
+		return err
+	}
+	expirationBucket, err := requireBucket(tx, expirationBucket)
+	if err != nil {
+		return err
+	}
 
 	for name, record := range bw.names {
 		if err := bw.updateExpirationIndex(namesBucket, expirationBucket, name); err != nil {
@@ -203,8 +209,14 @@ func (bw *BatchWriter) deleteNames(tx *bbolt.Tx) error {
 		return nil
 	}
 
-	namesBucket := tx.Bucket(namesBucket)
-	expirationBucket := tx.Bucket(expirationBucket)
+	namesBucket, err := requireBucket(tx, namesBucket)
+	if err != nil {
+		return err
+	}
+	expirationBucket, err := requireBucket(tx, expirationBucket)
+	if err != nil {
+		return err
+	}
 
 	for name := range bw.deletedNames {
 		if err := bw.removeExpirationIndex(namesBucket, expirationBucket, name); err != nil {
@@ -237,8 +249,14 @@ func (bw *BatchWriter) writeHistory(tx *bbolt.Tx) error {
 		return nil
 	}
 
-	histBucket := tx.Bucket(historyBucket)
-	indexBucket := tx.Bucket(historyIndexBucket)
+	histBucket, err := requireBucket(tx, historyBucket)
+	if err != nil {
+		return err
+	}
+	indexBucket, err := requireBucket(tx, historyIndexBucket)
+	if err != nil {
+		return err
+	}
 
 	for txHash, record := range bw.history {
 		data := encodeNameRecord(record)
@@ -262,7 +280,10 @@ func (bw *BatchWriter) writeNameNews(tx *bbolt.Tx) error {
 		return nil
 	}
 
-	bucket := tx.Bucket(nameNewBucket)
+	bucket, err := requireBucket(tx, nameNewBucket)
+	if err != nil {
+		return err
+	}
 	for _, entry := range bw.nameNews {
 		data := make([]byte, 4)
 		binary.LittleEndian.PutUint32(data, uint32(entry.height))
@@ -279,8 +300,14 @@ func (bw *BatchWriter) writeUTXOs(tx *bbolt.Tx) error {
 		return nil
 	}
 
-	utxoBucket := tx.Bucket(utxoBucket)
-	utxoAddrBucket := tx.Bucket(utxoAddrBucket)
+	utxoBucket, err := requireBucket(tx, utxoBucket)
+	if err != nil {
+		return err
+	}
+	utxoAddrBucket, err := requireBucket(tx, utxoAddrBucket)
+	if err != nil {
+		return err
+	}
 
 	for _, utxo := range bw.utxos {
 		data, err := encodeUTXO(utxo)
@@ -318,8 +345,14 @@ func (bw *BatchWriter) deleteUTXOs(tx *bbolt.Tx) error {
 		return nil
 	}
 
-	utxoBucket := tx.Bucket(utxoBucket)
-	utxoAddrBucket := tx.Bucket(utxoAddrBucket)
+	utxoBucket, err := requireBucket(tx, utxoBucket)
+	if err != nil {
+		return err
+	}
+	utxoAddrBucket, err := requireBucket(tx, utxoAddrBucket)
+	if err != nil {
+		return err
+	}
 
 	for _, uk := range bw.deletedUTXOs {
 		if err := bw.removeUTXOFromAddressIndex(utxoBucket, utxoAddrBucket, uk); err != nil {
