@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/opd-ai/nmcd/client"
+	"github.com/opd-ai/nmcd/examples/shared"
 )
 
 func main() {
@@ -155,18 +156,8 @@ func handleUpdateError(err error) {
 }
 
 func printUpdateResult(result *client.TxResult) {
-	fmt.Println("\n✓ Update transaction created!")
-	fmt.Println("\nTransaction Result:")
-	fmt.Printf("  TX Hash:  %s\n", result.TxHash)
-	fmt.Printf("  Name:     %s\n", result.Name)
-	fmt.Printf("  Status:   %s\n", result.Status)
-
-	if result.Status == client.TxStatusPending {
-		fmt.Println("\nNote: Transaction is pending. Once confirmed:")
-		fmt.Println("  - The name's value will be updated")
-		fmt.Println("  - The expiration will be extended by 36,000 blocks (~250 days)")
-	} else if result.Status == client.TxStatusConfirmed {
-		fmt.Printf("  Block:    %d\n", result.BlockHeight)
-		fmt.Printf("  Confirms: %d\n", result.Confirmations)
-	}
+	shared.PrintTxResult(result,
+		"✓ Update transaction created!",
+		"Note: Transaction is pending. Once confirmed:\n  - The name's value will be updated\n  - The expiration will be extended by 36,000 blocks (~250 days)",
+	)
 }

@@ -74,7 +74,7 @@ func (rl *rateLimiter) allow(ip string) bool {
 
 	// Get or create bucket for this IP
 	elem, exists := rl.buckets[ip]
-	var b *bucket
+	var bkt *bucket
 
 	if !exists {
 		// Before creating a new bucket, check if we're at capacity
@@ -83,40 +83,40 @@ func (rl *rateLimiter) allow(ip string) bool {
 			rl.evictOldestBucketLocked()
 		}
 
-		b = &bucket{
+		bkt = &bucket{
 			tokens:     float64(rl.rate),
 			lastRefill: now,
 			lastUsed:   now,
 		}
 
 		// Add to LRU list (most recently used = front)
-		entry := &bucketEntry{ip: ip, bucket: b}
+		entry := &bucketEntry{ip: ip, bucket: bkt}
 		elem = rl.lruList.PushFront(entry)
 		rl.buckets[ip] = elem
 	} else {
 		// Move to front (most recently used)
 		rl.lruList.MoveToFront(elem)
 		entry := elem.Value.(*bucketEntry)
-		b = entry.bucket
+		bkt = entry.bucket
 	}
 
 	// Refill tokens based on elapsed time
-	elapsed := now.Sub(b.lastRefill)
+	elapsed := now.Sub(bkt.lastRefill)
 	tokensToAdd := elapsed.Minutes() * float64(rl.rate)
 	if tokensToAdd > 0 {
-		b.tokens += tokensToAdd
-		if b.tokens > float64(rl.rate) {
-			b.tokens = float64(rl.rate)
+		bkt.tokens += tokensToAdd
+		if bkt.tokens > float64(rl.rate) {
+			bkt.tokens = float64(rl.rate)
 		}
 	}
 
 	// Always update lastRefill when tokens are added or consumed
-	b.lastRefill = now
-	b.lastUsed = now
+	bkt.lastRefill = now
+	bkt.lastUsed = now
 
 	// Check if request can be allowed
-	if b.tokens >= 1.0 {
-		b.tokens -= 1.0
+	if bkt.tokens >= 1.0 {
+		bkt.tokens -= 1.0
 		return true
 	}
 

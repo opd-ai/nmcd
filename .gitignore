@@ -10,6 +10,7 @@
 /nmcd
 /permamail
 /loadtest-tool
+/smtp_relay
 
 # Example binaries (built from examples/)
 /simple_resolve
@@ -66,3 +67,4 @@ post-cleanup.json
 *-baseline.json
 *-post.json
 diff-report*.json
+/tmp

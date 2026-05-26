@@ -43,7 +43,7 @@ func TestEncryptDecrypt(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Encrypt
-			encrypted, err := encrypt([]byte(tt.plaintext), tt.password)
+			encrypted, err := encrypt([]byte(tt.plaintext), []byte(tt.password))
 			if err != nil {
 				t.Fatalf("encrypt() error = %v", err)
 			}
@@ -60,7 +60,7 @@ func TestEncryptDecrypt(t *testing.T) {
 			}
 
 			// Decrypt
-			decrypted, err := decrypt(encrypted, tt.password)
+			decrypted, err := decrypt(encrypted, []byte(tt.password))
 			if err != nil {
 				t.Fatalf("decrypt() error = %v", err)
 			}
@@ -78,13 +78,13 @@ func TestDecryptWrongPassword(t *testing.T) {
 	correctPassword := "CorrectPassword123"
 	wrongPassword := "WrongPassword456"
 
-	encrypted, err := encrypt(plaintext, correctPassword)
+	encrypted, err := encrypt(plaintext, []byte(correctPassword))
 	if err != nil {
 		t.Fatalf("encrypt() error = %v", err)
 	}
 
 	// Try to decrypt with wrong password
-	_, err = decrypt(encrypted, wrongPassword)
+	_, err = decrypt(encrypted, []byte(wrongPassword))
 	if err == nil {
 		t.Error("decrypt() with wrong password should fail")
 	}
@@ -92,14 +92,14 @@ func TestDecryptWrongPassword(t *testing.T) {
 
 func TestEncryptEmptyPassword(t *testing.T) {
 	plaintext := []byte("data")
-	_, err := encrypt(plaintext, "")
+	_, err := encrypt(plaintext, []byte(""))
 	if err == nil {
 		t.Error("encrypt() with empty password should fail")
 	}
 }
 
 func TestDecryptNilData(t *testing.T) {
-	_, err := decrypt(nil, "password")
+	_, err := decrypt(nil, []byte("password"))
 	if err == nil {
 		t.Error("decrypt() with nil data should fail")
 	}
@@ -110,12 +110,12 @@ func TestEncryptionUniqueness(t *testing.T) {
 	plaintext := []byte("test data")
 	password := "TestPassword123"
 
-	encrypted1, err := encrypt(plaintext, password)
+	encrypted1, err := encrypt(plaintext, []byte(password))
 	if err != nil {
 		t.Fatalf("encrypt() error = %v", err)
 	}
 
-	encrypted2, err := encrypt(plaintext, password)
+	encrypted2, err := encrypt(plaintext, []byte(password))
 	if err != nil {
 		t.Fatalf("encrypt() error = %v", err)
 	}
@@ -220,12 +220,12 @@ func TestDeriveKeyConsistency(t *testing.T) {
 	salt := make([]byte, saltLen)
 	rand.Read(salt)
 
-	key1, err := deriveKey(password, salt)
+	key1, err := deriveKey([]byte(password), salt)
 	if err != nil {
 		t.Fatalf("deriveKey() error = %v", err)
 	}
 
-	key2, err := deriveKey(password, salt)
+	key2, err := deriveKey([]byte(password), salt)
 	if err != nil {
 		t.Fatalf("deriveKey() error = %v", err)
 	}
@@ -238,7 +238,7 @@ func TestDeriveKeyConsistency(t *testing.T) {
 	salt2 := make([]byte, saltLen)
 	rand.Read(salt2)
 
-	key3, err := deriveKey(password, salt2)
+	key3, err := deriveKey([]byte(password), salt2)
 	if err != nil {
 		t.Fatalf("deriveKey() error = %v", err)
 	}
@@ -252,8 +252,8 @@ func TestHashPassword(t *testing.T) {
 	password := "TestPassword123"
 	salt := []byte("test-salt-for-password-hashing")
 
-	hash1 := hashPassword(password, salt)
-	hash2 := hashPassword(password, salt)
+	hash1 := hashPassword([]byte(password), salt)
+	hash2 := hashPassword([]byte(password), salt)
 
 	// Same password and salt should produce same hash
 	if !bytes.Equal(hash1, hash2) {
@@ -261,14 +261,14 @@ func TestHashPassword(t *testing.T) {
 	}
 
 	// Different password should produce different hash
-	hash3 := hashPassword("DifferentPassword456", salt)
+	hash3 := hashPassword([]byte("DifferentPassword456"), salt)
 	if bytes.Equal(hash1, hash3) {
 		t.Error("hash should be different for different passwords")
 	}
 
 	// Different salt should produce different hash
 	salt2 := []byte("different-salt-for-password-hashing")
-	hash4 := hashPassword(password, salt2)
+	hash4 := hashPassword([]byte(password), salt2)
 	if bytes.Equal(hash1, hash4) {
 		t.Error("hash should be different for different salts")
 	}
@@ -359,12 +359,12 @@ func TestEncryptDecryptLargeData(t *testing.T) {
 
 	password := "TestPassword123"
 
-	encrypted, err := encrypt(plaintext, password)
+	encrypted, err := encrypt(plaintext, []byte(password))
 	if err != nil {
 		t.Fatalf("encrypt() error = %v", err)
 	}
 
-	decrypted, err := decrypt(encrypted, password)
+	decrypted, err := decrypt(encrypted, []byte(password))
 	if err != nil {
 		t.Fatalf("decrypt() error = %v", err)
 	}

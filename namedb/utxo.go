@@ -79,29 +79,30 @@ func (ndb *NameDatabase) AddUTXO(utxo *UTXO) error {
 	defer ndb.mu.Unlock()
 
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
-		utxoBkt := tx.Bucket(utxoBucket)
-		addrBkt := tx.Bucket(utxoAddrBucket)
+		return withBuckets(tx, [][]byte{utxoBucket, utxoAddrBucket}, func(bkts []*bbolt.Bucket) error {
+			utxoBkt, addrBkt := bkts[0], bkts[1]
 
-		// Encode UTXO
-		data, err := encodeUTXO(utxo)
-		if err != nil {
-			return err
-		}
+			// Encode UTXO
+			data, err := encodeUTXO(utxo)
+			if err != nil {
+				return err
+			}
 
-		// Store in main UTXO bucket
-		key := makeUTXOKey(&utxo.TxHash, utxo.OutIndex)
-		if err := utxoBkt.Put(key, data); err != nil {
-			return err
-		}
+			// Store in main UTXO bucket
+			key := makeUTXOKey(&utxo.TxHash, utxo.OutIndex)
+			if err := utxoBkt.Put(key, data); err != nil {
+				return err
+			}
 
-		// Add to address index
-		// Key: address + txhash + outindex
-		addrKey := make([]byte, len(utxo.Address)+txHashSize+4)
-		copy(addrKey, []byte(utxo.Address))
-		copy(addrKey[len(utxo.Address):], utxo.TxHash[:])
-		binary.BigEndian.PutUint32(addrKey[len(utxo.Address)+txHashSize:], utxo.OutIndex)
+			// Add to address index
+			// Key: address + txhash + outindex
+			addrKey := make([]byte, len(utxo.Address)+txHashSize+4)
+			copy(addrKey, []byte(utxo.Address))
+			copy(addrKey[len(utxo.Address):], utxo.TxHash[:])
+			binary.BigEndian.PutUint32(addrKey[len(utxo.Address)+txHashSize:], utxo.OutIndex)
 
-		return addrBkt.Put(addrKey, []byte{1}) // Value doesn't matter, just presence
+			return addrBkt.Put(addrKey, []byte{1}) // Value doesn't matter, just presence
+		})
 	})
 }
 
@@ -115,34 +116,35 @@ func (ndb *NameDatabase) RemoveUTXO(txHash *chainhash.Hash, outIndex uint32) err
 	defer ndb.mu.Unlock()
 
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
-		utxoBkt := tx.Bucket(utxoBucket)
-		addrBkt := tx.Bucket(utxoAddrBucket)
+		return withBuckets(tx, [][]byte{utxoBucket, utxoAddrBucket}, func(bkts []*bbolt.Bucket) error {
+			utxoBkt, addrBkt := bkts[0], bkts[1]
 
-		key := makeUTXOKey(txHash, outIndex)
+			key := makeUTXOKey(txHash, outIndex)
 
-		// Get the UTXO to extract the address
-		data := utxoBkt.Get(key)
-		if data == nil {
-			// UTXO not found - may have been already spent
-			return nil
-		}
+			// Get the UTXO to extract the address
+			data := utxoBkt.Get(key)
+			if data == nil {
+				// UTXO not found - may have been already spent
+				return nil
+			}
 
-		utxo, err := decodeUTXO(txHash, outIndex, data)
-		if err != nil {
-			return err
-		}
+			utxo, err := decodeUTXO(txHash, outIndex, data)
+			if err != nil {
+				return err
+			}
 
-		// Remove from address index
-		addrKey := make([]byte, len(utxo.Address)+txHashSize+4)
-		copy(addrKey, []byte(utxo.Address))
-		copy(addrKey[len(utxo.Address):], txHash[:])
-		binary.BigEndian.PutUint32(addrKey[len(utxo.Address)+txHashSize:], outIndex)
-		if err := addrBkt.Delete(addrKey); err != nil {
-			return err
-		}
+			// Remove from address index
+			addrKey := make([]byte, len(utxo.Address)+txHashSize+4)
+			copy(addrKey, []byte(utxo.Address))
+			copy(addrKey[len(utxo.Address):], txHash[:])
+			binary.BigEndian.PutUint32(addrKey[len(utxo.Address)+txHashSize:], outIndex)
+			if err := addrBkt.Delete(addrKey); err != nil {
+				return err
+			}
 
-		// Remove from main UTXO bucket
-		return utxoBkt.Delete(key)
+			// Remove from main UTXO bucket
+			return utxoBkt.Delete(key)
+		})
 	})
 }
 
@@ -157,16 +159,16 @@ func (ndb *NameDatabase) GetUTXO(txHash *chainhash.Hash, outIndex uint32) (*UTXO
 
 	var utxo *UTXO
 	err := ndb.db.View(func(tx *bbolt.Tx) error {
-		utxoBkt := tx.Bucket(utxoBucket)
-		key := makeUTXOKey(txHash, outIndex)
-		data := utxoBkt.Get(key)
-		if data == nil {
-			return fmt.Errorf("UTXO not found: %s:%d", txHash, outIndex)
-		}
-
-		var err error
-		utxo, err = decodeUTXO(txHash, outIndex, data)
-		return err
+		return withBucket(tx, utxoBucket, func(utxoBkt *bbolt.Bucket) error {
+			key := makeUTXOKey(txHash, outIndex)
+			data := utxoBkt.Get(key)
+			if data == nil {
+				return fmt.Errorf("UTXO not found: %s:%d", txHash, outIndex)
+			}
+			var err error
+			utxo, err = decodeUTXO(txHash, outIndex, data)
+			return err
+		})
 	})
 
 	return utxo, err
@@ -183,8 +185,11 @@ func (ndb *NameDatabase) GetUTXOsForAddress(address string) ([]*UTXO, error) {
 
 	var utxos []*UTXO
 	err := ndb.db.View(func(tx *bbolt.Tx) error {
-		utxoBkt := tx.Bucket(utxoBucket)
-		addrBkt := tx.Bucket(utxoAddrBucket)
+		bkts, err := requireBuckets(tx, utxoBucket, utxoAddrBucket)
+		if err != nil {
+			return err
+		}
+		utxoBkt, addrBkt := bkts[0], bkts[1]
 
 		// Seek to the address prefix
 		prefix := []byte(address)
@@ -254,8 +259,11 @@ func (ndb *NameDatabase) StoreSpentUTXO(utxo *UTXO, spentAtHeight int32) error {
 	defer ndb.mu.Unlock()
 
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
-		spentBkt := tx.Bucket(spentUtxoBucket)
-		idxBkt := tx.Bucket(spentUtxoIdxBucket)
+		bkts, err := requireBuckets(tx, spentUtxoBucket, spentUtxoIdxBucket)
+		if err != nil {
+			return err
+		}
+		spentBkt, idxBkt := bkts[0], bkts[1]
 
 		// Encode UTXO
 		data, err := encodeUTXO(utxo)
@@ -289,10 +297,12 @@ func (ndb *NameDatabase) RestoreSpentUTXOsForBlock(height int32) error {
 	defer ndb.mu.Unlock()
 
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
-		spentBkt := tx.Bucket(spentUtxoBucket)
-		idxBkt := tx.Bucket(spentUtxoIdxBucket)
-		utxoBkt := tx.Bucket(utxoBucket)
-		addrBkt := tx.Bucket(utxoAddrBucket)
+		bkts, err := requireBuckets(tx, spentUtxoBucket, spentUtxoIdxBucket, utxoBucket, utxoAddrBucket)
+		if err != nil {
+			return err
+		}
+		spentBkt, idxBkt := bkts[0], bkts[1]
+		utxoBkt, addrBkt := bkts[2], bkts[3]
 
 		// Seek to height prefix in index
 		heightPrefix := make([]byte, 4)
@@ -383,8 +393,11 @@ func (ndb *NameDatabase) CleanupOldSpentUTXOs(keepFromHeight int32) error {
 	defer ndb.mu.Unlock()
 
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
-		spentBkt := tx.Bucket(spentUtxoBucket)
-		idxBkt := tx.Bucket(spentUtxoIdxBucket)
+		bkts, err := requireBuckets(tx, spentUtxoBucket, spentUtxoIdxBucket)
+		if err != nil {
+			return err
+		}
+		spentBkt, idxBkt := bkts[0], bkts[1]
 
 		c := idxBkt.Cursor()
 		var keysToDelete [][]byte

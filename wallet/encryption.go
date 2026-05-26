@@ -5,7 +5,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -46,7 +45,8 @@ type encryptedData struct {
 
 // deriveKey derives an encryption key from a password using scrypt.
 // The salt ensures that the same password produces different keys.
-func deriveKey(password string, salt []byte) ([]byte, error) {
+// password must be non-nil and non-empty.
+func deriveKey(password []byte, salt []byte) ([]byte, error) {
 	if len(password) == 0 {
 		return nil, fmt.Errorf("password cannot be empty")
 	}
@@ -54,7 +54,7 @@ func deriveKey(password string, salt []byte) ([]byte, error) {
 		return nil, fmt.Errorf("invalid salt length: %d (expected %d)", len(salt), saltLen)
 	}
 
-	key, err := scrypt.Key([]byte(password), salt, scryptN, scryptR, scryptP, keyLen)
+	key, err := scrypt.Key(password, salt, scryptN, scryptR, scryptP, keyLen)
 	if err != nil {
 		return nil, fmt.Errorf("failed to derive key: %w", err)
 	}
@@ -63,7 +63,7 @@ func deriveKey(password string, salt []byte) ([]byte, error) {
 
 // encrypt encrypts plaintext using AES-256-GCM with a password-derived key.
 // Returns the encrypted data with salt and nonce, or an error.
-func encrypt(plaintext []byte, password string) (*encryptedData, error) {
+func encrypt(plaintext []byte, password []byte) (*encryptedData, error) {
 	// Generate random salt for key derivation
 	salt := make([]byte, saltLen)
 	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
@@ -106,7 +106,7 @@ func encrypt(plaintext []byte, password string) (*encryptedData, error) {
 
 // decrypt decrypts ciphertext using AES-256-GCM with a password-derived key.
 // Returns the plaintext or an error if decryption fails.
-func decrypt(data *encryptedData, password string) ([]byte, error) {
+func decrypt(data *encryptedData, password []byte) ([]byte, error) {
 	if data == nil {
 		return nil, fmt.Errorf("encrypted data cannot be nil")
 	}
@@ -196,14 +196,12 @@ func validatePassword(password string) error {
 // hashPassword creates a non-reversible hash of a password for verification.
 // Uses scrypt with a random per-wallet salt to prevent rainbow table attacks.
 // The salt must be stored alongside the hash in the wallet file.
-func hashPassword(password string, salt []byte) []byte {
+func hashPassword(password []byte, salt []byte) []byte {
 	// Use lighter scrypt parameters for verification (faster unlock)
 	// N=16384 is strong enough to resist brute-force when combined with a unique salt
-	hash, err := scrypt.Key([]byte(password), salt, 16384, 8, 1, 32)
+	hash, err := scrypt.Key(password, salt, 16384, 8, 1, 32)
 	if err != nil {
-		// Fallback to SHA-256 if scrypt fails (should never happen)
-		h := sha256.Sum256(append(salt, []byte(password)...))
-		return h[:]
+		panic(fmt.Sprintf("scrypt password hashing failed with fixed parameters: %v", err))
 	}
 	return hash
 }

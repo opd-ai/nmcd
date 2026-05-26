@@ -8,6 +8,7 @@ import (
 	"net/smtp"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -23,7 +24,11 @@ func main() {
 	upstreamPort := flag.Int("upstream-port", 587, "Upstream SMTP server port")
 	upstreamUser := flag.String("upstream-user", "", "Upstream SMTP username (env: SMTP_USER)")
 	cacheTTL := flag.Duration("cache-ttl", time.Hour, "Mail routing cache TTL")
-	dataDir := flag.String("datadir", "~/.nmcd", "Namecoin data directory")
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		log.Fatalf("Failed to determine home directory: %v", err)
+	}
+	dataDir := flag.String("datadir", filepath.Join(homeDir, ".nmcd"), "Namecoin data directory")
 	network := flag.String("network", "mainnet", "Network to use (mainnet, testnet, regtest)")
 
 	flag.Parse()

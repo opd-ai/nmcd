@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"sort"
 	"sync"
@@ -264,9 +265,27 @@ func populateLoadTestResult(result *TestResult, counters *loadTestCounters, dura
 
 	if len(latenciesCopy) >= 20 {
 		sort.Slice(latenciesCopy, func(i, j int) bool { return latenciesCopy[i] < latenciesCopy[j] })
-		result.P95Latency = latenciesCopy[int(float64(len(latenciesCopy))*0.95)]
-		result.P99Latency = latenciesCopy[int(float64(len(latenciesCopy))*0.99)]
+		n := len(latenciesCopy)
+		result.P95Latency = latenciesCopy[percentileIdx(n, 0.95)]
+		result.P99Latency = latenciesCopy[percentileIdx(n, 0.99)]
 	}
+}
+
+// percentileIdx returns the 0-based index into a sorted slice of n elements
+// for the given percentile p (0–1). Uses nearest-rank method with ceiling,
+// clamped to [0, n-1].
+func percentileIdx(n int, p float64) int {
+	if n <= 0 {
+		return 0
+	}
+	idx := int(math.Ceil(float64(n)*p)) - 1
+	if idx < 0 {
+		return 0
+	}
+	if idx >= n {
+		return n - 1
+	}
+	return idx
 }
 
 // MemoryLeakTest monitors memory growth over time

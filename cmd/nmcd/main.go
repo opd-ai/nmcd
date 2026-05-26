@@ -167,33 +167,35 @@ func loadAndApplyConfigFile(cfg *config.Config, configFileFlag string) {
 }
 
 // applyFlagOverrides applies command-line flags that were explicitly set (non-empty/non-zero).
+// A table-driven approach maps each flag to its setter, keeping complexity flat.
 func applyFlagOverrides(cfg *config.Config, f *cliFlags) {
-	if f.network != "" {
-		cfg.Network = f.network
-	}
-	if f.rpcAddr != "" {
-		cfg.RPCAddr = f.rpcAddr
-	}
-	if f.rpcUser != "" {
-		cfg.RPCUser = f.rpcUser
-	}
-	if f.rpcPassword != "" {
-		cfg.RPCPassword = f.rpcPassword
-	}
-	if f.prometheusAddr != "" {
-		cfg.PrometheusAddr = f.prometheusAddr
-	}
+	applyStringFlagOverrides(cfg, f)
 	if f.maxPeers > 0 {
 		cfg.MaxPeers = f.maxPeers
 	}
-	if f.logLevel != "" {
-		cfg.LogLevel = f.logLevel
-	}
-	if f.logFormat != "" {
-		cfg.LogFormat = f.logFormat
-	}
-	if f.logOutput != "" {
-		cfg.LogOutput = f.logOutput
+}
+
+// stringFlagOverride pairs a source string flag value with the config field to write.
+type stringFlagOverride struct {
+	src string
+	dst *string
+}
+
+// applyStringFlagOverrides copies non-empty CLI string flags into cfg.
+func applyStringFlagOverrides(cfg *config.Config, f *cliFlags) {
+	for _, sf := range []stringFlagOverride{
+		{f.network, &cfg.Network},
+		{f.rpcAddr, &cfg.RPCAddr},
+		{f.rpcUser, &cfg.RPCUser},
+		{f.rpcPassword, &cfg.RPCPassword},
+		{f.prometheusAddr, &cfg.PrometheusAddr},
+		{f.logLevel, &cfg.LogLevel},
+		{f.logFormat, &cfg.LogFormat},
+		{f.logOutput, &cfg.LogOutput},
+	} {
+		if sf.src != "" {
+			*sf.dst = sf.src
+		}
 	}
 	if f.listenAddrs != "" {
 		cfg.ListenAddrs = server.SplitAndTrim(f.listenAddrs)

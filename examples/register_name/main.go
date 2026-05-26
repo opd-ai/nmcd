@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/opd-ai/nmcd/client"
+	"github.com/opd-ai/nmcd/examples/shared"
 )
 
 func main() {
@@ -149,18 +150,8 @@ func handleRegisterError(err error) {
 }
 
 func printRegisterResult(result *client.TxResult) {
-	fmt.Println("\n✓ Registration initiated!")
-	fmt.Println("\nTransaction Result:")
-	fmt.Printf("  TX Hash:  %s\n", result.TxHash)
-	fmt.Printf("  Name:     %s\n", result.Name)
-	fmt.Printf("  Status:   %s\n", result.Status)
-
-	if result.Status == client.TxStatusPending {
-		fmt.Println("\nNote: NAME_NEW transaction created.")
-		fmt.Println("After 12 blocks, NAME_FIRSTUPDATE will complete the registration.")
-		fmt.Println("Use WaitForConfirmation: true to wait for full registration.")
-	} else if result.Status == client.TxStatusConfirmed {
-		fmt.Printf("  Block:    %d\n", result.BlockHeight)
-		fmt.Printf("  Confirms: %d\n", result.Confirmations)
-	}
+	shared.PrintTxResult(result,
+		"✓ Registration initiated!",
+		"Note: NAME_NEW transaction created.\nAfter 12 blocks, NAME_FIRSTUPDATE will complete the registration.\nUse WaitForConfirmation: true to wait for full registration.",
+	)
 }
