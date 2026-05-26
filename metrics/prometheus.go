@@ -21,21 +21,6 @@ type goRuntimeStats struct {
 
 var cachedGoStats = &goRuntimeStats{}
 
-func init() {
-	// Update stats immediately on startup
-	updateGoRuntimeStats()
-
-	// Start background goroutine to update Go runtime stats every 30 seconds
-	// This avoids stop-the-world pauses during Prometheus scrapes
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
-			updateGoRuntimeStats()
-		}
-	}()
-}
-
 func updateGoRuntimeStats() {
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
@@ -485,7 +470,8 @@ func (c *PrometheusCollector) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.MustNewConstMetric(c.rpcDurationSecondsDesc, prometheus.GaugeValue, avgDuration, method)
 	}
 
-	// Go runtime metrics (from cached stats to avoid stop-the-world pauses)
+	// Go runtime metrics (refreshed on demand to avoid background goroutine side-effects)
+	updateGoRuntimeStats()
 	cachedGoStats.mu.RLock()
 	ch <- prometheus.MustNewConstMetric(c.goGoroutinesDesc, prometheus.GaugeValue, float64(cachedGoStats.goroutines))
 	ch <- prometheus.MustNewConstMetric(c.goMemstatAllocBytesDesc, prometheus.GaugeValue, float64(cachedGoStats.allocBytes))

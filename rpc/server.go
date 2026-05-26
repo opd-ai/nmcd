@@ -1405,7 +1405,10 @@ func (s *Server) walletPassphrase(req *Request) *Response {
 	}
 
 	if err := s.wallet.Unlock(password); err != nil {
-		return errorResponse(req.ID, -14, fmt.Sprintf("Failed to unlock wallet: %v", err))
+		if s.logger != nil {
+			s.logger.Warn("wallet unlock attempt failed", "error", err)
+		}
+		return errorResponse(req.ID, -14, "authentication failed")
 	}
 
 	// Cancel any existing auto-lock timer and create a new one.

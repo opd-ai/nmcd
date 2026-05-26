@@ -35,7 +35,7 @@ type Wallet struct {
 	locked         bool   // Whether the wallet is currently locked
 	passwordHash   []byte // Hash of the password for verification (not the password itself)
 	passwordSalt   []byte // Random salt for password hashing (unique per wallet)
-	unlockPassword string // Cached password when unlocked (cleared on lock)
+	unlockPassword []byte // Cached password when unlocked (zeroed on lock)
 }
 
 // KeyPair represents a private/public key pair.
@@ -179,7 +179,7 @@ func (w *Wallet) loadKeys(wd *walletData) error {
 
 // decodePrivateKey decodes a private key from its stored format based on encryption state.
 func (w *Wallet) decodePrivateKey(keyHex string) ([]byte, error) {
-	if w.encrypted && w.unlockPassword != "" {
+	if w.encrypted && len(w.unlockPassword) != 0 {
 		encData, err := decodeEncryptedData(keyHex)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode encrypted private key: %w", err)
@@ -247,7 +247,7 @@ func (w *Wallet) encodePrivateKey(kp *KeyPair) (string, error) {
 	if !w.encrypted {
 		return hex.EncodeToString(kp.PrivateKey.Serialize()), nil
 	}
-	if w.unlockPassword == "" {
+	if len(w.unlockPassword) == 0 {
 		return "", fmt.Errorf("cannot save encrypted wallet while locked")
 	}
 	encData, err := encrypt(kp.PrivateKey.Serialize(), w.unlockPassword)
@@ -355,16 +355,19 @@ func (w *Wallet) EncryptWallet(password string) error {
 	// Set encryption state
 	w.encrypted = true
 	w.locked = false // Starts unlocked after encryption
-	w.unlockPassword = password
+	w.unlockPassword = []byte(password)
 	w.passwordSalt = salt
-	w.passwordHash = hashPassword(password, salt)
+	w.passwordHash = hashPassword([]byte(password), salt)
 
 	// Save wallet with encryption
 	if err := w.save(); err != nil {
 		// Rollback encryption state on save failure
 		w.encrypted = false
 		w.locked = false
-		w.unlockPassword = ""
+		for i := range w.unlockPassword {
+			w.unlockPassword[i] = 0
+		}
+		w.unlockPassword = nil
 		w.passwordHash = nil
 		w.passwordSalt = nil
 		return fmt.Errorf("failed to save encrypted wallet: %w", err)
@@ -406,15 +409,11 @@ func (w *Wallet) Lock() error {
 	// Clear the map and password
 	w.keys = make(map[string]*KeyPair)
 
-	// Zero password bytes (convert string to byte slice and zero it)
-	// Note: This is best-effort as Go strings are immutable
-	if w.unlockPassword != "" {
-		passwordBytes := []byte(w.unlockPassword)
-		for i := range passwordBytes {
-			passwordBytes[i] = 0
-		}
-		w.unlockPassword = ""
+	// Zero password bytes directly to prevent forensic recovery from memory dumps.
+	for i := range w.unlockPassword {
+		w.unlockPassword[i] = 0
 	}
+	w.unlockPassword = nil
 
 	w.locked = true
 
@@ -436,7 +435,7 @@ func (w *Wallet) Unlock(password string) error {
 	}
 
 	// Verify password using constant-time comparison to prevent timing attacks
-	passwordHash := hashPassword(password, w.passwordSalt)
+	passwordHash := hashPassword([]byte(password), w.passwordSalt)
 	if len(passwordHash) != len(w.passwordHash) || subtle.ConstantTimeCompare(passwordHash, w.passwordHash) != 1 {
 		return fmt.Errorf("incorrect password")
 	}
@@ -452,12 +451,16 @@ func (w *Wallet) Unlock(password string) error {
 		return fmt.Errorf("failed to parse wallet: %w", err)
 	}
 
-	// Set password for decryption
-	w.unlockPassword = password
+	// Store password as []byte for later use in decrypt operations.
+	// Stored as []byte so it can be explicitly zeroed when the wallet is locked.
+	w.unlockPassword = []byte(password)
 
 	// Load and decrypt keys
 	if err := w.loadKeys(&wd); err != nil {
-		w.unlockPassword = ""
+		for i := range w.unlockPassword {
+			w.unlockPassword[i] = 0
+		}
+		w.unlockPassword = nil
 		return fmt.Errorf("failed to load keys: %w", err)
 	}
 

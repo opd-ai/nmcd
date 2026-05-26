@@ -251,8 +251,8 @@ func TestHashPasswordDeterminism(t *testing.T) {
 	password := "testPassword123!"
 	salt := []byte("testsalt12345678901234567890")
 
-	hash1 := hashPassword(password, salt)
-	hash2 := hashPassword(password, salt)
+	hash1 := hashPassword([]byte(password), salt)
+	hash2 := hashPassword([]byte(password), salt)
 
 	if len(hash1) != len(hash2) {
 		t.Error("Hash lengths don't match")
@@ -304,13 +304,13 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 	plaintext := []byte("This is secret data")
 
 	// Encrypt
-	encrypted, err := encrypt(plaintext, password)
+	encrypted, err := encrypt(plaintext, []byte(password))
 	if err != nil {
 		t.Fatalf("Encryption failed: %v", err)
 	}
 
 	// Decrypt
-	decrypted, err := decrypt(encrypted, password)
+	decrypted, err := decrypt(encrypted, []byte(password))
 	if err != nil {
 		t.Fatalf("Decryption failed: %v", err)
 	}
@@ -327,7 +327,7 @@ func TestDeriveKeyEmptySalt(t *testing.T) {
 	salt := []byte{}
 
 	// Should return error for invalid salt length
-	_, err := deriveKey(password, salt)
+	_, err := deriveKey([]byte(password), salt)
 	if err == nil {
 		t.Error("Expected error for empty salt")
 	}
@@ -338,7 +338,7 @@ func TestDeriveKeyEmptyPassword(t *testing.T) {
 	salt := make([]byte, 32) // proper salt length
 
 	// Should return error for empty password
-	_, err := deriveKey("", salt)
+	_, err := deriveKey([]byte(""), salt)
 	if err == nil {
 		t.Error("Expected error for empty password")
 	}
@@ -352,7 +352,7 @@ func TestDeriveKeyValid(t *testing.T) {
 		salt[i] = byte(i)
 	}
 
-	key, err := deriveKey(password, salt)
+	key, err := deriveKey([]byte(password), salt)
 	if err != nil {
 		t.Fatalf("deriveKey failed: %v", err)
 	}
