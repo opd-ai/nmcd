@@ -211,14 +211,14 @@ The `MaxValueLengthUI` constant (520 bytes, matching Namecoin Core's `MAX_VALUE_
 **Effort:** 2 days  
 **Risk Mitigated:** Bugs in P2P sync and peer management
 
-- [ ] **network/peermgr.go** Add peer management tests:
+- [x] **network/peermgr.go** Add peer management tests:
   - `onTx`: Test transaction relay handling
   - `onBlock`: Test block processing (currently ~12.5% per docs)
   - `relayTransaction`: Test broadcast logic
   - Target: network 60.6% → 75%+
   - Validation: `go test -cover ./network` shows ≥75%
 
-- [ ] **network/sync.go** Add sync protocol tests:
+- [x] **network/sync.go** Add sync protocol tests:
   - Test `onGetData` handler
   - Test `onHeaders` processing
   - Test sync state transitions
