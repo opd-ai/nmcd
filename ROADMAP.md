@@ -259,15 +259,16 @@ The `MaxValueLengthUI` constant (520 bytes, matching Namecoin Core's `MAX_VALUE_
 **Effort:** 1-2 days  
 **Risk Mitigated:** Maintenance burden in complex code paths
 
-- [ ] **rpc/server.go** (1,632 lines): Consider splitting into:
-  - `rpc/blockchain_handlers.go`: getblock, getblockhash, etc.
-  - `rpc/name_handlers.go`: name_show, name_list, name_update, etc.
-  - `rpc/wallet_handlers.go`: getnewaddress, wallet encryption
-  - go-stats-generator cites rpc/server.go as highest "burden" file (3.11)
+- [x] **rpc/server.go** (1,632 lines): Split into handler files
+  - `rpc/blockchain_handlers.go`: getblock, getblockhash, getRawTransaction, sendRawTransaction, helpers
+  - `rpc/name_handlers.go`: name_show, name_list, name_update, name_new, name_firstupdate, etc.
+  - `rpc/wallet_handlers.go`: getnewaddress, wallet encryption, listUnspent, getBalance
+  - server.go reduced from 2236 to ~780 lines
 
-- [ ] **chain/blockchain.go** (1,319 lines): Consider extracting:
-  - Name validation helpers (per refactoring suggestion #7)
-  - AuxPow validation (already partially in auxpow.go)
+- [x] **chain/blockchain.go** (1,319 lines): Extracted into dedicated files
+  - `chain/auxpow_validation.go`: validateAuxPow, resolveBlockHeight, verifyAuxPow* (5 methods)
+  - `chain/name_script.go`: computeCommitHash, parseNameScript*, validateNameFormat, opcodes, ParseNameOperationsFromTx (~500 lines)
+  - blockchain.go reduced from 2231 to ~1640 lines
 
 - [ ] **Extract duplicated code** (ROI 27.00):
   - wallet/wallet.go: 27-line duplication (suggestion #1)
