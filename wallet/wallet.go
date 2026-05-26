@@ -354,11 +354,12 @@ func (w *Wallet) EncryptWallet(password string) error {
 	}
 
 	// Set encryption state
+	pw := []byte(password)
 	w.encrypted = true
 	w.locked = false // Starts unlocked after encryption
-	w.unlockPassword = []byte(password)
+	w.unlockPassword = pw
 	w.passwordSalt = salt
-	w.passwordHash = hashPassword([]byte(password), salt)
+	w.passwordHash = hashPassword(pw, salt)
 
 	// Save wallet with encryption
 	if err := w.save(); err != nil {
@@ -436,26 +437,31 @@ func (w *Wallet) Unlock(password string) error {
 		return fmt.Errorf("wallet is already unlocked")
 	}
 
+	pw := []byte(password)
+
 	// Verify password using constant-time comparison to prevent timing attacks
-	passwordHash := hashPassword([]byte(password), w.passwordSalt)
+	passwordHash := hashPassword(pw, w.passwordSalt)
 	if len(passwordHash) != len(w.passwordHash) || subtle.ConstantTimeCompare(passwordHash, w.passwordHash) != 1 {
+		zeroSlice(pw)
 		return fmt.Errorf("incorrect password")
 	}
 
 	// Load wallet file to decrypt keys
 	data, err := os.ReadFile(w.walletPath())
 	if err != nil {
+		zeroSlice(pw)
 		return fmt.Errorf("failed to read wallet file: %w", err)
 	}
 
 	var wd walletData
 	if err := json.Unmarshal(data, &wd); err != nil {
+		zeroSlice(pw)
 		return fmt.Errorf("failed to parse wallet: %w", err)
 	}
 
 	// Store password as []byte for later use in decrypt operations.
 	// Stored as []byte so it can be explicitly zeroed when the wallet is locked.
-	w.unlockPassword = []byte(password)
+	w.unlockPassword = pw
 
 	// Load and decrypt keys
 	if err := w.loadKeys(&wd); err != nil {

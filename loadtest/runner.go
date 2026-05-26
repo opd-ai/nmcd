@@ -275,7 +275,13 @@ func populateLoadTestResult(result *TestResult, counters *loadTestCounters, dura
 // for the given percentile p (0–1). Uses nearest-rank method with ceiling,
 // clamped to [0, n-1].
 func percentileIdx(n int, p float64) int {
+	if n <= 0 {
+		return 0
+	}
 	idx := int(math.Ceil(float64(n)*p)) - 1
+	if idx < 0 {
+		return 0
+	}
 	if idx >= n {
 		return n - 1
 	}
