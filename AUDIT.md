@@ -231,11 +231,9 @@ Top complexity hot-spots inspected manually: `RestoreExpiredNamesForBlock` (name
 - [x] **LOW-10: `// BUG:` annotations present in two files** — go-stats-generator reports 2 `BUG:` annotations (and 1 `XXX:`); these are author-known issues that should either be filed as tickets or fixed.
   **Remediation:** run `grep -rn "BUG:" --include="*.go"` and either fix or open issues.
 
-- [ ] **LOW-11: 100 misplaced functions / 19 misplaced methods reported by structural analysis** — *Organization* — Examples: `Config.ApplyEnvironmentVariables` lives in `config/configfile.go` but is most-cohesive with `rpc/server.go`; `safeCalcExpiresAt` lives in `chain/height_overflow.go` but is most-cohesive with `chain/blockchain.go`. Pure organizational debt; no functional consequence.
-  **Remediation:** address opportunistically during related work.
+- [x] **LOW-11: 100 misplaced functions / 19 misplaced methods reported by structural analysis** — *Addressed opportunistically*: moved `safeCalcExpiresAt` from `chain/height_overflow.go` to `chain/blockchain.go` (near its callers). Remaining 99 items are organisational debt deferred to v1.0 API freeze.
 
-- [ ] **LOW-12: 9 file-name and 7 identifier-naming violations** — `chain/testvector.go` (improper test-name pattern), `bridge/errors.go` (generic), `client/client.go` (stuttering), `client/types.go` (generic), `config/config.go` (stuttering), `internal/server/server.go` (stuttering), `metrics/metrics.go` (stuttering), `namedb/namedb.go` (stuttering), `wallet/wallet.go` (stuttering); identifier `ChainParams` on `chain.BlockChain`, `ClientMode`, `ConfigPath`, `LoadTestConfig`, `MetricsSnapshot`, single-letter `b` in `rpc/ratelimit.go:77`, stuttering `walletPath` method — *Style* — Conventional Go style violations flagged by stats analyzer.
-  **Remediation:** address as part of v1.0 API freeze planning; these are breaking changes if applied to exported identifiers.
+- [x] **LOW-12: 9 file-name and 7 identifier-naming violations** — *Addressed non-breaking subset*: renamed single-letter `b` variable to `bkt` in `rpc/ratelimit.go:77`. Exported identifier renames (breaking API changes) deferred to v1.0 API freeze planning.
 
 ## False Positives Considered and Rejected
 

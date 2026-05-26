@@ -365,9 +365,7 @@ func (w *Wallet) EncryptWallet(password string) error {
 		// Rollback encryption state on save failure
 		w.encrypted = false
 		w.locked = false
-		for i := range w.unlockPassword {
-			w.unlockPassword[i] = 0
-		}
+		zeroSlice(w.unlockPassword)
 		w.unlockPassword = nil
 		w.passwordHash = nil
 		w.passwordSalt = nil
@@ -375,6 +373,13 @@ func (w *Wallet) EncryptWallet(password string) error {
 	}
 
 	return nil
+}
+
+// zeroSlice overwrites a byte slice with zeros to clear sensitive data from memory.
+func zeroSlice(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
 }
 
 // Lock locks an encrypted wallet, clearing keys from memory.
@@ -401,9 +406,7 @@ func (w *Wallet) Lock() error {
 		if kp.PrivateKey != nil {
 			// Zero the serialized copy as a best-effort measure.
 			privKeyBytes := kp.PrivateKey.Serialize()
-			for i := range privKeyBytes {
-				privKeyBytes[i] = 0
-			}
+			zeroSlice(privKeyBytes)
 		}
 	}
 
@@ -411,9 +414,7 @@ func (w *Wallet) Lock() error {
 	w.keys = make(map[string]*KeyPair)
 
 	// Zero password bytes directly to prevent forensic recovery from memory dumps.
-	for i := range w.unlockPassword {
-		w.unlockPassword[i] = 0
-	}
+	zeroSlice(w.unlockPassword)
 	w.unlockPassword = nil
 
 	w.locked = true
@@ -458,9 +459,7 @@ func (w *Wallet) Unlock(password string) error {
 
 	// Load and decrypt keys
 	if err := w.loadKeys(&wd); err != nil {
-		for i := range w.unlockPassword {
-			w.unlockPassword[i] = 0
-		}
+		zeroSlice(w.unlockPassword)
 		w.unlockPassword = nil
 		return fmt.Errorf("failed to load keys: %w", err)
 	}

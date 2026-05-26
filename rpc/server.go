@@ -316,16 +316,13 @@ func (s *Server) withPanicRecovery(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if err := recover(); err != nil {
-				// Log the panic with full context
-				if s.logger != nil {
-					s.logger.Error("panic recovered in HTTP handler",
-						"error", err,
-						"method", r.Method,
-						"path", r.URL.Path,
-						"remote_addr", r.RemoteAddr,
-						"stack", string(debug.Stack()),
-					)
-				}
+				s.logError("panic recovered in HTTP handler",
+					"error", err,
+					"method", r.Method,
+					"path", r.URL.Path,
+					"remote_addr", r.RemoteAddr,
+					"stack", string(debug.Stack()),
+				)
 
 				// Record error metric
 				metrics.Get().RecordValidationError("panic")
@@ -415,12 +412,7 @@ func (s *Server) logRPCError(resp *Response, method string) {
 func (s *Server) writeJSONResponse(w http.ResponseWriter, resp *Response, method string) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		if s.logger != nil {
-			s.logger.Error("failed to encode JSON-RPC response",
-				"error", err,
-				"method", method,
-			)
-		}
+		s.logError("failed to encode JSON-RPC response", "error", err, "method", method)
 	}
 }
 
@@ -1407,9 +1399,7 @@ func (s *Server) walletPassphrase(req *Request) *Response {
 	}
 
 	if err := s.wallet.Unlock(password); err != nil {
-		if s.logger != nil {
-			s.logger.Warn("wallet unlock attempt failed", "error", err)
-		}
+		s.logWarn("wallet unlock attempt failed", "error", err)
 		return errorResponse(req.ID, -14, "authentication failed")
 	}
 
@@ -1437,9 +1427,7 @@ func (s *Server) walletPassphrase(req *Request) *Response {
 		s.autoLockMu.Unlock()
 		// Lock the wallet outside autoLockMu to avoid lock-order inversion.
 		if err := s.wallet.Lock(); err != nil {
-			if s.logger != nil {
-				s.logger.Error("auto-lock: failed to lock wallet", "error", err)
-			}
+			s.logError("auto-lock: failed to lock wallet", "error", err)
 		}
 	})
 	s.autoLockMu.Unlock()
@@ -1626,11 +1614,7 @@ func (s *Server) getBalance(req *Request) *Response {
 		utxos, err := s.blockchain.GetUTXOsForAddress(addr)
 		if err != nil {
 			errorCount++
-			if s.logger != nil {
-				s.logger.Warn("failed to get UTXOs for address",
-					"address", addr,
-					"error", err)
-			}
+			s.logWarn("failed to get UTXOs for address", "address", addr, "error", err)
 			continue // Skip addresses with errors
 		}
 		for _, utxo := range utxos {
@@ -1639,10 +1623,7 @@ func (s *Server) getBalance(req *Request) *Response {
 	}
 
 	if errorCount > 0 {
-		if s.logger != nil {
-			s.logger.Warn("getbalance returned incomplete results",
-				"skipped_addresses", errorCount)
-		}
+		s.logWarn("getbalance returned incomplete results", "skipped_addresses", errorCount)
 	}
 
 	// Convert satoshis to NMC (1 NMC = 100,000,000 satoshis)
@@ -1756,11 +1737,7 @@ func (s *Server) collectFilteredUTXOs(addresses []string, minConf, maxConf int) 
 		utxos, err := s.blockchain.GetUTXOsForAddress(addr)
 		if err != nil {
 			errorCount++
-			if s.logger != nil {
-				s.logger.Warn("failed to get UTXOs for address",
-					"address", addr,
-					"error", err)
-			}
+			s.logWarn("failed to get UTXOs for address", "address", addr, "error", err)
 			continue
 		}
 
@@ -1772,10 +1749,7 @@ func (s *Server) collectFilteredUTXOs(addresses []string, minConf, maxConf int) 
 	}
 
 	if errorCount > 0 {
-		if s.logger != nil {
-			s.logger.Warn("listunspent returned incomplete results",
-				"skipped_addresses", errorCount)
-		}
+		s.logWarn("listunspent returned incomplete results", "skipped_addresses", errorCount)
 	}
 
 	if result == nil {
@@ -2105,16 +2079,27 @@ func (s *Server) sendRawTransaction(req *Request) *Response {
 	return successResponse(req.ID, txHash.String())
 }
 
+// logWarn logs a warning if the server logger is initialised; otherwise it is a no-op.
+func (s *Server) logWarn(msg string, args ...interface{}) {
+	if s.logger != nil {
+		s.logger.Warn(msg, args...)
+	}
+}
+
+// logError logs an error if the server logger is initialised; otherwise it is a no-op.
+func (s *Server) logError(msg string, args ...interface{}) {
+	if s.logger != nil {
+		s.logger.Error(msg, args...)
+	}
+}
+
 // writeError writes an error response
 func (s *Server) writeError(w http.ResponseWriter, req *Request, code int, message string) {
-	// Log error with structured logging
-	if s.logger != nil {
-		s.logger.Warn("rpc error response",
-			"method", req.Method,
-			"error_code", code,
-			"error_message", message,
-		)
-	}
+	s.logWarn("rpc error response",
+		"method", req.Method,
+		"error_code", code,
+		"error_message", message,
+	)
 
 	resp := &Response{
 		Jsonrpc: "2.0",
@@ -2127,12 +2112,10 @@ func (s *Server) writeError(w http.ResponseWriter, req *Request, code int, messa
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		if s.logger != nil {
-			s.logger.Error("failed to encode JSON-RPC error response",
-				"error", err,
-				"method", req.Method,
-			)
-		}
+		s.logError("failed to encode JSON-RPC error response",
+			"error", err,
+			"method", req.Method,
+		)
 	}
 }
 

@@ -163,27 +163,24 @@ func (bw *BatchWriter) writeNames(tx *bbolt.Tx) error {
 		return nil
 	}
 
-	namesBucket, err := requireBucket(tx, namesBucket)
+	bkts, err := requireBuckets(tx, namesBucket, expirationBucket)
 	if err != nil {
 		return err
 	}
-	expirationBucket, err := requireBucket(tx, expirationBucket)
-	if err != nil {
-		return err
-	}
+	namesBkt, expirationBkt := bkts[0], bkts[1]
 
 	for name, record := range bw.names {
-		if err := bw.updateExpirationIndex(namesBucket, expirationBucket, name); err != nil {
+		if err := bw.updateExpirationIndex(namesBkt, expirationBkt, name); err != nil {
 			return err
 		}
 
 		data := encodeNameRecord(record)
-		if err := namesBucket.Put([]byte(name), data); err != nil {
+		if err := namesBkt.Put([]byte(name), data); err != nil {
 			return fmt.Errorf("failed to put name %s: %w", name, err)
 		}
 
 		expirationKey := makeExpirationKey(record.ExpiresAt, name)
-		if err := expirationBucket.Put(expirationKey, []byte{1}); err != nil {
+		if err := expirationBkt.Put(expirationKey, []byte{1}); err != nil {
 			return fmt.Errorf("failed to update expiration index for %s: %w", name, err)
 		}
 	}
@@ -209,21 +206,18 @@ func (bw *BatchWriter) deleteNames(tx *bbolt.Tx) error {
 		return nil
 	}
 
-	namesBucket, err := requireBucket(tx, namesBucket)
+	bkts, err := requireBuckets(tx, namesBucket, expirationBucket)
 	if err != nil {
 		return err
 	}
-	expirationBucket, err := requireBucket(tx, expirationBucket)
-	if err != nil {
-		return err
-	}
+	namesBkt, expirationBkt := bkts[0], bkts[1]
 
 	for name := range bw.deletedNames {
-		if err := bw.removeExpirationIndex(namesBucket, expirationBucket, name); err != nil {
+		if err := bw.removeExpirationIndex(namesBkt, expirationBkt, name); err != nil {
 			return err
 		}
 
-		if err := namesBucket.Delete([]byte(name)); err != nil {
+		if err := namesBkt.Delete([]byte(name)); err != nil {
 			return fmt.Errorf("failed to delete name %s: %w", name, err)
 		}
 	}
@@ -249,25 +243,22 @@ func (bw *BatchWriter) writeHistory(tx *bbolt.Tx) error {
 		return nil
 	}
 
-	histBucket, err := requireBucket(tx, historyBucket)
+	bkts, err := requireBuckets(tx, historyBucket, historyIndexBucket)
 	if err != nil {
 		return err
 	}
-	indexBucket, err := requireBucket(tx, historyIndexBucket)
-	if err != nil {
-		return err
-	}
+	histBkt, idxBkt := bkts[0], bkts[1]
 
 	for txHash, record := range bw.history {
 		data := encodeNameRecord(record)
-		if err := histBucket.Put(txHash[:], data); err != nil {
+		if err := histBkt.Put(txHash[:], data); err != nil {
 			return fmt.Errorf("failed to put history: %w", err)
 		}
 
 		nameKey := []byte(record.Name)
-		existing := indexBucket.Get(nameKey)
+		existing := idxBkt.Get(nameKey)
 		newIndex := append(append([]byte(nil), existing...), txHash[:]...)
-		if err := indexBucket.Put(nameKey, newIndex); err != nil {
+		if err := idxBkt.Put(nameKey, newIndex); err != nil {
 			return fmt.Errorf("failed to update history index: %w", err)
 		}
 	}
@@ -300,14 +291,11 @@ func (bw *BatchWriter) writeUTXOs(tx *bbolt.Tx) error {
 		return nil
 	}
 
-	utxoBucket, err := requireBucket(tx, utxoBucket)
+	bkts, err := requireBuckets(tx, utxoBucket, utxoAddrBucket)
 	if err != nil {
 		return err
 	}
-	utxoAddrBucket, err := requireBucket(tx, utxoAddrBucket)
-	if err != nil {
-		return err
-	}
+	utxoBkt, addrBkt := bkts[0], bkts[1]
 
 	for _, utxo := range bw.utxos {
 		data, err := encodeUTXO(utxo)
@@ -316,11 +304,11 @@ func (bw *BatchWriter) writeUTXOs(tx *bbolt.Tx) error {
 		}
 
 		key := makeUTXOKey(&utxo.TxHash, utxo.OutIndex)
-		if err := utxoBucket.Put(key, data); err != nil {
+		if err := utxoBkt.Put(key, data); err != nil {
 			return fmt.Errorf("failed to put utxo: %w", err)
 		}
 
-		if err := bw.addUTXOToAddressIndex(utxoAddrBucket, utxo); err != nil {
+		if err := bw.addUTXOToAddressIndex(addrBkt, utxo); err != nil {
 			return err
 		}
 	}
@@ -345,22 +333,19 @@ func (bw *BatchWriter) deleteUTXOs(tx *bbolt.Tx) error {
 		return nil
 	}
 
-	utxoBucket, err := requireBucket(tx, utxoBucket)
+	bkts, err := requireBuckets(tx, utxoBucket, utxoAddrBucket)
 	if err != nil {
 		return err
 	}
-	utxoAddrBucket, err := requireBucket(tx, utxoAddrBucket)
-	if err != nil {
-		return err
-	}
+	utxoBkt, addrBkt := bkts[0], bkts[1]
 
 	for _, uk := range bw.deletedUTXOs {
-		if err := bw.removeUTXOFromAddressIndex(utxoBucket, utxoAddrBucket, uk); err != nil {
+		if err := bw.removeUTXOFromAddressIndex(utxoBkt, addrBkt, uk); err != nil {
 			return err
 		}
 
 		key := makeUTXOKey(&uk.txHash, uk.outIndex)
-		if err := utxoBucket.Delete(key); err != nil {
+		if err := utxoBkt.Delete(key); err != nil {
 			return fmt.Errorf("failed to delete utxo: %w", err)
 		}
 	}

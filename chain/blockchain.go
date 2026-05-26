@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"path/filepath"
 	"sync"
 	"time"
@@ -1135,6 +1136,20 @@ func (bc *BlockChain) processNameNew(commitHash []byte, height int32) error {
 	}
 	metrics.Get().RecordNameOperation("NAME_NEW")
 	return nil
+}
+
+// safeCalcExpiresAt calculates the expiration height with overflow protection.
+// If the addition would overflow int32, it returns math.MaxInt32 (maximum safe value).
+// This prevents negative expiration heights that would cause incorrect behavior.
+//
+// The function checks if height + config.NameExpirationBlocks would exceed MaxInt32.
+// In practice, this is a theoretical concern as Namecoin would need ~400 years
+// to reach heights where this matters (at 10 min/block).
+func safeCalcExpiresAt(height int32) int32 {
+	if height > int32(math.MaxInt32)-config.NameExpirationBlocks {
+		return int32(math.MaxInt32)
+	}
+	return height + config.NameExpirationBlocks
 }
 
 // processNameFirstUpdate handles NAME_FIRSTUPDATE operations.
