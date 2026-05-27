@@ -137,26 +137,27 @@ func (rl *rateLimiter) evictOldestBucketLocked() {
 	}
 }
 
+// sweepLocked removes stale rate-limit bucket entries older than 10 minutes.
+// Must be called with rl.mu held.
+func (rl *rateLimiter) sweepLocked(now time.Time) {
+	var next *list.Element
+	for elem := rl.lruList.Front(); elem != nil; elem = next {
+		next = elem.Next()
+		entry := elem.Value.(*bucketEntry)
+		if now.Sub(entry.bucket.lastUsed) > 10*time.Minute {
+			delete(rl.buckets, entry.ip)
+			rl.lruList.Remove(elem)
+		}
+	}
+}
+
 // cleanupLoop removes stale bucket entries
 func (rl *rateLimiter) cleanupLoop() {
 	for {
 		select {
 		case <-rl.cleanup.C:
 			rl.mu.Lock()
-			now := time.Now()
-
-			// Iterate through list and remove stale entries
-			var next *list.Element
-			for elem := rl.lruList.Front(); elem != nil; elem = next {
-				next = elem.Next()
-				entry := elem.Value.(*bucketEntry)
-
-				// Remove buckets that haven't been used in 10 minutes
-				if now.Sub(entry.bucket.lastUsed) > 10*time.Minute {
-					delete(rl.buckets, entry.ip)
-					rl.lruList.Remove(elem)
-				}
-			}
+			rl.sweepLocked(time.Now())
 			rl.mu.Unlock()
 		case <-rl.done:
 			return
@@ -168,21 +169,7 @@ func (rl *rateLimiter) cleanupLoop() {
 func (rl *rateLimiter) triggerCleanup() {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
-
-	now := time.Now()
-
-	// Iterate through list and remove stale entries
-	var next *list.Element
-	for elem := rl.lruList.Front(); elem != nil; elem = next {
-		next = elem.Next()
-		entry := elem.Value.(*bucketEntry)
-
-		// Remove buckets that haven't been used in 10 minutes
-		if now.Sub(entry.bucket.lastUsed) > 10*time.Minute {
-			delete(rl.buckets, entry.ip)
-			rl.lruList.Remove(elem)
-		}
-	}
+	rl.sweepLocked(time.Now())
 }
 
 // stop stops the cleanup goroutine.

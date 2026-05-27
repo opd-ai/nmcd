@@ -1,15 +1,19 @@
 package rpc
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"math/big"
 	"net"
 	"net/http"
 	"os"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -197,6 +201,12 @@ func (s *Server) broadcastAndRespond(tx *wire.MsgTx, reqID interface{}, result m
 		return errorResponse(reqID, -1, "Network not available: peer manager not initialized")
 	}
 	if err := s.peerMgr.BroadcastTx(tx); err != nil {
+		if errors.Is(err, network.ErrNoPeers) {
+			s.logWarn("transaction accepted locally but not relayed",
+				"tx_hash", tx.TxHash().String())
+			result["warning"] = err.Error()
+			return successResponse(reqID, result)
+		}
 		return errorResponse(reqID, -1, fmt.Sprintf("Failed to broadcast transaction: %v", err))
 	}
 	return successResponse(reqID, result)
@@ -207,6 +217,19 @@ func NewServer(cfg *Config) (*Server, error) {
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on %s: %w", cfg.ListenAddr, err)
+	}
+
+	// Warn when both credentials are empty and the listen address is not loopback.
+	// An unprotected RPC server on a non-loopback address exposes wallet and name
+	// operations to anyone with network access.
+	if cfg.RPCUser == "" && cfg.RPCPassword == "" {
+		if host, _, splitErr := net.SplitHostPort(cfg.ListenAddr); splitErr == nil {
+			ip := net.ParseIP(host)
+			if !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
+				log.Printf("WARNING: RPC server listening on %s with no credentials configured — "+
+					"all RPC methods are accessible without authentication", cfg.ListenAddr)
+			}
+		}
 	}
 
 	// Set default rate limit if not configured
@@ -299,15 +322,16 @@ func (s *Server) Close() error {
 // checkAuth validates HTTP Basic Authentication credentials.
 // Returns true if the request contains valid credentials matching
 // the configured rpcUser and rpcPassword.
-// Uses constant-time comparison to prevent timing attacks.
+// Uses SHA-256 hashing before constant-time comparison to prevent
+// length-based timing side-channels while preserving constant-time semantics.
 func (s *Server) checkAuth(r *http.Request) bool {
 	user, pass, ok := r.BasicAuth()
 	if !ok {
 		return false
 	}
-	userMatch := subtle.ConstantTimeCompare([]byte(user), []byte(s.rpcUser))
-	passMatch := subtle.ConstantTimeCompare([]byte(pass), []byte(s.rpcPassword))
-	return userMatch == 1 && passMatch == 1
+	expectedHash := sha256.Sum256([]byte(s.rpcUser + ":" + s.rpcPassword))
+	providedHash := sha256.Sum256([]byte(user + ":" + pass))
+	return subtle.ConstantTimeCompare(expectedHash[:], providedHash[:]) == 1
 }
 
 // withPanicRecovery wraps an HTTP handler with panic recovery middleware.
@@ -627,7 +651,6 @@ func (s *Server) getMetrics(req *Request) *Response {
 		ID:      req.ID,
 	}
 }
-
 
 // logWarn logs a warning if the server logger is initialised; otherwise it is a no-op.
 func (s *Server) logWarn(msg string, args ...interface{}) {

@@ -1,6 +1,7 @@
 package network
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -17,6 +18,8 @@ import (
 	"github.com/opd-ai/nmcd/internal/logging"
 	"github.com/opd-ai/nmcd/metrics"
 )
+
+var ErrNoPeers = errors.New("no peers connected, transaction not relayed")
 
 // PeerManager manages network peers using btcd/peer
 type PeerManager struct {
@@ -472,38 +475,36 @@ func (pm *PeerManager) onTx(p *peer.Peer, msg *wire.MsgTx) {
 
 // relayTransaction broadcasts a transaction to all peers except the source
 func (pm *PeerManager) relayTransaction(tx *wire.MsgTx, excludePeer *peer.Peer) {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-
-	if len(pm.peers) == 0 {
-		return
-	}
-
 	txHash := tx.TxHash()
 
 	// Create inventory message for the transaction
 	inv := wire.NewMsgInv()
 	inv.AddInvVect(wire.NewInvVect(wire.InvTypeTx, &txHash))
 
-	// Broadcast to all connected peers except the source
-	relayCount := 0
-	for _, targetPeer := range pm.peers {
-		// Skip the peer we received this from to avoid relay loops
-		// Use pointer equality for reliable peer identity comparison
-		if excludePeer != nil && targetPeer == excludePeer {
+	// Snapshot the peer list under the read lock so that QueueMessage is
+	// called outside the lock. QueueMessage can block if a peer's send
+	// channel is full; holding pm.mu while blocking would prevent Stop()
+	// and handleInboundPeer from acquiring the write lock.
+	pm.mu.RLock()
+	targets := make([]*peer.Peer, 0, len(pm.peers))
+	for _, p := range pm.peers {
+		if excludePeer != nil && p == excludePeer {
 			continue
 		}
-
-		if targetPeer.Connected() {
-			targetPeer.QueueMessage(inv, nil)
-			relayCount++
+		if p.Connected() {
+			targets = append(targets, p)
 		}
 	}
+	pm.mu.RUnlock()
 
-	if relayCount > 0 {
+	for _, targetPeer := range targets {
+		targetPeer.QueueMessage(inv, nil)
+	}
+
+	if len(targets) > 0 {
 		pm.logger.Debug("relayed transaction to peers",
 			"tx_hash", txHash.String(),
-			"peer_count", relayCount)
+			"peer_count", len(targets))
 	}
 }
 
@@ -628,58 +629,64 @@ func (pm *PeerManager) onGetBlocks(p *peer.Peer, msg *wire.MsgGetBlocks) {
 	p.QueueMessage(invMsg, nil)
 }
 
-// BroadcastBlock broadcasts a block to all peers
+// BroadcastBlock broadcasts a block to all peers.
 func (pm *PeerManager) BroadcastBlock(block *wire.MsgBlock) {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-
 	inv := wire.NewMsgInv()
 	blockHash := block.BlockHash()
 	inv.AddInvVect(wire.NewInvVect(wire.InvTypeBlock, &blockHash))
 
+	pm.mu.RLock()
+	targets := make([]*peer.Peer, 0, len(pm.peers))
 	for _, p := range pm.peers {
+		targets = append(targets, p)
+	}
+	pm.mu.RUnlock()
+
+	for _, p := range targets {
 		p.QueueMessage(inv, nil)
 	}
 }
 
-// BroadcastTx broadcasts a transaction to all peers
-// This is used when locally creating transactions (e.g., from RPC calls)
+// BroadcastTx adds tx to the local mempool and relays an inventory announcement
+// to all connected peers.
+//
+// It returns ErrNoPeers when the transaction is accepted into the local mempool
+// but no connected peers were available to relay it.
 func (pm *PeerManager) BroadcastTx(tx *wire.MsgTx) error {
 	if tx == nil {
 		return fmt.Errorf("cannot broadcast nil transaction")
 	}
 
-	// First, add to our own mempool (with validation)
 	if err := pm.mempool.AddTx(tx); err != nil {
 		return fmt.Errorf("failed to add transaction to mempool: %w", err)
 	}
 
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-
-	if len(pm.peers) == 0 {
-		pm.logger.Warn("no peers connected, transaction not relayed",
-			"tx_hash", tx.TxHash().String())
-		return nil
-	}
-
-	// Create inventory message
-	inv := wire.NewMsgInv()
 	txHash := tx.TxHash()
+	inv := wire.NewMsgInv()
 	inv.AddInvVect(wire.NewInvVect(wire.InvTypeTx, &txHash))
 
-	// Broadcast to all connected peers
-	broadcastCount := 0
+	pm.mu.RLock()
+	targets := make([]*peer.Peer, 0, len(pm.peers))
 	for _, p := range pm.peers {
 		if p.Connected() {
-			p.QueueMessage(inv, nil)
-			broadcastCount++
+			targets = append(targets, p)
 		}
+	}
+	pm.mu.RUnlock()
+
+	if len(targets) == 0 {
+		pm.logger.Warn("no peers connected, transaction not relayed",
+			"tx_hash", txHash.String())
+		return ErrNoPeers
+	}
+
+	for _, p := range targets {
+		p.QueueMessage(inv, nil)
 	}
 
 	pm.logger.Info("broadcast transaction",
 		"tx_hash", txHash.String(),
-		"peer_count", broadcastCount)
+		"peer_count", len(targets))
 	return nil
 }
 
@@ -719,32 +726,31 @@ func (pm *PeerManager) GetMempool() *Mempool {
 	return pm.mempool
 }
 
-// SyncBlocks initiates block synchronization with peers
-// This sends getheaders requests to connected peers to start syncing
+// SyncBlocks initiates block synchronization with peers.
 func (pm *PeerManager) SyncBlocks() {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-
 	if pm.blockchain == nil {
 		pm.logger.Warn("cannot sync blocks: blockchain not initialized")
 		return
 	}
 
-	// Get our best block hash to use as the starting point
 	bestHash := pm.blockchain.BestSnapshot().Hash
-
-	// Create a getheaders message
 	getHeadersMsg := wire.NewMsgGetHeaders()
 	getHeadersMsg.AddBlockLocatorHash(&bestHash)
 
-	// Send to all connected peers
+	pm.mu.RLock()
+	targets := make([]*peer.Peer, 0, len(pm.peers))
 	for _, p := range pm.peers {
 		if p.Connected() {
-			p.QueueMessage(getHeadersMsg, nil)
-			pm.logger.Debug("requesting headers from peer",
-				"peer_id", p.Addr(),
-				"our_best_hash", bestHash.String())
+			targets = append(targets, p)
 		}
+	}
+	pm.mu.RUnlock()
+
+	for _, p := range targets {
+		p.QueueMessage(getHeadersMsg, nil)
+		pm.logger.Debug("requesting headers from peer",
+			"peer_id", p.Addr(),
+			"our_best_hash", bestHash.String())
 	}
 }
 

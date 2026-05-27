@@ -3,11 +3,13 @@ package rpc
 import (
 	"bytes"
 	"encoding/hex"
+	"errors"
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/opd-ai/nmcd/network"
 )
 
 // getBlock returns a block by hash with optional verbose mode.
@@ -290,10 +292,15 @@ func (s *Server) sendRawTransaction(req *Request) *Response {
 		return errorResponse(req.ID, -1, "Network not available: peer manager not initialized")
 	}
 
+	txHash := tx.TxHash()
 	if err := s.peerMgr.BroadcastTx(&tx); err != nil {
+		if errors.Is(err, network.ErrNoPeers) {
+			s.logWarn("transaction accepted locally but not relayed",
+				"tx_hash", txHash.String())
+			return successResponse(req.ID, txHash.String())
+		}
 		return errorResponse(req.ID, -25, fmt.Sprintf("Transaction rejected: %v", err))
 	}
 
-	txHash := tx.TxHash()
 	return successResponse(req.ID, txHash.String())
 }

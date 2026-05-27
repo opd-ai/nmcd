@@ -31,6 +31,10 @@ func (s *Server) nameShow(req *Request) *Response {
 	}
 
 	name := params[0]
+	if errResp := validateNameLength(name, req.ID); errResp != nil {
+		return errResp
+	}
+
 	record, err := s.blockchain.GetName(name)
 	if err != nil {
 		return &Response{
@@ -46,9 +50,6 @@ func (s *Server) nameShow(req *Request) *Response {
 	bestHeight := s.blockchain.BestSnapshot().Height
 	expiresIn := record.ExpiresAt - bestHeight
 	expired := expiresIn < 0
-	if expiresIn < 0 {
-		expiresIn = 0
-	}
 
 	result := map[string]interface{}{
 		"name":       record.Name,

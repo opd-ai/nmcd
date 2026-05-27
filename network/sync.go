@@ -118,6 +118,21 @@ func (sm *SyncManager) syncTick() {
 	}
 }
 
+// startSync begins syncing from the specified peer.
+func (sm *SyncManager) startSync(p *peer.Peer) {
+	if p == nil {
+		return
+	}
+
+	sm.mu.Lock()
+	sm.syncPeer = p
+	peerHeight := sm.bestHeight
+	sm.mu.Unlock()
+
+	log.Printf("Starting sync with peer %s (height: %d)", p.Addr(), peerHeight)
+	sm.requestHeaders(p)
+}
+
 // requestHeaders sends a getheaders request to a peer
 func (sm *SyncManager) requestHeaders(p *peer.Peer) {
 	// Ensure blockchain is initialized before using it
@@ -233,6 +248,9 @@ func (sm *SyncManager) UpdatePeerHeight(p *peer.Peer, height int32) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
+	if sm.peerHeights == nil {
+		sm.peerHeights = make(map[*peer.Peer]int32)
+	}
 	if p != nil {
 		sm.peerHeights[p] = height
 	}
@@ -291,7 +309,7 @@ func (sm *SyncManager) findReplacementPeer(disconnected *peer.Peer) *peer.Peer {
 	defer sm.pm.mu.RUnlock()
 
 	for _, candidate := range sm.pm.peers {
-		if candidate == nil || !candidate.Connected() {
+		if candidate == nil {
 			continue
 		}
 		if disconnected != nil && candidate.Addr() == disconnected.Addr() {
@@ -319,6 +337,13 @@ func (sm *SyncManager) maxPeerHeightLocked() int32 {
 		}
 	}
 	return maxHeight
+}
+
+// cleanupOldRequests removes block requests older than 2 minutes.
+func (sm *SyncManager) cleanupOldRequests() {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.cleanupOldRequestsLocked(time.Now())
 }
 
 // cleanupOldRequestsLocked removes block requests older than 2 minutes.
