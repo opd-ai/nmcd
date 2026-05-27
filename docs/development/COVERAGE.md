@@ -239,7 +239,7 @@ go test -race ./...
 
 ## Conclusion
 
-nmcd now has **strong coverage across all critical packages**. All packages meet or exceed the 70% production threshold, and all critical packages except network meet the 80% target. The network package meets the adjusted 75% target.
+nmcd now has **strong coverage across all critical packages**. All critical packages meet or exceed the 70% production threshold (excluding command entry points and internal/server integration components), and all critical packages except network meet the 80% target. The network package meets the adjusted 75% target.
 
 With current coverage:
 - **chain: 80.1%** ✅ (target met)
