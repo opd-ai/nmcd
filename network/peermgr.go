@@ -31,6 +31,7 @@ type PeerManager struct {
 	mu          sync.RWMutex
 	quit        chan struct{}
 	wg          sync.WaitGroup
+	stopOnce    sync.Once
 }
 
 // Config holds network configuration
@@ -357,7 +358,14 @@ func (pm *PeerManager) onBlock(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
 	block := btcutil.NewBlock(msg)
 	blockHash := block.Hash()
 
-	pm.parseAuxPowIfPresent(blockHash, msg, buf)
+	// If AuxPow parsing fails for a block that requires AuxPow, reject it.
+	if err := pm.parseAuxPowIfPresent(blockHash, msg, buf); err != nil {
+		pm.logger.Error("rejected block: AuxPow required but parse failed",
+			"block_hash", msg.BlockHash().String(),
+			"peer_id", p.Addr(),
+			"error", err)
+		return
+	}
 
 	isMainChain, isOrphan, err := pm.blockchain.ProcessBlock(block, blockchain.BFNone)
 	if err != nil {
@@ -380,15 +388,25 @@ func (pm *PeerManager) onBlock(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
 }
 
 // parseAuxPowIfPresent parses AuxPow data from the raw block bytes if present.
-func (pm *PeerManager) parseAuxPowIfPresent(blockHash *chainhash.Hash, msg *wire.MsgBlock, buf []byte) {
+// Returns an error if the block version requires AuxPow but parsing fails —
+// such blocks must be rejected to prevent unverified PoW from being accepted.
+// Returns nil when buf is empty or when AuxPow is not required by the version.
+func (pm *PeerManager) parseAuxPowIfPresent(blockHash *chainhash.Hash, msg *wire.MsgBlock, buf []byte) error {
 	if len(buf) == 0 {
-		return
+		return nil
 	}
 	if err := pm.blockchain.SetBlockAuxPowFromBytes(blockHash, buf); err != nil {
+		// If the AuxPow version bit is set, this block claims to carry AuxPow;
+		// a parse failure means we cannot verify its PoW — reject it.
+		if msg.Header.Version&int32(config.AuxPowVersionBit) != 0 {
+			return fmt.Errorf("AuxPow parse failed for block %s: %w", blockHash, err)
+		}
+		// For non-AuxPow blocks the extra bytes are unexpected but non-fatal.
 		pm.logger.Warn("failed to parse AuxPow data, continuing anyway",
 			"block_hash", msg.BlockHash().String(),
 			"error", err)
 	}
+	return nil
 }
 
 // removeConfirmedTransactions removes transactions confirmed in a block from the mempool.
@@ -752,31 +770,36 @@ func (pm *PeerManager) updatePeerMetrics() {
 	metrics.Get().UpdatePeerCount(total, inbound, outbound)
 }
 
-// Stop stops the peer manager
+// Stop stops the peer manager.
+// Safe to call multiple times; only the first call has effect.
 func (pm *PeerManager) Stop() {
-	// Stop sync manager first
-	if pm.syncManager != nil {
-		pm.syncManager.Stop()
-	}
+	pm.stopOnce.Do(func() {
+		// Stop sync manager first
+		if pm.syncManager != nil {
+			pm.syncManager.Stop()
+		}
 
-	// Stop mempool cleanup
-	if pm.mempool != nil {
-		pm.mempool.Stop()
-	}
+		// Stop mempool cleanup
+		if pm.mempool != nil {
+			pm.mempool.Stop()
+		}
 
-	close(pm.quit)
+		close(pm.quit)
 
-	// Close all listeners
-	for _, listener := range pm.listeners {
-		listener.Close()
-	}
+		// Close all listeners
+		for _, listener := range pm.listeners {
+			if err := listener.Close(); err != nil {
+				pm.logger.Warn("error closing listener", "err", err)
+			}
+		}
 
-	// Disconnect all peers
-	pm.mu.Lock()
-	for _, p := range pm.peers {
-		p.Disconnect()
-	}
-	pm.mu.Unlock()
+		// Disconnect all peers
+		pm.mu.Lock()
+		for _, p := range pm.peers {
+			p.Disconnect()
+		}
+		pm.mu.Unlock()
 
-	pm.wg.Wait()
+		pm.wg.Wait()
+	})
 }

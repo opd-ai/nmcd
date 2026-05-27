@@ -343,9 +343,13 @@ func (ap *AuxPow) ValidateAuxPow(blockHash, targetDifficulty *chainhash.Hash) er
 	// or if it properly connects to the coinbase.
 
 	if len(ap.ChainMerkleBranch.Branch) == 0 {
-		// Direct commitment: aux block hash should be in coinbase
-		// This is valid for single-chain merged mining
-		// We accept this case as it means the block hash is directly committed
+		// Direct commitment: verify block hash appears in coinbase
+		coinbaseData := serializeCoinbaseForSearch(&ap.CoinbaseTx)
+		blockHashBytes := blockHash[:]
+		reversedBlockHash := reverseHashBytes(*blockHash)
+		if !bytesContain(coinbaseData, blockHashBytes) && !bytesContain(coinbaseData, reversedBlockHash[:]) {
+			return fmt.Errorf("auxpow: block hash not found in coinbase for direct commitment")
+		}
 	} else {
 		// Verify structural validity first
 		if len(ap.ChainMerkleBranch.Branch) > 32 {

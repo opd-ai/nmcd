@@ -284,55 +284,55 @@ func createTestBlock(t *testing.T, version, height int32) *btcutil.Block {
 }
 
 func createTestAuxPowBlock(t *testing.T, height int32) (*btcutil.Block, *AuxPow) {
-	// Create a valid-looking AuxPow structure for testing
-	// Note: This creates a minimal valid AuxPow with very easy difficulty
-
-	// Create coinbase transaction
-	coinbaseTx := wire.NewMsgTx(1)
-	coinbaseTx.AddTxIn(&wire.TxIn{
+	// Create a valid-looking AuxPow structure for testing.
+	// The aux block coinbase is separate from the parent coinbase that carries the commitment.
+	auxCoinbaseTx := wire.NewMsgTx(1)
+	auxCoinbaseTx.AddTxIn(&wire.TxIn{
 		PreviousOutPoint: wire.OutPoint{Index: 0xffffffff},
-		SignatureScript:  []byte("coinbase"),
+		SignatureScript:  []byte("aux coinbase"),
 	})
-	coinbaseTx.AddTxOut(&wire.TxOut{
-		Value:    50 * 100000000,           // 50 NMC in satoshis
-		PkScript: []byte{0x76, 0xa9, 0x14}, // P2PKH prefix
+	auxCoinbaseTx.AddTxOut(&wire.TxOut{
+		Value:    50 * 100000000,
+		PkScript: []byte{0x76, 0xa9, 0x14},
 	})
 
-	// Create block with extremely easy difficulty (0x2100ffff = minimal work)
-	// Version includes: chain ID (1) in bits 16+, AuxPoW bit (0x100), and base version (1)
-	// For Namecoin: version = (1 << 16) | 0x100 | 1 = 0x00010101
 	version := int32((NamecoinChainID << 16) | config.AuxPowVersionBit | 1)
 	blockHeader := wire.BlockHeader{
 		Version:    version,
 		PrevBlock:  chainhash.Hash{},
-		MerkleRoot: coinbaseTx.TxHash(),
+		MerkleRoot: auxCoinbaseTx.TxHash(),
 		Timestamp:  time.Now(),
-		Bits:       0x2100ffff, // Extremely easy difficulty (almost any hash works)
+		Bits:       0x2100ffff,
 		Nonce:      12345,
 	}
 
 	msgBlock := wire.NewMsgBlock(&blockHeader)
-	msgBlock.AddTransaction(coinbaseTx)
+	msgBlock.AddTransaction(auxCoinbaseTx)
 	block := btcutil.NewBlock(msgBlock)
 	block.SetHeight(height)
 
 	blockHash := block.Hash()
+	parentCoinbaseTx := wire.NewMsgTx(1)
+	parentCoinbaseTx.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: wire.OutPoint{Index: 0xffffffff},
+		SignatureScript:  append([]byte("coinbase"), blockHash[:]...),
+	})
+	parentCoinbaseTx.AddTxOut(&wire.TxOut{
+		Value:    50 * 100000000,
+		PkScript: []byte{0x76, 0xa9, 0x14},
+	})
 
-	// Create parent block header that meets the easy difficulty target
-	// With Bits = 0x2100ffff, the target is extremely high (easy to meet)
-	// We just need to find a nonce that produces a valid hash
 	parentHeader := wire.BlockHeader{
 		Version:    1,
 		PrevBlock:  chainhash.Hash{},
-		MerkleRoot: coinbaseTx.TxHash(),
+		MerkleRoot: parentCoinbaseTx.TxHash(),
 		Timestamp:  time.Now(),
-		Bits:       0x2100ffff, // Same extremely easy difficulty
-		Nonce:      findValidParentNonce(NamecoinChainID, coinbaseTx.TxHash()),
+		Bits:       0x2100ffff,
+		Nonce:      findValidParentNonce(NamecoinChainID, parentCoinbaseTx.TxHash()),
 	}
 
-	// Create AuxPow with empty merkle branches (direct commitment)
 	auxPow := &AuxPow{
-		CoinbaseTx: *coinbaseTx,
+		CoinbaseTx: *parentCoinbaseTx,
 		BlockHash:  *blockHash,
 		CoinbaseBranch: MerkleBranch{
 			Branch:   []chainhash.Hash{},

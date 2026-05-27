@@ -242,7 +242,7 @@ func TestUpdateNameDatabaseNameFirstUpdate(t *testing.T) {
 
 	// First, store a NAME_NEW commitment (simulating a prior block)
 	// Note: We need to compute the commit hash the same way the code does
-	commitHash := computeCommitHash(randBytes, testName, bc.chainParams)
+	commitHash := computeCommitHash(randBytes, testName)
 	if err := ndb.PutNameNew(commitHash, 90); err != nil {
 		t.Fatalf("Failed to store NAME_NEW: %v", err)
 	}

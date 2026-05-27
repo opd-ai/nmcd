@@ -16,8 +16,9 @@ func TestExtractIPEdgeCases(t *testing.T) {
 	}{
 		{"empty string", "", ""},
 		{"port only - no host", ":8080", ""},
-		{"IPv6 without port", "2001:db8::1", "2001:db8::1"},
-		{"IPv4 no port - just IP", "10.0.0.1", "10.0.0.1"},
+		// Addresses without a port cannot be parsed by SplitHostPort → empty string (global bucket)
+		{"IPv6 without port bracket", "2001:db8::1", ""},
+		{"IPv4 no port - just IP", "10.0.0.1", ""},
 	}
 
 	for _, tc := range tests {

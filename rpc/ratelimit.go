@@ -17,13 +17,14 @@ const (
 // rateLimiter implements per-IP rate limiting using token bucket algorithm
 // with LRU eviction for bounded memory usage.
 type rateLimiter struct {
-	mu      sync.RWMutex
-	buckets map[string]*list.Element // IP -> list element containing bucket
-	rate    int                      // requests per minute
-	maxSize int                      // maximum number of IPs to track (prevents unbounded growth)
-	lruList *list.List               // doubly linked list for LRU ordering
-	cleanup *time.Ticker             // cleanup ticker
-	done    chan struct{}            // cleanup stop signal
+	mu       sync.RWMutex
+	buckets  map[string]*list.Element // IP -> list element containing bucket
+	rate     int                      // requests per minute
+	maxSize  int                      // maximum number of IPs to track (prevents unbounded growth)
+	lruList  *list.List               // doubly linked list for LRU ordering
+	cleanup  *time.Ticker             // cleanup ticker
+	done     chan struct{}             // cleanup stop signal
+	stopOnce sync.Once
 }
 
 // bucketEntry wraps a bucket with its IP for LRU cache
@@ -184,19 +185,23 @@ func (rl *rateLimiter) triggerCleanup() {
 	}
 }
 
-// stop stops the cleanup goroutine
+// stop stops the cleanup goroutine.
+// Safe to call multiple times; only the first call has effect.
 func (rl *rateLimiter) stop() {
-	close(rl.done)
-	rl.cleanup.Stop()
+	rl.stopOnce.Do(func() {
+		close(rl.done)
+		rl.cleanup.Stop()
+	})
 }
 
-// extractIP extracts the IP address from a request's RemoteAddr
+// extractIP extracts the IP address from a request's RemoteAddr.
+// Returns an empty string when parsing fails, which is treated as a single
+// global bucket by the rate limiter to avoid tracking malformed addresses
+// under multiple keys.
 func extractIP(remoteAddr string) string {
-	// RemoteAddr is in format "ip:port"
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
-		// If parsing fails, use the entire remoteAddr
-		return remoteAddr
+		return ""
 	}
 	return host
 }

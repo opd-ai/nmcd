@@ -53,6 +53,7 @@ type Server struct {
 	autoLockTimer  *time.Timer // Auto-lock timer for walletpassphrase
 	autoLockMu     sync.Mutex  // Protects autoLockTimer and autoLockGen
 	autoLockGen    uint64      // Generation counter to invalidate superseded timers
+	stopOnce       sync.Once
 }
 
 // Config holds RPC server configuration
@@ -264,25 +265,30 @@ func (s *Server) Start() <-chan error {
 	return errCh
 }
 
-// Stop stops the RPC server
+// Stop stops the RPC server.
+// Safe to call multiple times; only the first call has effect.
 func (s *Server) Stop() error {
-	// Stop rate limiter cleanup goroutine
-	if s.rateLimiter != nil {
-		s.rateLimiter.stop()
-	}
-
-	// Close the HTTP server
-	serverErr := s.server.Close()
-
-	// Close the listener to release the port binding
-	// This is especially important for tests that create servers without starting them
-	if s.listener != nil {
-		if err := s.listener.Close(); err != nil && serverErr == nil {
-			serverErr = err
+	var stopErr error
+	s.stopOnce.Do(func() {
+		// Stop rate limiter cleanup goroutine
+		if s.rateLimiter != nil {
+			s.rateLimiter.stop()
 		}
-	}
 
-	return serverErr
+		// Close the HTTP server
+		serverErr := s.server.Close()
+
+		// Close the listener to release the port binding
+		// This is especially important for tests that create servers without starting them
+		if s.listener != nil {
+			if err := s.listener.Close(); err != nil && serverErr == nil {
+				serverErr = err
+			}
+		}
+
+		stopErr = serverErr
+	})
+	return stopErr
 }
 
 // Close closes the RPC server (alias for Stop for compatibility)

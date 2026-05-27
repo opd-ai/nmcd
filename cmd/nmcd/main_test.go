@@ -203,3 +203,32 @@ func TestSecureCredentialWarning(t *testing.T) {
 		}
 	}
 }
+
+// TestServerStartStop is a smoke test that verifies the daemon can be created and
+// stopped cleanly, exercising the graceful-shutdown path that SIGINT would trigger.
+// It also verifies that Stop() is safe to call multiple times (idempotent).
+func TestServerStartStop(t *testing.T) {
+	tempDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.DataDir = tempDir
+	cfg.Network = "regtest"
+	cfg.RPCAddr = "127.0.0.1:0" // ephemeral port — avoid conflicts
+	cfg.MaxPeers = 0
+	cfg.AddPeers = []string{}
+
+	srv, err := server.NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	// Stop without ever calling Start — simulates SIGINT arriving before Start.
+	if err := srv.Stop(); err != nil {
+		t.Errorf("first Stop() returned error: %v", err)
+	}
+
+	// Second Stop() must not panic and should return without error.
+	if err := srv.Stop(); err != nil {
+		t.Logf("second Stop() returned (non-fatal): %v", err)
+	}
+}

@@ -222,7 +222,20 @@ func (bc *BlockChain) clearBlockAuxPow(blockHash *chainhash.Hash) {
 	bc.auxPowCache.Delete(blockHash)
 }
 
-// ProcessBlock processes a block and validates name operations
+// ProcessBlock processes a block, validates name operations, and returns its chain status.
+//
+// Return values (isMainChain, isOrphan, err):
+//
+//	(true,  false, nil) — block accepted onto the main chain; name database updated.
+//	(false, false, nil) — block accepted as a side-chain block; name database NOT updated.
+//	(false, true,  nil) — block is an isolated orphan (parent unknown); name database NOT updated.
+//	                      Note: (true, true, nil) is theoretically possible from the embedded
+//	                      btcd BlockChain; callers should handle it as an orphan.
+//	(_,     _,     err) — block rejected; no state was changed.
+//
+// Callers in network/peermgr.go use `isOrphan || isMainChain` to decide whether to
+// request the orphan's parent; a pure side-chain block (false, false, nil) does not
+// trigger that path.
 func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.BehaviorFlags) (bool, bool, error) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
@@ -525,7 +538,6 @@ func (bc *BlockChain) validateBlockVersion(block *btcutil.Block) error {
 	return nil
 }
 
-
 // nameValidationContext holds state for validating name operations in a block.
 type nameValidationContext struct {
 	seenNameNewCommits map[string]bool // Track NAME_NEW commits in this block
@@ -593,7 +605,7 @@ func (bc *BlockChain) validateNameFirstUpdateOp(txOut *wire.TxOut, name string, 
 	}
 
 	// Compute the commitment hash from rand (extra), name, and chain ID
-	commitHash := computeCommitHash(extra, name, bc.chainParams)
+	commitHash := computeCommitHash(extra, name)
 
 	// Verify NAME_NEW exists and MinBlocksBeforeFirstUpdate has passed
 	nameNewRecord, err := bc.nameDB.GetNameNew(commitHash)
@@ -1081,7 +1093,7 @@ func (bc *BlockChain) processNameFirstUpdate(txHash *chainhash.Hash, outIdx int,
 		return err
 	}
 
-	commitHash := computeCommitHash(extra, name, bc.chainParams)
+	commitHash := computeCommitHash(extra, name)
 	if err := bc.nameDB.DeleteNameNew(commitHash); err != nil {
 		return err
 	}
@@ -1092,7 +1104,7 @@ func (bc *BlockChain) processNameFirstUpdate(txHash *chainhash.Hash, outIdx int,
 
 // getNameNewHeight retrieves the NAME_NEW height or estimates it.
 func (bc *BlockChain) getNameNewHeight(extra []byte, name string, currentHeight int32) int32 {
-	commitHash := computeCommitHash(extra, name, bc.chainParams)
+	commitHash := computeCommitHash(extra, name)
 	nameNewRecord, err := bc.nameDB.GetNameNew(commitHash)
 	if err == nil && nameNewRecord != nil {
 		return nameNewRecord.Height
@@ -1205,7 +1217,6 @@ func (bc *BlockChain) GetUTXOsForAddress(address string) ([]*namedb.UTXO, error)
 	defer bc.mu.RUnlock()
 	return bc.nameDB.GetUTXOsForAddress(address)
 }
-
 
 // BestSnapshot returns the current best chain snapshot
 func (bc *BlockChain) BestSnapshot() *blockchain.BestState {
@@ -1374,7 +1385,7 @@ func (bc *BlockChain) rollbackNameFirstUpdate(name string, extra []byte, blockHe
 		return fmt.Errorf("failed to delete name %s: %w", name, err)
 	}
 
-	commitHash := computeCommitHash(extra, name, bc.chainParams)
+	commitHash := computeCommitHash(extra, name)
 	if err := bc.nameDB.RestoreNameNew(commitHash, nameNewHeight); err != nil {
 		return fmt.Errorf("failed to restore NAME_NEW for %s: %w", name, err)
 	}
@@ -1549,7 +1560,7 @@ func (bc *BlockChain) validateNameFirstUpdate(name, value string, extra []byte, 
 		return fmt.Errorf("failed to check existing name %s: %w", name, err)
 	}
 
-	commitHash := computeCommitHash(extra, name, bc.chainParams)
+	commitHash := computeCommitHash(extra, name)
 	nameNewRecord, err := bc.nameDB.GetNameNew(commitHash)
 	if err != nil {
 		return fmt.Errorf("no matching name_new found for name: %s", name)
@@ -1633,5 +1644,3 @@ func (bc *BlockChain) validateRegularTransaction(tx *wire.MsgTx) error {
 
 	return nil
 }
-
-

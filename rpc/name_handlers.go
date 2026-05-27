@@ -425,7 +425,7 @@ func (s *Server) nameFirstUpdate(req *Request) *Response {
 
 // validateNameNewCommitment validates that a NAME_NEW commitment exists and is within the valid window.
 func (s *Server) validateNameNewCommitment(randBytes []byte, name string, reqID interface{}) *Response {
-	commitHash := wallet.ComputeNameNewHash(randBytes, name, s.blockchain.ChainParams())
+	commitHash := wallet.ComputeNameNewHash(randBytes, name)
 	nameNewRecord, err := s.blockchain.GetNameDB().GetNameNew(commitHash)
 	if err != nil {
 		return errorResponse(reqID, -25, "NAME_NEW commitment not found. You must call name_new first and wait for confirmation.")

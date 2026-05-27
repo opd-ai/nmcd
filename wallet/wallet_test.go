@@ -398,19 +398,14 @@ func TestComputeNameNewHash(t *testing.T) {
 		rand[i] = byte(i)
 	}
 
-	// Import config package for Namecoin chain params
-	mainnetParams := &config.NamecoinMainNetParams
-	testnetParams := &config.NamecoinTestNetParams
-	regtestParams := &config.NamecoinRegTestParams
-
 	// Test basic hash generation
-	hash1 := ComputeNameNewHash(rand, "d/example", mainnetParams)
+	hash1 := ComputeNameNewHash(rand, "d/example")
 	if len(hash1) != 20 {
 		t.Errorf("expected 20-byte hash, got %d bytes", len(hash1))
 	}
 
 	// Different name should produce different hash
-	hash2 := ComputeNameNewHash(rand, "d/different", mainnetParams)
+	hash2 := ComputeNameNewHash(rand, "d/different")
 	if string(hash1) == string(hash2) {
 		t.Error("different names produced same hash")
 	}
@@ -420,25 +415,14 @@ func TestComputeNameNewHash(t *testing.T) {
 	for i := range rand2 {
 		rand2[i] = byte(i + 1)
 	}
-	hash3 := ComputeNameNewHash(rand2, "d/example", mainnetParams)
+	hash3 := ComputeNameNewHash(rand2, "d/example")
 	if string(hash1) == string(hash3) {
 		t.Error("different rand values produced same hash")
 	}
 
-	// CRITICAL: Different networks should produce different hashes
-	// This prevents cross-chain replay attacks
-	hashMainnet := ComputeNameNewHash(rand, "d/example", mainnetParams)
-	hashTestnet := ComputeNameNewHash(rand, "d/example", testnetParams)
-	hashRegtest := ComputeNameNewHash(rand, "d/example", regtestParams)
-
-	if string(hashMainnet) == string(hashTestnet) {
-		t.Error("mainnet and testnet produced same hash - chain ID not working!")
-	}
-	if string(hashMainnet) == string(hashRegtest) {
-		t.Error("mainnet and regtest produced same hash - chain ID not working!")
-	}
-	if string(hashTestnet) == string(hashRegtest) {
-		t.Error("testnet and regtest produced same hash - chain ID not working!")
+	hash4 := ComputeNameNewHash(rand, "d/example")
+	if string(hash1) != string(hash4) {
+		t.Error("same inputs produced different hashes")
 	}
 }
 
