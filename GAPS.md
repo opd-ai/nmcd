@@ -1,138 +1,67 @@
-# Implementation Gaps — 2026-05-25
+# Implementation Gaps — 2026-05-27
 
-This document records discrepancies between what `nmcd` claims (in `README.md`, `docs/`, `ROADMAP.md`, and exported GoDoc) and what the current code actually does.
+These are gaps between what `nmcd`'s README and GoDoc claim and what the code actually does. Each gap references concrete file/line evidence and proposes a closing action.
 
----
+## G-1 — NAME_NEW commitment hash is not Namecoin-Core-compatible
 
-## Name-operation validation is silently disabled for some blocks
+- **Stated Goal**: The README and `chain/doc.go` describe `nmcd` as a "Namecoin daemon" implementing the "two-phase NAME_NEW → NAME_FIRSTUPDATE protocol" of Namecoin. The implication — and what library users will assume — is that names registered via `nmcd` are visible to the wider Namecoin network and vice-versa.
+- **Current State**: `chain/name_script.go:65-81` (`computeCommitHash`) computes `RIPEMD160(SHA256(rand ‖ name ‖ chainID))` where `chainID = chainParams.Net` (4 bytes, little-endian network magic). Namecoin Core's `CNameScript::buildCommitment` (src/names/common.cpp) computes `RIPEMD160(SHA256(rand ‖ name))` — **no** chain-ID suffix. Both producer (wallet `CreateNameNewTx`) and validator (`chain/blockchain.go:596, 1084, 1095, 1377, 1552`) use the same custom function, so internal tests pass.
+- **Impact**: Hard consensus split with Namecoin Core. Every `NAME_FIRSTUPDATE` produced by `nmcd` fails Core's validation; every Core `NAME_FIRSTUPDATE` accepted from peers fails `nmcd`'s `GetNameNew` lookup at `chain/blockchain.go:599`, so the registration is rejected. On a live Namecoin network, no `nmcd` node can interoperate with any non-`nmcd` node for name registrations. Resolution of pre-existing names still works because that path doesn't recompute the commitment.
+- **Closing the Gap**:
+  1. Drop the `chainID` suffix to match upstream (preferred), OR
+  2. Reposition the project in README/docs as a "Namecoin-derivative" with its own commitment scheme, and document the wire-incompatibility prominently.
+  - Add a golden test in `chain/name_script_test.go` asserting `hex.EncodeToString(computeCommitHash(rand, name, &NamecoinMainNetParams))` matches a known Namecoin Core test vector.
 
-- **Stated Goal:** *"Blockchain Integration: Embeds btcd's blockchain.BlockChain with name validation hooks"* (README §"Daemon Features") and the project's "Name Operations Reference" in the repository instructions: NAME_NEW, NAME_FIRSTUPDATE and NAME_UPDATE must be validated per Namecoin protocol rules.
-- **Current State:** `chain/blockchain.go:765-779` (`validateNameOperations`) returns `nil` (success) whenever `determineBlockHeight(block)` fails — the entire name-operation validation loop is skipped. See AUDIT.md CRIT-1.
-- **Impact:** A block whose height cannot be derived (malformed coinbase, genesis edge cases, future protocol changes) bypasses **all** name validation (fee checks, duplicate detection, commitment matching, expiration, UTXO chain). The daemon will accept blocks that violate Namecoin consensus.
-- **Closing the Gap:** propagate the error from `determineBlockHeight` (`return fmt.Errorf("…: %w", err)`). Add a regression test that injects a block whose height cannot be determined and asserts validation rejects it.
+## G-2 — Production LOC claim overstates the codebase by ~75 %
 
----
+- **Stated Goal**: README claims "~18 000 lines of production code" as a measure of project maturity / completeness.
+- **Current State**: `go-stats-generator analyze . --skip-tests` reports 10 238 non-test lines across 68 source files. The actual figure is roughly 57 % of the claim.
+- **Impact**: Mis-sets expectations for users evaluating maturity. Auditors using LOC as a proxy for "what's there" will over-estimate test coverage per LOC and under-estimate per-feature LOC density.
+- **Closing the Gap**: Update README to "~10 200 lines of production code (plus ~14 000 lines of tests)" or — more usefully — replace the LOC claim with a feature-completeness table or `go-stats-generator` summary that is automatically refreshable.
 
-## Expiration comparison convention is inconsistently applied
+## G-3 — AuxPow validation is documented as "simplified" but README claims full Namecoin compatibility
 
-- **Stated Goal:** Repository convention (stored memory and the comment at `chain/blockchain.go:678`): *"Per namedb convention: `ExpiresAt < currentHeight` means expired"* (strict `<`). The rest of the codebase (`rpc/server.go:779`, `client/embedded.go:293/708/894`, `namedb/namedb.go:376`) follows this.
-- **Current State:** Three sites in `chain/blockchain.go` violate it: lines 735 (`validateNameUpdateOp`, `<=`), 2129 (`validateNameUpdate`, `<=`), and 2088 (`validateNameFirstUpdate`, `>`). See AUDIT.md HIGH-1/2/3.
-- **Impact:** Consensus divergence at the boundary block. The daemon will accept or reject NAME_UPDATE / NAME_FIRSTUPDATE transactions one block apart from every other Namecoin node, producing forks and refusing legitimate renewals on the final valid block.
-- **Closing the Gap:** change `<=` to `<` at lines 735 and 2129; change `>` to `>=` at line 2088. Add table-driven tests covering the boundary block (`record.ExpiresAt == currentHeight`).
+- **Stated Goal**: README and `chain/doc.go` claim full Namecoin block validation, including merge-mining. Namecoin's PoW *is* AuxPow.
+- **Current State**: `chain/auxpow.go:259-394` (`ValidateAuxPow`) intentionally does **not** parse the merged-mining commitment header (`0xfabe6d6d || merkle_root || merkle_size || nonce`). Source comments at L327-331, L342, L359-365 explicitly acknowledge this is a "pragmatic" / "robust across mining pools" simplification. In the empty-chain-merkle-branch branch (L345-348) no commitment check is performed at all; in the non-empty branch a fallback at L386 accepts any coinbase that *contains* the 32-byte computed root as a byte substring.
+- **Impact**: An attacker willing to grind a parent-chain coinbase that *happens to* contain the 32 target bytes — but without the surrounding magic / size / nonce structure — produces an AuxPow `nmcd` accepts but Namecoin Core rejects. The parent-chain PoW difficulty check (L279-282) still applies, so the attack is bounded by parent-chain hash cost, not free. Still: any `nmcd` node accepting blocks rejected by the rest of the network forks itself off-chain.
+- **Closing the Gap**: Implement the Namecoin Core check (`src/auxpow.cpp::check`):
+  1. Locate magic `0xfabe6d6d` in the coinbase scriptSig immediately preceding the merkle root.
+  2. Validate the 4-byte merkle size = `1 << len(ChainMerkleBranch)`.
+  3. Validate the position computed from the 4-byte nonce equals the side-bit walk over `ChainMerkleBranch.SideMask`.
+  4. Require exactly one occurrence (reject multiple magic sequences).
+  - Add test vectors from real Namecoin merge-mined blocks (e.g. block 19 200, block 24 000) plus negative tests for forged coinbases. See `AUDIT.md` finding H-2 / H-3.
 
----
+## G-4 — "Thread-safe: all operations safe for concurrent use" is undermined by non-idempotent `Stop()`
 
-## CI baseline (`go test -race ./...`) is currently red
+- **Stated Goal**: README emphasises thread-safety for embedded use ("all operations safe for concurrent use", "designed for embedding in concurrent applications").
+- **Current State**: `network/peermgr.go:767`, `network/sync.go:57`, and `rpc/ratelimit.go:189` each call `close(<chan>)` in their respective `Stop()`/`stop()` methods with no `sync.Once`. By contrast `network/mempool.go:42, 255` uses `stopOnce sync.Once` correctly. A second `Stop()` invocation triggers `panic: close of closed channel`. `EmbeddedClient.Close()` guards itself with `c.closed` (`client/embedded.go:1172`), so embedded users are partially protected — but any test, daemon shutdown handler, or library wrapper that calls `peerMgr.Stop()` or `Server.Stop()` twice will panic the process.
+- **Impact**: Thread-safe construction + non-idempotent destruction violates the stated invariant. Surfaces under SIGINT-races and double-close patterns common in defer-based cleanup.
+- **Closing the Gap**: Apply the project's own `sync.Once` pattern from `Mempool` to all three sites. See `AUDIT.md` finding H-1.
 
-- **Stated Goal:** `Makefile` target `test` runs `go test -v ./...`; the project promotes "Thread-Safe" and "comprehensive test coverage".
-- **Current State:** `TestLookupActiveNameRecordExpired` in `rpc/coverage_boost_test.go:549-575` fails on every run. The test's setup contradicts the production code's correct `<` convention. See AUDIT.md HIGH-4.
-- **Impact:** Any contributor running the documented `make test` workflow gets a failing test and has to triage. CI pipelines that gate on `go test` reject all PRs unless this is fixed or skipped.
-- **Closing the Gap:** rewrite the test so that `bestHeight > record.ExpiresAt` (the documented condition for "expired").
+## G-5 — RPC defaults expose the wallet when bound to non-loopback addresses
 
----
+- **Stated Goal**: README documents the RPC interface and embedded daemon. Wallet methods (`walletpassphrase`, `sendrawtransaction`, `name_update`) require sensitive access.
+- **Current State**: `rpc/server.go:391` skips authentication entirely when both `rpcUser` and `rpcPassword` are empty. The `Config` struct in `client/embedded.go` and the daemon entrypoint do not require credentials at construction time, and do not warn when the listen address is non-loopback.
+- **Impact**: A user who follows the README and binds to `0.0.0.0:8336` or a public interface without explicitly setting credentials exposes wallet operations to any IP. Convention is documented elsewhere as "auth optional" but the README does not mark it as required for non-loopback bindings.
+- **Closing the Gap**: In `rpc.NewServer`, refuse to start when `ListenAddr` resolves to a non-loopback address and credentials are empty; alternatively, log a `Warn`-level message ("RPC server bound to public address without authentication") on every request. Document the default explicitly in README. See `AUDIT.md` finding M-10.
 
-## SMTP upstream is plaintext for any port other than 587
+## G-6 — `name_show` JSON shape diverges from Namecoin Core
 
-- **Stated Goal:** `mail/doc.go` and `cmd/permamail/main.go` advertise the binary as a "SMTP relay" using Namecoin DNS for routing; users reasonably assume modern TLS.
-- **Current State:** `mail/smtp.go:453-461` upgrades to STARTTLS only when `UpstreamPort == 587`. Port 25 and port 465 (implicit-TLS submission) connect via plain `smtp.Dial` and then call `client.Auth(...)` — SASL credentials and message bodies traverse the network in cleartext. See AUDIT.md HIGH-5.
-- **Impact:** Credential disclosure. Email content disclosure. Trivial man-in-the-middle.
-- **Closing the Gap:** add an explicit `UpstreamTLS` configuration (`disabled`/`starttls`/`implicit`) and refuse `Auth` over cleartext unless the operator opts in.
+- **Stated Goal**: README presents `name_show` alongside other JSON-RPC methods as Namecoin-compatible.
+- **Current State**: `rpc/name_handlers.go:46-61` clamps `expires_in` to `0` when the record is expired, then sets `expired: true`. Namecoin Core returns a *negative* `expires_in` for expired records (e.g. `-12345` if expired 12 345 blocks ago) so consumers can compute "how long ago".
+- **Impact**: Existing Namecoin client libraries that compare `expires_in < 0` for expiry will not detect expiry; libraries that compute "expired since" by negating `expires_in` will compute zero. Cross-implementation tooling breaks.
+- **Closing the Gap**: Remove the clamp at L49-51; let `expires_in` go negative. Keep the `expired` boolean for clarity. See `AUDIT.md` finding M-9.
 
----
+## G-7 — Headers-first IBD can stall after best-peer disconnect
 
-## Library wallet API `CreateNameUpdateTxRaw` mis-routes change funds
+- **Stated Goal**: README claims "headers-first IBD sync" comparable to Bitcoin Core / Namecoin.
+- **Current State**: `network/sync.go:243-256` (`UpdatePeerHeight`) only ratchets `bestHeight` upward. `network/sync.go:280` assigns `bestPeer = findReplacementPeer(p)` after the best peer disconnects, but `findReplacementPeer` (`L286-305`) picks an arbitrary connected peer regardless of advertised height. `bestHeight` retains the disconnected peer's value, so `syncTick` (L93) keeps trying to sync against a peer that may be at a much lower height.
+- **Impact**: After a network split that drops the tallest peer, IBD progress can stall indefinitely without an error or log entry. The condition heals only when a new peer with `height > stale bestHeight` connects.
+- **Closing the Gap**: Track per-peer advertised heights in a `map[*peer.Peer]int32`; on disconnect, recompute `bestHeight = max(remaining)` and `bestPeer = argmax`. See `AUDIT.md` findings M-1, M-2.
 
-- **Stated Goal:** "Name Updates: Update values and extend expiration (36,000 blocks)" (README §"Library Features"); the receiver-method `(*Wallet).CreateNameUpdateTx` correctly sends change back to the current owner.
-- **Current State:** The exported package-level helper `wallet.CreateNameUpdateTxRaw` (intended for callers that don't hold all keys) uses `destAddress` for *both* the name output and the change output, so when a NAME_UPDATE transfers ownership the change is delivered to the new owner. See AUDIT.md HIGH-6.
-- **Impact:** Library users calling the documented public helper lose their change to the recipient of a name transfer.
-- **Closing the Gap:** add a `changeAddress` parameter, document it, and version the change as a minor release. Add an example.
+## G-8 — `BroadcastTx` reports success with zero peer relay
 
----
-
-## Mempool feature description matches code, but mempool is not exposed via library
-
-- **Stated Goal:** README §"Daemon Features": *"Transaction Mempool: Validates and relays unconfirmed transactions with automatic expiration."* Stated under **Library Features**: the client exposes `RegisterName`, `UpdateName`, `ListNames`, `ResolveName` only.
-- **Current State:** `network/mempool.go` implements validation + expiration; `network/peermgr.go:436-452` wires it to peer relay. However, `client/embedded.go`'s `RegisterName` / `UpdateName` flows do not push the constructed transactions into the mempool — they construct a `*wire.MsgTx` and the caller has no obvious path to broadcast it (compare to RPC `sendrawtransaction` flow). The README's library "Register or Update Names" example implies the transaction will be broadcast, but neither `RegisterName` nor `UpdateName` returns a broadcast-confirmation, only a `TxHash` string.
-- **Impact:** Library users believe their NAME_NEW / NAME_FIRSTUPDATE / NAME_UPDATE has been broadcast when in fact it has only been constructed locally. Names will never appear on the network.
-- **Closing the Gap:** in embedded mode, after constructing a transaction, submit it to `peerMgr.GetMempool().AddTx` and trigger `relayTransaction`. In daemon mode, send `sendrawtransaction`. Document both behaviors in `docs/EXAMPLES.md`.
-
----
-
-## `name_update` RPC documented as functional, but per `docs/development/AUDIT.md` it does not broadcast
-
-- **Stated Goal:** README §"Name Methods": `name_update` listed without caveats; example `curl` invocation shown.
-- **Current State:** The pre-existing internal audit (`docs/development/AUDIT.md` and `docs/development/PROTOCOL_COMPLIANCE_AUDIT.md`, and the in-repository instructions) acknowledge: *"incomplete `name_update` RPC (creates transaction but doesn't broadcast — requires UTXO management)"*. The README does not surface this.
-- **Impact:** Operators following the README's RPC examples submit name updates that succeed at the JSON-RPC level but never propagate to the network.
-- **Closing the Gap:** either complete the broadcast path (preferred) or add a prominent warning to the README's RPC section. Mention that `sendrawtransaction` is required.
-
----
-
-## README claims ~18 000 lines of production code; actual is ~10 000
-
-- **Stated Goal:** README §"Daemon Features" final bullet: *"Focused Implementation: ~18,000 lines of production code (excluding tests)"*; repository instructions in `custom_instruction` use *"~3,000 lines of production code (excluding tests and examples)"*.
-- **Current State:** go-stats-generator with `--skip-tests` reports **10 087** lines of production code across 63 files.
-- **Impact:** Misleading documentation; potential users sizing the dependency on an inflated estimate.
-- **Closing the Gap:** update README to `~10,000 lines`. Reconcile with the older `~3,000 line` figure (which appears to predate the `client`, `mail`, `metrics`, `loadtest`, `bridge` packages).
-
----
-
-## README claims AuxPow / merged-mining support; mainnet sync is impossible past block 19,200
-
-- **Stated Goal:** No explicit AuxPow claim in `README.md`, but the project's `chain/auxpow.go` (530 lines) and the marketing as a "Namecoin daemon" implies mainnet usability.
-- **Current State:** Pre-existing internal audit (`docs/development/PROTOCOL_COMPLIANCE_AUDIT.md`) states: *"~35 % compatible with Namecoin Core. Missing critical features for production use: AuxPow (merged mining) support, block version validation for AuxPow, and Namecoin-specific subsidy calculation. Cannot sync with mainnet past block 19,200 (AuxPow activation). Suitable for development/testing but NOT production mainnet use."* `ValidateAuxPow` exists but per the same audit, integration with `ProcessBlock` is incomplete and the AuxPow code contains a duplicated/unused merkle-root computation at `chain/auxpow.go:311-323`.
-- **Impact:** A user reading `README.md` and choosing the daemon for a mainnet wallet, mail relay, or name resolver cannot sync the chain.
-- **Closing the Gap:** add a prominent **Status** block at the top of `README.md` stating mainnet is not supported past block 19,200; link to `docs/development/PROTOCOL_COMPLIANCE_AUDIT.md`. Track AuxPow completion in `ROADMAP.md`.
-
----
-
-## Wallet was historically "unencrypted JSON"; current code supports encryption but README still warns about unencrypted
-
-- **Stated Goal:** Repository instructions: *"Wallet stores unencrypted private keys in `wallet.json`"*.
-- **Current State:** `wallet/encryption.go` (258 lines) implements AES-GCM encryption with password-derived keys. `walletpassphrase`/`walletlock` RPCs exist (`rpc/server.go`). However, the unlock passphrase is retained as a Go `string` and cannot be zeroed (AUDIT.md MED-4). Documentation still describes the wallet as unencrypted.
-- **Impact:** Users who upgrade do not realize encryption is now available; users who rely on documentation may continue using unencrypted wallets unnecessarily.
-- **Closing the Gap:** update README §"Security Considerations" and `docs/OPERATIONS.md` to describe wallet encryption (commands, KDF, threat model). Fix the in-memory passphrase retention per MED-4.
-
----
-
-## Logging side-effects: file mode 0o644 + dir mode 0o755 do not match the project's privacy posture
-
-- **Stated Goal:** Project conventions emphasize private wallet (`0o600`) and security-conscious design (README §"Security Considerations").
-- **Current State:** `internal/logging/logger.go:119,124` writes log file with mode `0o644` and creates parent dir with `0o755`. Logs contain peer IPs, RPC remote_addr, panic stack traces (including filenames), and may reflect wallet/data paths.
-- **Impact:** Information leak to any local user on a multi-tenant host.
-- **Closing the Gap:** lower modes to `0o600` / `0o700` (AUDIT.md MED-2/3).
-
----
-
-## `metrics` package mutates process-global state on import
-
-- **Stated Goal:** Library-first design; "import safely into your Go application".
-- **Current State:** `metrics/prometheus.go:24-37` `init()` starts a background goroutine refreshing Go runtime stats every 30 seconds. There is no `Stop()`. Any program that transitively imports `nmcd/metrics` (e.g., via `internal/server`) inherits the goroutine forever. See AUDIT.md MED-1.
-- **Impact:** Surprising side-effect on library consumers; complicates test isolation and clean shutdown.
-- **Closing the Gap:** convert to an explicit `Start(ctx)` / `Stop()` API called from the daemon main; never spawn goroutines in `init`.
-
----
-
-## Embedded-mode `MaxPeers: 0` documented to disable network, but the relevant code branch is dead
-
-- **Stated Goal:** README lines 184-187: *"`MaxPeers: 0,  // No peer connections`"* (advertised way to disable automatic network sync).
-- **Current State:** `client/embedded.go:196` checks `cfg.MaxPeers == 0` but `applyConfigDefaults` (line 145-146) has already overwritten 0 → 8 before this point. The user-facing override path is implemented elsewhere (peer-manager start gating), but the README's literal recipe doesn't take the documented branch.
-- **Impact:** No functional break (peers still don't connect because peer-manager honors `MaxPeers == 0` at a different layer), but the code is misleading and a future refactor could break the README's promise silently.
-- **Closing the Gap:** apply the `MaxPeers == 0` short-circuit *before* `applyConfigDefaults` overwrites it, or document precisely where the gating happens. See AUDIT.md LOW-2.
-
----
-
-## Examples use unexpanded `~/.nmcd` as default data directory
-
-- **Stated Goal:** Examples are presented as "ready-to-run" reference code (`docs/EXAMPLES.md`).
-- **Current State:** Several `examples/*/main.go` pass `flag.String("datadir", "~/.nmcd", ...)`. Go does not expand `~`; the daemon creates a directory literally named `~` under the user's current working directory.
-- **Impact:** Confused users; orphaned `~` directories on disk.
-- **Closing the Gap:** use `os.UserHomeDir()` + `filepath.Join`. See AUDIT.md MED-5.
-
----
-
-## Stated "interface-based" `net.*` usage is followed; nothing to fix here
-
-- **Stated Goal:** Repository instructions: *"Never use `net.TCPConn`, use `net.Conn` instead"*, etc.
-- **Current State:** Verified — `network/`, `client/`, `rpc/` use `net.Conn`, `net.Listener`, `net.Addr` throughout. No concrete `*net.TCPConn` / `*net.UDPConn` etc. usage observed.
-- **Impact:** None (goal achieved).
-- **Closing the Gap:** N/A.
+- **Stated Goal**: README documents `sendrawtransaction` RPC for transaction submission.
+- **Current State**: `network/peermgr.go:642-666` logs "no peers connected, transaction not relayed" but returns `nil` (success). `rpc/blockchain_handlers.go`'s `sendrawtransaction` handler propagates that as a JSON-RPC success and returns the txid.
+- **Impact**: Wallet UIs and integrations believe the transaction was broadcast and proceed to wait for confirmations that never arrive. Users may double-spend or re-issue the transaction unnecessarily.
+- **Closing the Gap**: Either change the BroadcastTx contract to return an error/sentinel when no peers were reached, or attach a `warning` field to the RPC response when relay count is zero. See `AUDIT.md` finding M-5.
