@@ -565,6 +565,9 @@ func TestLookupActiveNameRecordExpired(t *testing.T) {
 		t.Fatalf("Failed to put name: %v", err)
 	}
 
+	// Simulate chain tip advancing to height 1 so ExpiresAt=0 is expired.
+	bc.BestSnapshot().Height = 1
+
 	_, errResp := server.lookupActiveNameRecord(testName, 1)
 	if errResp == nil {
 		t.Fatal("Expected error response for expired name")
@@ -719,13 +722,16 @@ func TestCheckNameNotActiveWithActiveExpiredName(t *testing.T) {
 		Name:      testName,
 		Value:     `{}`,
 		TxHash:    *txHash,
-		ExpiresAt: -1, // Clearly expired (ExpiresAt < bestHeight=0)
+		ExpiresAt: 0, // ExpiresAt=0 is < currentHeight=1, so name is expired
 		Height:    1,
 		Address:   "n1test1234567890123456789012345678",
 	}
 	if err := bc.GetNameDB().PutName(testName, record); err != nil {
 		t.Fatalf("Failed to put expired name: %v", err)
 	}
+
+	// Simulate chain tip advancing to height 1 so ExpiresAt=0 is expired.
+	bc.BestSnapshot().Height = 1
 
 	// checkNameNotActive should succeed when the existing name is expired
 	errResp := server.checkNameNotActive(testName, 1)
