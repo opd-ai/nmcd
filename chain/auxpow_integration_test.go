@@ -315,7 +315,7 @@ func createTestAuxPowBlock(t *testing.T, height int32) (*btcutil.Block, *AuxPow)
 	parentCoinbaseTx := wire.NewMsgTx(1)
 	parentCoinbaseTx.AddTxIn(&wire.TxIn{
 		PreviousOutPoint: wire.OutPoint{Index: 0xffffffff},
-		SignatureScript:  append([]byte("coinbase"), blockHash[:]...),
+		SignatureScript:  append([]byte("coinbase"), (*blockHash)[:]...),
 	})
 	parentCoinbaseTx.AddTxOut(&wire.TxOut{
 		Value:    50 * 100000000,

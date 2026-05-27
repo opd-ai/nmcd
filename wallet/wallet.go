@@ -1081,6 +1081,6 @@ func GenerateRand() ([]byte, error) {
 // ComputeNameNewHash computes the NAME_NEW commitment hash.
 // The commitment is RIPEMD160(SHA256(rand || name)).
 func ComputeNameNewHash(randBytes []byte, name string) []byte {
-	data := append(randBytes, []byte(name)...)
+	data := append(append([]byte(nil), randBytes...), name...)
 	return btcutil.Hash160(data)
 }

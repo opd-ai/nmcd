@@ -49,7 +49,7 @@ const (
 // computeCommitHash computes the NAME_NEW commitment hash.
 // The commitment is RIPEMD160(SHA256(rand || name)).
 func computeCommitHash(rand []byte, name string) []byte {
-	data := append(rand, []byte(name)...)
+	data := append(append([]byte(nil), rand...), name...)
 	return btcutil.Hash160(data)
 }
 

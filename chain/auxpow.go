@@ -346,7 +346,7 @@ func (ap *AuxPow) ValidateAuxPow(blockHash, targetDifficulty *chainhash.Hash) er
 	if len(ap.ChainMerkleBranch.Branch) == 0 {
 		// Direct commitment: verify block hash appears in coinbase
 		coinbaseData := serializeCoinbaseForSearch(&ap.CoinbaseTx)
-		blockHashBytes := blockHash[:]
+		blockHashBytes := (*blockHash)[:]
 		reversedBlockHash := reverseHashBytes(*blockHash)
 		if !bytesContain(coinbaseData, blockHashBytes) && !bytesContain(coinbaseData, reversedBlockHash[:]) {
 			return fmt.Errorf("auxpow: block hash not found in coinbase for direct commitment")
@@ -516,11 +516,14 @@ var auxPowMagic = []byte{0xfa, 0xbe, 0x6d, 0x6d}
 // merkleTreeSize must equal 1<<branchLen. Returns nil on success.
 // Returns an error if no valid commitment is found or if multiple commitments exist.
 func checkMergeMiningCommitment(coinbaseData []byte, computedRoot chainhash.Hash, branchLen int) error {
+	if branchLen < 0 || branchLen >= 32 {
+		return fmt.Errorf("auxpow: invalid chain merkle branch length %d (must be 0..31)", branchLen)
+	}
+
 	expectedSize := uint32(1) << uint(branchLen)
 	reversedRoot := reverseHashBytes(computedRoot)
 
-	foundValid := false
-	commitCount := 0
+	validCommitCount := 0
 	rest := coinbaseData
 
 	for {
@@ -528,7 +531,6 @@ func checkMergeMiningCommitment(coinbaseData []byte, computedRoot chainhash.Hash
 		if idx < 0 {
 			break
 		}
-		commitCount++
 		offset := idx + len(auxPowMagic)
 
 		// Need root(32) + merkleSize(4) after the magic.
@@ -545,16 +547,16 @@ func checkMergeMiningCommitment(coinbaseData []byte, computedRoot chainhash.Hash
 		rootMatch := root == computedRoot || root == reversedRoot
 
 		if rootMatch && size == expectedSize {
-			foundValid = true
+			validCommitCount++
 		}
 
 		rest = rest[idx+1:]
 	}
 
-	if commitCount > 1 {
-		return fmt.Errorf("auxpow: %d merged-mining commitment(s) in coinbase, expected exactly one", commitCount)
+	if validCommitCount > 1 {
+		return fmt.Errorf("auxpow: %d valid merged-mining commitment(s) in coinbase, expected exactly one", validCommitCount)
 	}
-	if !foundValid {
+	if validCommitCount == 0 {
 		return fmt.Errorf("auxpow: no valid merged-mining commitment (magic fabe6d6d + root + size) found in coinbase (expected root %s, size %d)", computedRoot, expectedSize)
 	}
 	return nil
