@@ -228,8 +228,8 @@ func TestBroadcastTxValidTransaction(t *testing.T) {
 	tx := createTestTransaction()
 
 	err := pm.BroadcastTx(tx)
-	if err != nil {
-		t.Errorf("BroadcastTx failed: %v", err)
+	if !errors.Is(err, ErrNoPeers) {
+		t.Errorf("BroadcastTx should return ErrNoPeers, got: %v", err)
 	}
 
 	// Transaction should be in mempool
@@ -246,10 +246,9 @@ func TestBroadcastTxNoPeers(t *testing.T) {
 
 	tx := createTestTransaction()
 
-	// Should not return error, just log warning
 	err := pm.BroadcastTx(tx)
-	if err != nil {
-		t.Errorf("BroadcastTx should not fail with no peers: %v", err)
+	if !errors.Is(err, ErrNoPeers) {
+		t.Errorf("BroadcastTx should return ErrNoPeers with no peers: %v", err)
 	}
 }
 
@@ -527,16 +526,14 @@ func TestBroadcastTxDuplicate(t *testing.T) {
 
 	tx := createTestTransaction()
 
-	// First broadcast should succeed
 	err := pm.BroadcastTx(tx)
-	if err != nil {
-		t.Errorf("First BroadcastTx failed: %v", err)
+	if !errors.Is(err, ErrNoPeers) {
+		t.Errorf("First BroadcastTx should return ErrNoPeers: %v", err)
 	}
 
-	// Second broadcast of same transaction should also succeed (just updates lastSeen)
 	err = pm.BroadcastTx(tx)
-	if err != nil {
-		t.Errorf("Second BroadcastTx should succeed for duplicate: %v", err)
+	if !errors.Is(err, ErrNoPeers) {
+		t.Errorf("Second BroadcastTx should return ErrNoPeers for duplicate: %v", err)
 	}
 
 	// Mempool should still have exactly 1 copy

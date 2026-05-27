@@ -1,6 +1,8 @@
 package rpc
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
@@ -50,6 +52,7 @@ type Server struct {
 	server         *http.Server
 	rpcUser        string
 	rpcPassword    string
+	authKey        []byte // Per-process HMAC key for credential comparison
 	rateLimiter    *rateLimiter
 	maxRequestSize int64
 	logger         *logging.Logger
@@ -247,6 +250,13 @@ func NewServer(cfg *Config) (*Server, error) {
 	// Initialize logger for RPC server
 	logger := logging.GetDefault().WithComponent("rpc")
 
+	// Generate a per-process HMAC key for constant-time credential comparison.
+	authKey := make([]byte, 32)
+	if _, err := rand.Read(authKey); err != nil {
+		listener.Close()
+		return nil, fmt.Errorf("failed to generate auth key: %w", err)
+	}
+
 	s := &Server{
 		blockchain:     cfg.Blockchain,
 		peerMgr:        cfg.PeerMgr,
@@ -254,6 +264,7 @@ func NewServer(cfg *Config) (*Server, error) {
 		listener:       listener,
 		rpcUser:        cfg.RPCUser,
 		rpcPassword:    cfg.RPCPassword,
+		authKey:        authKey,
 		rateLimiter:    newRateLimiter(rateLimit),
 		maxRequestSize: maxRequestSize,
 		logger:         logger,
@@ -322,16 +333,20 @@ func (s *Server) Close() error {
 // checkAuth validates HTTP Basic Authentication credentials.
 // Returns true if the request contains valid credentials matching
 // the configured rpcUser and rpcPassword.
-// Uses SHA-256 hashing before constant-time comparison to prevent
-// length-based timing side-channels while preserving constant-time semantics.
+// Uses HMAC-SHA256 with a per-process random key before constant-time
+// comparison to prevent length-based timing side-channels.
 func (s *Server) checkAuth(r *http.Request) bool {
 	user, pass, ok := r.BasicAuth()
 	if !ok {
 		return false
 	}
-	expectedHash := sha256.Sum256([]byte(s.rpcUser + ":" + s.rpcPassword))
-	providedHash := sha256.Sum256([]byte(user + ":" + pass))
-	return subtle.ConstantTimeCompare(expectedHash[:], providedHash[:]) == 1
+	mac := hmac.New(sha256.New, s.authKey)
+	mac.Write([]byte(s.rpcUser + ":" + s.rpcPassword))
+	expectedMAC := mac.Sum(nil)
+	mac.Reset()
+	mac.Write([]byte(user + ":" + pass))
+	providedMAC := mac.Sum(nil)
+	return subtle.ConstantTimeCompare(expectedMAC, providedMAC) == 1
 }
 
 // withPanicRecovery wraps an HTTP handler with panic recovery middleware.
