@@ -157,15 +157,18 @@ func RPCLoadTest(config LoadTestConfig) (*TestResult, error) {
 
 	start := time.Now()
 	stopChan := make(chan struct{})
+	workerCtx, workerCancel := context.WithCancel(ctx)
+	defer workerCancel()
 
 	var wg sync.WaitGroup
 	for i := 0; i < config.Concurrency; i++ {
 		wg.Add(1)
-		go runLoadWorker(&wg, client, ctx, stopChan, tickers, i, result, counters)
+		go runLoadWorker(&wg, client, workerCtx, stopChan, tickers, i, result, counters)
 	}
 
 	time.Sleep(config.Duration)
 	close(stopChan)
+	workerCancel()
 	wg.Wait()
 
 	populateLoadTestResult(result, counters, time.Since(start))

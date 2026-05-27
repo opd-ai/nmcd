@@ -5,9 +5,11 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"log"
 	"math/big"
 	"net"
@@ -341,12 +343,23 @@ func (s *Server) checkAuth(r *http.Request) bool {
 		return false
 	}
 	mac := hmac.New(sha256.New, s.authKey)
-	mac.Write([]byte(s.rpcUser + ":" + s.rpcPassword))
+	writeHMACField(mac, []byte(s.rpcUser))
+	writeHMACField(mac, []byte(s.rpcPassword))
 	expectedMAC := mac.Sum(nil)
 	mac.Reset()
-	mac.Write([]byte(user + ":" + pass))
+	writeHMACField(mac, []byte(user))
+	writeHMACField(mac, []byte(pass))
 	providedMAC := mac.Sum(nil)
 	return subtle.ConstantTimeCompare(expectedMAC, providedMAC) == 1
+}
+
+// writeHMACField writes a length-prefixed field to the HMAC to prevent
+// ambiguous credential parsing when user or pass contains separator characters.
+func writeHMACField(mac hash.Hash, data []byte) {
+	var lenBuf [4]byte
+	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(data)))
+	mac.Write(lenBuf[:])
+	mac.Write(data)
 }
 
 // withPanicRecovery wraps an HTTP handler with panic recovery middleware.
@@ -547,15 +560,8 @@ func getDifficultyRatio(bits uint32, params *chaincfg.Params) float64 {
 
 // getInfo returns general information
 func (s *Server) getInfo(req *Request) *Response {
-	if s.blockchain == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32603,
-				Message: "Blockchain not initialized",
-			},
-			ID: req.ID,
-		}
+	if r := s.requireBlockchain(req.ID); r != nil {
+		return r
 	}
 
 	best := s.blockchain.BestSnapshot()
@@ -581,15 +587,8 @@ func (s *Server) getInfo(req *Request) *Response {
 
 // getBlockCount returns the current block count
 func (s *Server) getBlockCount(req *Request) *Response {
-	if s.blockchain == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32603,
-				Message: "Blockchain not initialized",
-			},
-			ID: req.ID,
-		}
+	if r := s.requireBlockchain(req.ID); r != nil {
+		return r
 	}
 
 	best := s.blockchain.BestSnapshot()
@@ -603,15 +602,8 @@ func (s *Server) getBlockCount(req *Request) *Response {
 
 // getBestBlockHash returns the best block hash
 func (s *Server) getBestBlockHash(req *Request) *Response {
-	if s.blockchain == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32603,
-				Message: "Blockchain not initialized",
-			},
-			ID: req.ID,
-		}
+	if r := s.requireBlockchain(req.ID); r != nil {
+		return r
 	}
 
 	best := s.blockchain.BestSnapshot()

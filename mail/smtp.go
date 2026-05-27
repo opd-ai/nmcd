@@ -17,6 +17,10 @@ import (
 
 var errMessageSizeExceeded = errors.New("message exceeds maximum size")
 
+// perReadTimeout is the maximum time allowed for a single read operation.
+// This prevents slow-loris attacks where a client sends data very slowly.
+const perReadTimeout = 30 * time.Second
+
 type messageSizeExceededError struct {
 	maxSize int64
 }
@@ -571,6 +575,8 @@ func (s *smtpSession) sendBody(client *smtp.Client, body []byte) error {
 
 // readLine reads a single line from the connection.
 func (s *smtpSession) readLine() (string, error) {
+	// Refresh per-read deadline to prevent slow-loris attacks
+	s.conn.SetReadDeadline(time.Now().Add(perReadTimeout))
 	line, err := s.reader.ReadString('\n')
 	if err != nil {
 		return "", err
@@ -601,6 +607,8 @@ func (s *smtpSession) readDataBody() ([]byte, error) {
 	var sizeErr error
 
 	for {
+		// Refresh per-read deadline for each line read
+		s.conn.SetReadDeadline(time.Now().Add(perReadTimeout))
 		line, err := s.reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
@@ -625,7 +633,7 @@ func (s *smtpSession) readDataBody() ([]byte, error) {
 		}
 
 		// Enforce size limit before appending.
-		if int64(len(body)+len(line)) > maxSize {
+		if int64(len(body))+int64(len(line)) > maxSize {
 			sizeErr = &messageSizeExceededError{maxSize: maxSize}
 			continue
 		}
