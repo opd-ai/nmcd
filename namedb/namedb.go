@@ -270,11 +270,12 @@ func (ndb *NameDatabase) PutName(name string, record *NameRecord) error {
 		if existingData != nil {
 			// Remove old expiration index entry
 			existingRecord, decodeErr := decodeNameRecord(existingData)
-			if decodeErr == nil {
-				oldExpirationKey := makeExpirationKey(existingRecord.ExpiresAt, name)
-				if err := expirationBkt.Delete(oldExpirationKey); err != nil {
-					return err
-				}
+			if decodeErr != nil {
+				return fmt.Errorf("failed to decode existing record for %q: %w", name, decodeErr)
+			}
+			oldExpirationKey := makeExpirationKey(existingRecord.ExpiresAt, name)
+			if err := expirationBkt.Delete(oldExpirationKey); err != nil {
+				return err
 			}
 		}
 

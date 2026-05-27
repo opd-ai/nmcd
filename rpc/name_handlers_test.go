@@ -915,7 +915,7 @@ func TestCheckNameNotActiveWithExpiredName(t *testing.T) {
 		TxHash:    *txHash,
 		OutIndex:  0,
 		Height:    1,
-		ExpiresAt: 0, // Already expired
+		ExpiresAt: -1, // Clearly expired (ExpiresAt < bestHeight=0)
 	}
 	err := bc.GetNameDB().PutName(testName, record)
 	if err != nil {

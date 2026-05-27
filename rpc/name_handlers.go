@@ -351,7 +351,7 @@ func (s *Server) checkNameNotActive(name string, reqID interface{}) *Response {
 		return nil // Name doesn't exist - that's what we want
 	}
 	bestHeight := s.blockchain.BestSnapshot().Height
-	if existingRecord.ExpiresAt > bestHeight {
+	if existingRecord.ExpiresAt >= bestHeight {
 		return errorResponse(reqID, -25, fmt.Sprintf("Name already exists and is not expired (expires at block %d, current: %d)", existingRecord.ExpiresAt, bestHeight))
 	}
 	return nil

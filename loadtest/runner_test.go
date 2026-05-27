@@ -397,3 +397,30 @@ func ExampleRPCLoadTest() {
 		fmt.Printf("WARNING: Throughput %.2f req/s is below target 1000 req/s\n", result.ThroughputRPS)
 	}
 }
+
+// TestRPCLoadTestZeroConcurrency verifies that RPCLoadTest returns an error
+// instead of panicking when Concurrency is 0 and RateLimit > 0.
+func TestRPCLoadTestZeroConcurrency(t *testing.T) {
+	_, err := RPCLoadTest(LoadTestConfig{
+		RPCURL:      "http://localhost:1234",
+		RateLimit:   10,
+		Concurrency: 0,
+		Duration:    time.Second,
+	})
+	if err == nil {
+		t.Fatal("expected error for zero concurrency, got nil")
+	}
+}
+
+// TestRPCLoadTestZeroDuration verifies that RPCLoadTest returns an error
+// when Duration is zero.
+func TestRPCLoadTestZeroDuration(t *testing.T) {
+	_, err := RPCLoadTest(LoadTestConfig{
+		RPCURL:      "http://localhost:1234",
+		Concurrency: 2,
+		Duration:    0,
+	})
+	if err == nil {
+		t.Fatal("expected error for zero duration, got nil")
+	}
+}

@@ -130,6 +130,13 @@ type LoadTestConfig struct {
 
 // RPCLoadTest performs sustained RPC load testing
 func RPCLoadTest(config LoadTestConfig) (*TestResult, error) {
+	if config.Concurrency <= 0 {
+		return nil, fmt.Errorf("concurrency must be > 0")
+	}
+	if config.Duration <= 0 {
+		return nil, fmt.Errorf("duration must be > 0")
+	}
+
 	result := &TestResult{
 		Name:         "RPC Load Test",
 		ErrorDetails: make([]string, 0),

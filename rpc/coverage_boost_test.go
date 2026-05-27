@@ -719,7 +719,7 @@ func TestCheckNameNotActiveWithActiveExpiredName(t *testing.T) {
 		Name:      testName,
 		Value:     `{}`,
 		TxHash:    *txHash,
-		ExpiresAt: 0, // Expired
+		ExpiresAt: -1, // Clearly expired (ExpiresAt < bestHeight=0)
 		Height:    1,
 		Address:   "n1test1234567890123456789012345678",
 	}
