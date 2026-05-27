@@ -270,7 +270,7 @@ The `MaxValueLengthUI` constant (520 bytes, matching Namecoin Core's `MAX_VALUE_
   - `chain/name_script.go`: computeCommitHash, parseNameScript*, validateNameFormat, opcodes, ParseNameOperationsFromTx (~500 lines)
   - blockchain.go reduced from 2231 to ~1640 lines
 
-- [ ] **Extract duplicated code** (ROI 27.00):
+- [x] **Extract duplicated code** (ROI 27.00):
   - wallet/wallet.go: 27-line duplication (suggestion #1)
   - examples/register_name/main.go: 21-line duplication (suggestion #2)
 

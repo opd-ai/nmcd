@@ -21,12 +21,10 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/opd-ai/nmcd/client"
@@ -76,19 +74,14 @@ func printRegisterUsage() {
 }
 
 func validateRegisterInputs(name, value string) {
-	if !strings.HasPrefix(name, "d/") && !strings.HasPrefix(name, "id/") && !strings.HasPrefix(name, "p/") {
-		fmt.Println("Error: Name must start with d/, id/, or p/ namespace")
+	if err := shared.ValidateNameNamespace(name); err != nil {
+		fmt.Printf("Error: %v\n", err)
 		fmt.Println("Examples: d/example, id/alice, p/notes")
 		os.Exit(1)
 	}
-
-	if strings.HasPrefix(name, "d/") || strings.HasPrefix(name, "id/") {
-		var js json.RawMessage
-		if err := json.Unmarshal([]byte(value), &js); err != nil {
-			fmt.Printf("Error: Value must be valid JSON for %s namespace\n", strings.Split(name, "/")[0]+"/")
-			fmt.Printf("Invalid JSON: %v\n", err)
-			os.Exit(1)
-		}
+	if err := shared.ValidateNameValue(name, value); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
 	}
 }
 

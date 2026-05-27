@@ -673,6 +673,34 @@ func addChangeOutput(tx *wire.MsgTx, changeValue int64, changeAddr btcutil.Addre
 	return nil
 }
 
+// buildNameUpdateTxUnsigned constructs an unsigned NAME_UPDATE transaction.
+// It sums inputs, estimates the fee, calculates change, and assembles the tx.
+// Shared by CreateNameUpdateTx and CreateNameUpdateTxRaw.
+func buildNameUpdateTxUnsigned(utxos []UTXO, nameScript []byte, feeRate int64, changeAddr btcutil.Address) (*wire.MsgTx, error) {
+	var totalIn int64
+	for _, utxo := range utxos {
+		totalIn += utxo.Value
+	}
+
+	// Estimate transaction size: overhead + inputs + name output + change output
+	estimatedSize := int64(10 + len(utxos)*148 + len(nameScript) + 34 + 34)
+	fee := feeRate * estimatedSize
+	nameOutValue := int64(1000)
+
+	changeValue := totalIn - nameOutValue - fee
+	if changeValue < 0 {
+		return nil, fmt.Errorf("insufficient funds: need %d, have %d", nameOutValue+fee, totalIn)
+	}
+
+	tx := buildNameTxBase(utxos, nameScript, nameOutValue)
+
+	if err := addChangeOutput(tx, changeValue, changeAddr); err != nil {
+		return nil, err
+	}
+
+	return tx, nil
+}
+
 // signTransactionInputs signs all inputs of a transaction using the wallet's keys.
 func (w *Wallet) signTransactionInputs(tx *wire.MsgTx, utxos []UTXO) error {
 	for i, utxo := range utxos {
@@ -744,13 +772,7 @@ func (w *Wallet) CreateNameUpdateTx(
 		return nil, fmt.Errorf("no key for name owner address: %s", nameUtxo.Address)
 	}
 
-	// Calculate total input value
-	var totalIn int64
-	for _, utxo := range utxos {
-		totalIn += utxo.Value
-	}
-
-	// Determine the destination pubkey hash
+	// Determine the destination pubkey hash.
 	// If destAddress is provided, the name will be transferred to that address.
 	// Otherwise, the name remains at the current owner's address.
 	// This enables both simple value updates and ownership transfers.
@@ -768,8 +790,8 @@ func (w *Wallet) CreateNameUpdateTx(
 		pubKeyHash = btcutil.Hash160(kp.PublicKey.SerializeCompressed())
 	}
 
-	// Always send change back to the current owner's address (from wallet)
-	// This prevents accidentally sending change to the destination address during transfers
+	// Always send change back to the current owner's address (from wallet).
+	// This prevents accidentally sending change to the destination address during transfers.
 	changeAddr := kp.Address
 
 	// Build NAME_UPDATE output script
@@ -778,26 +800,8 @@ func (w *Wallet) CreateNameUpdateTx(
 		return nil, fmt.Errorf("failed to build name script: %w", err)
 	}
 
-	// Estimate transaction size (rough estimate)
-	// Inputs: ~148 bytes each (with signature)
-	// Outputs: name output + change output
-	estimatedSize := int64(10 + len(utxos)*148 + len(nameScript) + 34 + 34)
-	fee := feeRate * estimatedSize
-
-	// Name output value (just above dust)
-	nameOutValue := int64(1000)
-
-	// Change calculation
-	changeValue := totalIn - nameOutValue - fee
-	if changeValue < 0 {
-		return nil, fmt.Errorf("insufficient funds: need %d, have %d", nameOutValue+fee, totalIn)
-	}
-
-	// Create transaction with inputs and name output
-	tx := buildNameTxBase(utxos, nameScript, nameOutValue)
-
-	// Add change output if above dust
-	if err := addChangeOutput(tx, changeValue, changeAddr); err != nil {
+	tx, err := buildNameUpdateTxUnsigned(utxos, nameScript, feeRate, changeAddr)
+	if err != nil {
 		return nil, err
 	}
 
@@ -833,40 +837,13 @@ func CreateNameUpdateTxRaw(
 		return nil, fmt.Errorf("unsupported address type: %T", destAddress)
 	}
 
-	// Calculate total input value
-	var totalIn int64
-	for _, utxo := range utxos {
-		totalIn += utxo.Value
-	}
-
 	// Build NAME_UPDATE output script
 	nameScript, err := BuildNameUpdateScript(name, newValue, pubKeyHash)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build name script: %w", err)
 	}
 
-	// Estimate transaction size
-	estimatedSize := int64(10 + len(utxos)*148 + len(nameScript) + 34 + 34)
-	fee := feeRate * estimatedSize
-
-	// Name output value
-	nameOutValue := int64(1000)
-
-	// Change calculation
-	changeValue := totalIn - nameOutValue - fee
-	if changeValue < 0 {
-		return nil, fmt.Errorf("insufficient funds: need %d, have %d", nameOutValue+fee, totalIn)
-	}
-
-	// Create transaction with inputs and name output
-	tx := buildNameTxBase(utxos, nameScript, nameOutValue)
-
-	// Add change output to changeAddress (not destAddress)
-	if err := addChangeOutput(tx, changeValue, changeAddress); err != nil {
-		return nil, err
-	}
-
-	return tx, nil
+	return buildNameUpdateTxUnsigned(utxos, nameScript, feeRate, changeAddress)
 }
 
 // CreateNameNewTx creates a NAME_NEW transaction for pre-registering a name commitment.
