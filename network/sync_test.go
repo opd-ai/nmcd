@@ -157,9 +157,7 @@ func TestSyncManagerCleanupOldRequests(t *testing.T) {
 	sm.mu.Unlock()
 
 	// Run cleanup
-	sm.mu.Lock()
 	sm.cleanupOldRequests()
-	sm.mu.Unlock()
 
 	// Check that old request was removed and new request remains
 	sm.mu.RLock()
@@ -291,6 +289,8 @@ func TestSyncManagerOnPeerDisconnectedReselectsBestPeerWithoutResettingHeight(t 
 	sm.syncPeer = disconnectedPeer
 	sm.bestPeer = disconnectedPeer
 	sm.bestHeight = 321
+	sm.peerHeights[disconnectedPeer] = 321
+	sm.peerHeights[remainingPeer] = 250
 	sm.mu.Unlock()
 
 	sm.OnPeerDisconnected(disconnectedPeer)
@@ -301,10 +301,10 @@ func TestSyncManagerOnPeerDisconnectedReselectsBestPeerWithoutResettingHeight(t 
 	if sm.syncPeer != nil {
 		t.Fatal("expected sync peer to be cleared")
 	}
-	if sm.bestPeer == nil || sm.bestPeer.Addr() != remainingPeer.Addr() {
-		t.Fatalf("expected best peer to be reselected to remaining peer %s", remainingPeer.Addr())
+	if sm.bestPeer != nil {
+		t.Fatal("expected best peer to be cleared")
 	}
-	if sm.bestHeight != 321 {
-		t.Fatalf("expected best height to remain 321, got %d", sm.bestHeight)
+	if sm.bestHeight != 250 {
+		t.Fatalf("expected best height to be recomputed to 250, got %d", sm.bestHeight)
 	}
 }

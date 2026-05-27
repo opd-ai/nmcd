@@ -1,6 +1,7 @@
 package network
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -18,6 +19,8 @@ import (
 	"github.com/opd-ai/nmcd/metrics"
 )
 
+var ErrNoPeers = errors.New("no peers connected, transaction not relayed")
+
 // PeerManager manages network peers using btcd/peer
 type PeerManager struct {
 	peers       map[int32]*peer.Peer
@@ -31,6 +34,7 @@ type PeerManager struct {
 	mu          sync.RWMutex
 	quit        chan struct{}
 	wg          sync.WaitGroup
+	stopOnce    sync.Once
 }
 
 // Config holds network configuration
@@ -357,7 +361,14 @@ func (pm *PeerManager) onBlock(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
 	block := btcutil.NewBlock(msg)
 	blockHash := block.Hash()
 
-	pm.parseAuxPowIfPresent(blockHash, msg, buf)
+	// If AuxPow parsing fails for a block that requires AuxPow, reject it.
+	if err := pm.parseAuxPowIfPresent(blockHash, msg, buf); err != nil {
+		pm.logger.Error("rejected block: AuxPow required but parse failed",
+			"block_hash", msg.BlockHash().String(),
+			"peer_id", p.Addr(),
+			"error", err)
+		return
+	}
 
 	isMainChain, isOrphan, err := pm.blockchain.ProcessBlock(block, blockchain.BFNone)
 	if err != nil {
@@ -380,15 +391,25 @@ func (pm *PeerManager) onBlock(p *peer.Peer, msg *wire.MsgBlock, buf []byte) {
 }
 
 // parseAuxPowIfPresent parses AuxPow data from the raw block bytes if present.
-func (pm *PeerManager) parseAuxPowIfPresent(blockHash *chainhash.Hash, msg *wire.MsgBlock, buf []byte) {
+// Returns an error if the block version requires AuxPow but parsing fails —
+// such blocks must be rejected to prevent unverified PoW from being accepted.
+// Returns nil when buf is empty or when AuxPow is not required by the version.
+func (pm *PeerManager) parseAuxPowIfPresent(blockHash *chainhash.Hash, msg *wire.MsgBlock, buf []byte) error {
 	if len(buf) == 0 {
-		return
+		return nil
 	}
 	if err := pm.blockchain.SetBlockAuxPowFromBytes(blockHash, buf); err != nil {
+		// If the AuxPow version bit is set, this block claims to carry AuxPow;
+		// a parse failure means we cannot verify its PoW — reject it.
+		if msg.Header.Version&int32(config.AuxPowVersionBit) != 0 {
+			return fmt.Errorf("AuxPow parse failed for block %s: %w", blockHash, err)
+		}
+		// For non-AuxPow blocks the extra bytes are unexpected but non-fatal.
 		pm.logger.Warn("failed to parse AuxPow data, continuing anyway",
 			"block_hash", msg.BlockHash().String(),
 			"error", err)
 	}
+	return nil
 }
 
 // removeConfirmedTransactions removes transactions confirmed in a block from the mempool.
@@ -454,38 +475,36 @@ func (pm *PeerManager) onTx(p *peer.Peer, msg *wire.MsgTx) {
 
 // relayTransaction broadcasts a transaction to all peers except the source
 func (pm *PeerManager) relayTransaction(tx *wire.MsgTx, excludePeer *peer.Peer) {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-
-	if len(pm.peers) == 0 {
-		return
-	}
-
 	txHash := tx.TxHash()
 
 	// Create inventory message for the transaction
 	inv := wire.NewMsgInv()
 	inv.AddInvVect(wire.NewInvVect(wire.InvTypeTx, &txHash))
 
-	// Broadcast to all connected peers except the source
-	relayCount := 0
-	for _, targetPeer := range pm.peers {
-		// Skip the peer we received this from to avoid relay loops
-		// Use pointer equality for reliable peer identity comparison
-		if excludePeer != nil && targetPeer == excludePeer {
+	// Snapshot the peer list under the read lock so that QueueMessage is
+	// called outside the lock. QueueMessage can block if a peer's send
+	// channel is full; holding pm.mu while blocking would prevent Stop()
+	// and handleInboundPeer from acquiring the write lock.
+	pm.mu.RLock()
+	targets := make([]*peer.Peer, 0, len(pm.peers))
+	for _, p := range pm.peers {
+		if excludePeer != nil && p == excludePeer {
 			continue
 		}
-
-		if targetPeer.Connected() {
-			targetPeer.QueueMessage(inv, nil)
-			relayCount++
+		if p.Connected() {
+			targets = append(targets, p)
 		}
 	}
+	pm.mu.RUnlock()
 
-	if relayCount > 0 {
+	for _, targetPeer := range targets {
+		targetPeer.QueueMessage(inv, nil)
+	}
+
+	if len(targets) > 0 {
 		pm.logger.Debug("relayed transaction to peers",
 			"tx_hash", txHash.String(),
-			"peer_count", relayCount)
+			"peer_count", len(targets))
 	}
 }
 
@@ -610,58 +629,64 @@ func (pm *PeerManager) onGetBlocks(p *peer.Peer, msg *wire.MsgGetBlocks) {
 	p.QueueMessage(invMsg, nil)
 }
 
-// BroadcastBlock broadcasts a block to all peers
+// BroadcastBlock broadcasts a block to all peers.
 func (pm *PeerManager) BroadcastBlock(block *wire.MsgBlock) {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-
 	inv := wire.NewMsgInv()
 	blockHash := block.BlockHash()
 	inv.AddInvVect(wire.NewInvVect(wire.InvTypeBlock, &blockHash))
 
+	pm.mu.RLock()
+	targets := make([]*peer.Peer, 0, len(pm.peers))
 	for _, p := range pm.peers {
+		targets = append(targets, p)
+	}
+	pm.mu.RUnlock()
+
+	for _, p := range targets {
 		p.QueueMessage(inv, nil)
 	}
 }
 
-// BroadcastTx broadcasts a transaction to all peers
-// This is used when locally creating transactions (e.g., from RPC calls)
+// BroadcastTx adds tx to the local mempool and relays an inventory announcement
+// to all connected peers.
+//
+// It returns ErrNoPeers when the transaction is accepted into the local mempool
+// but no connected peers were available to relay it.
 func (pm *PeerManager) BroadcastTx(tx *wire.MsgTx) error {
 	if tx == nil {
 		return fmt.Errorf("cannot broadcast nil transaction")
 	}
 
-	// First, add to our own mempool (with validation)
 	if err := pm.mempool.AddTx(tx); err != nil {
 		return fmt.Errorf("failed to add transaction to mempool: %w", err)
 	}
 
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-
-	if len(pm.peers) == 0 {
-		pm.logger.Warn("no peers connected, transaction not relayed",
-			"tx_hash", tx.TxHash().String())
-		return nil
-	}
-
-	// Create inventory message
-	inv := wire.NewMsgInv()
 	txHash := tx.TxHash()
+	inv := wire.NewMsgInv()
 	inv.AddInvVect(wire.NewInvVect(wire.InvTypeTx, &txHash))
 
-	// Broadcast to all connected peers
-	broadcastCount := 0
+	pm.mu.RLock()
+	targets := make([]*peer.Peer, 0, len(pm.peers))
 	for _, p := range pm.peers {
 		if p.Connected() {
-			p.QueueMessage(inv, nil)
-			broadcastCount++
+			targets = append(targets, p)
 		}
+	}
+	pm.mu.RUnlock()
+
+	if len(targets) == 0 {
+		pm.logger.Warn("no peers connected, transaction not relayed",
+			"tx_hash", txHash.String())
+		return ErrNoPeers
+	}
+
+	for _, p := range targets {
+		p.QueueMessage(inv, nil)
 	}
 
 	pm.logger.Info("broadcast transaction",
 		"tx_hash", txHash.String(),
-		"peer_count", broadcastCount)
+		"peer_count", len(targets))
 	return nil
 }
 
@@ -701,32 +726,31 @@ func (pm *PeerManager) GetMempool() *Mempool {
 	return pm.mempool
 }
 
-// SyncBlocks initiates block synchronization with peers
-// This sends getheaders requests to connected peers to start syncing
+// SyncBlocks initiates block synchronization with peers.
 func (pm *PeerManager) SyncBlocks() {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-
 	if pm.blockchain == nil {
 		pm.logger.Warn("cannot sync blocks: blockchain not initialized")
 		return
 	}
 
-	// Get our best block hash to use as the starting point
 	bestHash := pm.blockchain.BestSnapshot().Hash
-
-	// Create a getheaders message
 	getHeadersMsg := wire.NewMsgGetHeaders()
 	getHeadersMsg.AddBlockLocatorHash(&bestHash)
 
-	// Send to all connected peers
+	pm.mu.RLock()
+	targets := make([]*peer.Peer, 0, len(pm.peers))
 	for _, p := range pm.peers {
 		if p.Connected() {
-			p.QueueMessage(getHeadersMsg, nil)
-			pm.logger.Debug("requesting headers from peer",
-				"peer_id", p.Addr(),
-				"our_best_hash", bestHash.String())
+			targets = append(targets, p)
 		}
+	}
+	pm.mu.RUnlock()
+
+	for _, p := range targets {
+		p.QueueMessage(getHeadersMsg, nil)
+		pm.logger.Debug("requesting headers from peer",
+			"peer_id", p.Addr(),
+			"our_best_hash", bestHash.String())
 	}
 }
 
@@ -752,31 +776,36 @@ func (pm *PeerManager) updatePeerMetrics() {
 	metrics.Get().UpdatePeerCount(total, inbound, outbound)
 }
 
-// Stop stops the peer manager
+// Stop stops the peer manager.
+// Safe to call multiple times; only the first call has effect.
 func (pm *PeerManager) Stop() {
-	// Stop sync manager first
-	if pm.syncManager != nil {
-		pm.syncManager.Stop()
-	}
+	pm.stopOnce.Do(func() {
+		// Stop sync manager first
+		if pm.syncManager != nil {
+			pm.syncManager.Stop()
+		}
 
-	// Stop mempool cleanup
-	if pm.mempool != nil {
-		pm.mempool.Stop()
-	}
+		// Stop mempool cleanup
+		if pm.mempool != nil {
+			pm.mempool.Stop()
+		}
 
-	close(pm.quit)
+		close(pm.quit)
 
-	// Close all listeners
-	for _, listener := range pm.listeners {
-		listener.Close()
-	}
+		// Close all listeners
+		for _, listener := range pm.listeners {
+			if err := listener.Close(); err != nil {
+				pm.logger.Warn("error closing listener", "err", err)
+			}
+		}
 
-	// Disconnect all peers
-	pm.mu.Lock()
-	for _, p := range pm.peers {
-		p.Disconnect()
-	}
-	pm.mu.Unlock()
+		// Disconnect all peers
+		pm.mu.Lock()
+		for _, p := range pm.peers {
+			p.Disconnect()
+		}
+		pm.mu.Unlock()
 
-	pm.wg.Wait()
+		pm.wg.Wait()
+	})
 }

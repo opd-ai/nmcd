@@ -46,37 +46,10 @@ const (
 	op2Drop = 0x6d
 )
 
-// computeCommitHash computes the NAME_NEW commitment hash with a network-specific identifier.
-// The commitment is RIPEMD160(SHA256(rand || name || chainID)) to prevent
-// cross-chain replay attacks. The chain identifier is derived from the network magic bytes,
-// providing network-specific commitments that differ across mainnet, testnet, and regtest.
-//
-// Note: The Namecoin AuxPow protocol uses a separate chain ID (NamecoinChainID = 1) for
-// merge-mining identification, which is distinct from the commitment hash chain identifier
-// used here. The network-magic-based approach used here ensures cross-network replay
-// protection for NAME_NEW commitments.
-//
-// Parameters:
-//   - rand: Random salt value from NAME_NEW
-//   - name: Name to be registered
-//   - chainParams: Network parameters containing the unique network magic bytes
-//
-// Returns: 20-byte commitment hash (RIPEMD160(SHA256(data)))
-func computeCommitHash(rand []byte, name string, chainParams *chaincfg.Params) []byte {
-	nameBytes := []byte(name)
-	// Extract network magic bytes as chain ID (4 bytes, little-endian)
-	chainID := make([]byte, 4)
-	chainID[0] = byte(chainParams.Net)
-	chainID[1] = byte(chainParams.Net >> 8)
-	chainID[2] = byte(chainParams.Net >> 16)
-	chainID[3] = byte(chainParams.Net >> 24)
-
-	// Concatenate: rand || name || chainID
-	data := make([]byte, len(rand)+len(nameBytes)+len(chainID))
-	copy(data, rand)
-	copy(data[len(rand):], nameBytes)
-	copy(data[len(rand)+len(nameBytes):], chainID)
-
+// computeCommitHash computes the NAME_NEW commitment hash.
+// The commitment is RIPEMD160(SHA256(rand || name)).
+func computeCommitHash(rand []byte, name string) []byte {
+	data := append(append([]byte(nil), rand...), name...)
 	return btcutil.Hash160(data)
 }
 
@@ -175,7 +148,7 @@ func parseNameScriptFull(script []byte) (namedb.NameOperation, string, string, [
 			return 0, "", "", nil, fmt.Errorf("failed to read hash: %w", err)
 		}
 		opType = namedb.NameNew
-		extra = hash
+		extra = append([]byte(nil), hash...)
 		dataEndOffset = newOffset
 
 	case opNameFirstUpdate:
@@ -198,7 +171,7 @@ func parseNameScriptFull(script []byte) (namedb.NameOperation, string, string, [
 		opType = namedb.NameFirstUpdate
 		name = string(nameBytes)
 		value = string(valueBytes)
-		extra = rand
+		extra = append([]byte(nil), rand...)
 		dataEndOffset = newOffset
 
 	case opNameUpdate:

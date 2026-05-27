@@ -1,12 +1,15 @@
 package chain
 
 import (
+	"crypto/sha256"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/ripemd160"
 
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
@@ -625,10 +628,9 @@ func TestComputeCommitHash(t *testing.T) {
 		0x11, 0x12, 0x13, 0x14,
 	}
 	name := "d/example"
-	chainParams := &config.NamecoinRegTestParams
 
-	hash1 := computeCommitHash(rand, name, chainParams)
-	hash2 := computeCommitHash(rand, name, chainParams)
+	hash1 := computeCommitHash(rand, name)
+	hash2 := computeCommitHash(rand, name)
 
 	// Same inputs should produce same output
 	if len(hash1) != len(hash2) {
@@ -653,11 +655,10 @@ func TestComputeCommitHashDifferentInputs(t *testing.T) {
 		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
 		0x11, 0x12, 0x13, 0x14,
 	}
-	chainParams := &config.NamecoinRegTestParams
 
 	// Different names should produce different hashes
-	hash1 := computeCommitHash(rand, "d/name1", chainParams)
-	hash2 := computeCommitHash(rand, "d/name2", chainParams)
+	hash1 := computeCommitHash(rand, "d/name1")
+	hash2 := computeCommitHash(rand, "d/name2")
 
 	same := true
 	for i := range hash1 {
@@ -676,7 +677,7 @@ func TestComputeCommitHashDifferentInputs(t *testing.T) {
 		0xf7, 0xf6, 0xf5, 0xf4, 0xf3, 0xf2, 0xf1, 0xf0,
 		0xef, 0xee, 0xed, 0xec,
 	}
-	hash3 := computeCommitHash(rand2, "d/name1", chainParams)
+	hash3 := computeCommitHash(rand2, "d/name1")
 
 	same = true
 	for i := range hash1 {
@@ -690,10 +691,7 @@ func TestComputeCommitHashDifferentInputs(t *testing.T) {
 	}
 }
 
-// TestComputeCommitHashCrossChainReplay tests that commitment hashes
-// are different across different Namecoin networks (mainnet/testnet/regtest)
-// to prevent cross-chain replay attacks
-func TestComputeCommitHashCrossChainReplay(t *testing.T) {
+func TestComputeCommitHashNamecoinCoreCompatible(t *testing.T) {
 	rand := []byte{
 		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
 		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
@@ -701,31 +699,21 @@ func TestComputeCommitHashCrossChainReplay(t *testing.T) {
 	}
 	name := "d/example"
 
-	// Compute commitment hash for the same name and rand on different networks
-	mainnetHash := computeCommitHash(rand, name, &config.NamecoinMainNetParams)
-	testnetHash := computeCommitHash(rand, name, &config.NamecoinTestNetParams)
-	regtestHash := computeCommitHash(rand, name, &config.NamecoinRegTestParams)
-
-	// Hashes should be different for different networks
-	// This prevents a NAME_NEW commitment from being replayed across networks
-	if len(mainnetHash) != 20 || len(testnetHash) != 20 || len(regtestHash) != 20 {
-		t.Errorf("All hashes should be 20 bytes: mainnet=%d, testnet=%d, regtest=%d",
-			len(mainnetHash), len(testnetHash), len(regtestHash))
+	commitHash := computeCommitHash(rand, name)
+	if len(commitHash) != 20 {
+		t.Fatalf("expected 20-byte hash, got %d", len(commitHash))
 	}
 
-	// Check mainnet vs testnet
-	if equalBytes(mainnetHash, testnetHash) {
-		t.Error("Mainnet and testnet should produce different commitment hashes (replay attack vulnerability)")
+	payload := append(append([]byte(nil), rand...), []byte(name)...)
+	sha := sha256.Sum256(payload)
+	ripemd := ripemd160.New()
+	if _, err := ripemd.Write(sha[:]); err != nil {
+		t.Fatalf("failed to compute RIPEMD160: %v", err)
 	}
+	manualHash := ripemd.Sum(nil)
 
-	// Check mainnet vs regtest
-	if equalBytes(mainnetHash, regtestHash) {
-		t.Error("Mainnet and regtest should produce different commitment hashes (replay attack vulnerability)")
-	}
-
-	// Check testnet vs regtest
-	if equalBytes(testnetHash, regtestHash) {
-		t.Error("Testnet and regtest should produce different commitment hashes (replay attack vulnerability)")
+	if !equalBytes(commitHash, manualHash) {
+		t.Fatalf("expected Namecoin Core compatible hash %x, got %x", manualHash, commitHash)
 	}
 }
 
@@ -742,11 +730,7 @@ func equalBytes(a, b []byte) bool {
 	return true
 }
 
-// TestNameFirstUpdateCrossNetworkValidation tests that a NAME_FIRSTUPDATE
-// created for one network (e.g., mainnet) will fail validation on another
-// network (e.g., testnet) due to mismatched commitment hashes
-func TestNameFirstUpdateCrossNetworkValidation(t *testing.T) {
-	// Setup: Create NAME_NEW on mainnet
+func TestNameFirstUpdateValidationUsesSharedCommitmentHash(t *testing.T) {
 	mainnetDBPath := filepath.Join(t.TempDir(), "mainnet-db.db")
 	mainnetDB, err := namedb.NewNameDatabase(mainnetDBPath)
 	if err != nil {
@@ -759,47 +743,17 @@ func TestNameFirstUpdateCrossNetworkValidation(t *testing.T) {
 		chainParams: &config.NamecoinMainNetParams,
 	}
 
-	// Create NAME_NEW commitment on mainnet
-	nameStr := "d/cross-network-test"
+	nameStr := "d/shared-commitment-test"
 	rand := []byte{
 		0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8,
 		0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf, 0xb0,
 		0xb1, 0xb2, 0xb3, 0xb4,
 	}
-	mainnetCommitHash := computeCommitHash(rand, nameStr, mainnetBC.chainParams)
-
-	if err := mainnetDB.PutNameNew(mainnetCommitHash, 100); err != nil {
-		t.Fatalf("Failed to store NAME_NEW on mainnet: %v", err)
+	commitHash := computeCommitHash(rand, nameStr)
+	if err := mainnetDB.PutNameNew(commitHash, 100); err != nil {
+		t.Fatalf("Failed to store NAME_NEW: %v", err)
 	}
 
-	// Setup: Create BlockChain for testnet
-	testnetDBPath := filepath.Join(t.TempDir(), "testnet-db.db")
-	testnetDB, err := namedb.NewNameDatabase(testnetDBPath)
-	if err != nil {
-		t.Fatalf("Failed to create testnet database: %v", err)
-	}
-	defer testnetDB.Close()
-
-	testnetBC := &BlockChain{
-		nameDB:      testnetDB,
-		chainParams: &config.NamecoinTestNetParams,
-	}
-
-	// Try to use the same NAME_NEW commitment on testnet
-	// This simulates a replay attack attempt
-	testnetCommitHash := computeCommitHash(rand, nameStr, testnetBC.chainParams)
-
-	// The commitment hashes should be different due to chain ID
-	if equalBytes(mainnetCommitHash, testnetCommitHash) {
-		t.Fatal("Commitment hashes should differ between mainnet and testnet")
-	}
-
-	// Store the mainnet commitment hash on testnet DB (simulating the replay)
-	if err := testnetDB.PutNameNew(mainnetCommitHash, 100); err != nil {
-		t.Fatalf("Failed to store NAME_NEW on testnet: %v", err)
-	}
-
-	// Create a NAME_FIRSTUPDATE transaction using the mainnet commitment
 	value := `{"ip":"1.2.3.4"}`
 	script := buildNameFirstUpdateScript([]byte(nameStr), rand, []byte(value))
 
@@ -809,18 +763,10 @@ func TestNameFirstUpdateCrossNetworkValidation(t *testing.T) {
 	msgBlock.AddTransaction(tx)
 
 	block := btcutil.NewBlock(msgBlock)
-	block.SetHeight(113) // After MinBlocksBeforeFirstUpdate
+	block.SetHeight(113)
 
-	// Validate on testnet - should FAIL because commitment hash doesn't match
-	// The blockchain computes testnetCommitHash but database has mainnetCommitHash
-	err = testnetBC.validateNameOperations(block)
-
-	if err == nil {
-		t.Error("Expected validation to fail for cross-network replay attempt, but it succeeded")
-	}
-
-	if err != nil && !strings.Contains(err.Error(), "no matching name_new found") {
-		t.Logf("Got expected error (may vary): %v", err)
+	if err := mainnetBC.validateNameOperations(block); err != nil {
+		t.Fatalf("expected validation to succeed with shared commitment hash: %v", err)
 	}
 }
 
@@ -1061,7 +1007,7 @@ func TestRollbackNameFirstUpdate(t *testing.T) {
 
 	// Verify that the NAME_NEW commitment was restored
 	// The commit hash is computed from rand, name, and chain ID
-	commitHash := computeCommitHash(rand, nameStr, bc.chainParams)
+	commitHash := computeCommitHash(rand, nameStr)
 	restoredNameNew, err := ndb.GetNameNew(commitHash)
 	if err != nil {
 		t.Fatalf("Expected NAME_NEW to be restored after rollback: %v", err)
@@ -1215,7 +1161,7 @@ func TestRollbackSameBlockNameNewAndFirstUpdate(t *testing.T) {
 	height := int32(100)
 
 	// Compute the commitment hash that links NAME_NEW to NAME_FIRSTUPDATE
-	commitHash := computeCommitHash(rand, nameStr, bc.chainParams)
+	commitHash := computeCommitHash(rand, nameStr)
 
 	// Simulate the state after the block was processed:
 	// - NAME_NEW commitment was consumed (deleted)
@@ -1443,7 +1389,7 @@ func TestNameFirstUpdateTimingWindow(t *testing.T) {
 		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
 		0x11, 0x12, 0x13, 0x14,
 	}
-	commitHash := computeCommitHash(rand, nameStr, bc.chainParams)
+	commitHash := computeCommitHash(rand, nameStr)
 	nameNewHeight := int32(100)
 
 	// Store NAME_NEW commitment
@@ -1558,7 +1504,7 @@ func TestValidateNameFirstUpdateRejectsFutureNameNewHeight(t *testing.T) {
 		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
 		0x11, 0x12, 0x13, 0x14,
 	}
-	commitHash := computeCommitHash(rand, nameStr, bc.chainParams)
+	commitHash := computeCommitHash(rand, nameStr)
 	nameNewHeight := int32(200)
 	if err := ndb.PutNameNew(commitHash, nameNewHeight); err != nil {
 		t.Fatalf("Failed to store NAME_NEW: %v", err)
@@ -1799,7 +1745,7 @@ func TestNameOperationDustLimitValidation(t *testing.T) {
 		// Setup: Create NAME_NEW commitment for NAME_FIRSTUPDATE to reference
 		nameStr := "d/example"
 		rand := make([]byte, 20)
-		commitHash := computeCommitHash(rand, nameStr, bc.chainParams)
+		commitHash := computeCommitHash(rand, nameStr)
 		nameNewHeight := int32(100)
 		if err := ndb.PutNameNew(commitHash, nameNewHeight); err != nil {
 			t.Fatalf("Failed to store NAME_NEW: %v", err)
@@ -2104,7 +2050,7 @@ func TestTransactionFeeValidation(t *testing.T) {
 			0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff, 0x00,
 			0x01, 0x02, 0x03, 0x04,
 		}
-		commitHash := computeCommitHash(rand, nameStr, bc.chainParams)
+		commitHash := computeCommitHash(rand, nameStr)
 		if err := bc.nameDB.PutNameNew(commitHash, 100); err != nil {
 			t.Fatalf("Failed to create NAME_NEW: %v", err)
 		}
@@ -2364,7 +2310,7 @@ func TestTransactionFeeValidation(t *testing.T) {
 		})
 
 		// First create NAME_NEW commitment
-		commitHash := computeCommitHash(rand, string(nameBytes), bc.chainParams)
+		commitHash := computeCommitHash(rand, string(nameBytes))
 		if err := bc.nameDB.PutNameNew(commitHash, 100); err != nil {
 			t.Fatalf("Failed to create NAME_NEW: %v", err)
 		}
@@ -3565,7 +3511,7 @@ func TestDoubleSpendDetection(t *testing.T) {
 		for i := range rand {
 			rand[i] = byte(i + 1)
 		}
-		commitHash := computeCommitHash(rand, name, bc.chainParams)
+		commitHash := computeCommitHash(rand, name)
 
 		// Store NAME_NEW in database
 		err := nameDB.PutNameNew(commitHash, 100)
@@ -3743,8 +3689,8 @@ func TestDoubleSpendDetection(t *testing.T) {
 			rand2[i] = byte(i + 10)
 		}
 
-		commitHash1 := computeCommitHash(rand1, name1, bc.chainParams)
-		commitHash2 := computeCommitHash(rand2, name2, bc.chainParams)
+		commitHash1 := computeCommitHash(rand1, name1)
+		commitHash2 := computeCommitHash(rand2, name2)
 
 		// Store NAME_NEW commitments
 		err := nameDB.PutNameNew(commitHash1, 200)
@@ -3840,7 +3786,7 @@ func TestDoubleSpendDetection(t *testing.T) {
 		for i := range rand {
 			rand[i] = byte(i + 20)
 		}
-		commitHash := computeCommitHash(rand, name, bc.chainParams)
+		commitHash := computeCommitHash(rand, name)
 
 		// Store NAME_NEW
 		err := nameDB.PutNameNew(commitHash, 300)
@@ -3962,7 +3908,7 @@ func TestRollbackNameFirstUpdateExactHeight(t *testing.T) {
 
 	// Step 1: Create NAME_NEW at height 100
 	nameNewHeight := int32(100)
-	commitHash := computeCommitHash(rand, nameStr, bc.chainParams)
+	commitHash := computeCommitHash(rand, nameStr)
 	if err := ndb.PutNameNew(commitHash, nameNewHeight); err != nil {
 		t.Fatalf("Failed to create NAME_NEW: %v", err)
 	}
@@ -4122,7 +4068,7 @@ func TestRollbackNameFirstUpdateFallback(t *testing.T) {
 	bc.rollbackNameOperations(block)
 
 	// When NameNewHeight is not set, should fall back to estimation
-	commitHash := computeCommitHash(rand, nameStr, bc.chainParams)
+	commitHash := computeCommitHash(rand, nameStr)
 	restoredNameNew, err := ndb.GetNameNew(commitHash)
 	if err != nil {
 		t.Fatalf("Expected NAME_NEW to be restored with fallback logic: %v", err)

@@ -156,9 +156,9 @@ func TestExtractIP(t *testing.T) {
 			expected:   "127.0.0.1",
 		},
 		{
-			name:       "malformed address",
+			name:       "malformed address (no port) returns empty string",
 			remoteAddr: "192.168.1.1",
-			expected:   "192.168.1.1",
+			expected:   "", // parse failure → global bucket key
 		},
 	}
 

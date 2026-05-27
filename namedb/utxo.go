@@ -174,7 +174,16 @@ func (ndb *NameDatabase) GetUTXO(txHash *chainhash.Hash, outIndex uint32) (*UTXO
 	return utxo, err
 }
 
-// GetUTXOsForAddress retrieves all UTXOs for a specific address
+// GetUTXOsForAddress retrieves all UTXOs for a specific address.
+//
+// The index key is address || txhash || outindex; the scan uses a bbolt
+// prefix cursor on the address bytes.  An exact-length check on every key
+// prevents false matches when one address is a byte-prefix of another.
+// This works correctly for fixed-length address encodings (e.g. P2PKH) where
+// all keys for a given address type have the same length.  If non-P2PKH
+// outputs with different-length address strings are ever stored, they will
+// be silently skipped — the index key schema would need a separator byte to
+// handle variable-length addresses safely.
 func (ndb *NameDatabase) GetUTXOsForAddress(address string) ([]*UTXO, error) {
 	if address == "" {
 		return nil, fmt.Errorf("address cannot be empty")

@@ -89,6 +89,11 @@ func withBuckets(tx *bbolt.Tx, names [][]byte, fn func([]*bbolt.Bucket) error) e
 // a 32-byte result, same as a single SHA256.
 const txHashSize = 32
 
+// maxRecordStringLen is the upper bound for any on-disk length-prefixed string field.
+// Namecoin consensus limits names to 255 bytes and values to 1 023 bytes, so any
+// strLen field exceeding this constant on a 32-bit platform would overflow int.
+const maxRecordStringLen = 1024
+
 // NameRecord encoding version. This implementation uses versioned format:
 // - Version 2: Includes OutIndex for UTXO chain validation
 // - Version 3: Adds NameNewHeight for accurate reorg handling
@@ -241,7 +246,10 @@ func (ndb *NameDatabase) Close() error {
 	return nil
 }
 
-// PutName stores a name record
+// PutName stores a name record in the database.
+// If record.ExpiresAt is 0, the encoder derives it from record.Height + ExpirationDepth;
+// callers that reuse the struct after PutName should read back ExpiresAt to see the
+// computed value — or set ExpiresAt explicitly before calling.
 func (ndb *NameDatabase) PutName(name string, record *NameRecord) error {
 	if record == nil {
 		return fmt.Errorf("record cannot be nil")
@@ -264,7 +272,9 @@ func (ndb *NameDatabase) PutName(name string, record *NameRecord) error {
 			existingRecord, decodeErr := decodeNameRecord(existingData)
 			if decodeErr == nil {
 				oldExpirationKey := makeExpirationKey(existingRecord.ExpiresAt, name)
-				expirationBkt.Delete(oldExpirationKey)
+				if err := expirationBkt.Delete(oldExpirationKey); err != nil {
+					return err
+				}
 			}
 		}
 
@@ -355,7 +365,9 @@ func (ndb *NameDatabase) DeleteName(name string) error {
 			existingRecord, decodeErr := decodeNameRecord(existingData)
 			if decodeErr == nil {
 				expirationKey := makeExpirationKey(existingRecord.ExpiresAt, name)
-				expirationBkt.Delete(expirationKey)
+				if err := expirationBkt.Delete(expirationKey); err != nil {
+					return err
+				}
 			}
 		}
 
@@ -1116,6 +1128,7 @@ func decodeNameRecord(data []byte) (*NameRecord, error) {
 			return nil, fmt.Errorf("corrupt record: version 3 requires NameNewHeight but data is truncated")
 		}
 		record.NameNewHeight = int32(binary.LittleEndian.Uint32(r.data[r.offset : r.offset+4]))
+		r.offset += 4
 	}
 
 	return record, nil
@@ -1142,6 +1155,9 @@ func (r *recordReader) readString(field string) (string, error) {
 	strLen, err := r.readUint32(field + " length")
 	if err != nil {
 		return "", err
+	}
+	if strLen > maxRecordStringLen {
+		return "", fmt.Errorf("corrupt record: %s length %d exceeds maximum %d", field, strLen, maxRecordStringLen)
 	}
 	if r.offset+int(strLen) > len(r.data) {
 		return "", fmt.Errorf("corrupt record: truncated at %s data", field)

@@ -1,15 +1,21 @@
 package rpc
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"math/big"
 	"net"
 	"net/http"
 	"os"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,6 +52,7 @@ type Server struct {
 	server         *http.Server
 	rpcUser        string
 	rpcPassword    string
+	authKey        []byte // Per-process HMAC key for credential comparison
 	rateLimiter    *rateLimiter
 	maxRequestSize int64
 	logger         *logging.Logger
@@ -53,6 +60,7 @@ type Server struct {
 	autoLockTimer  *time.Timer // Auto-lock timer for walletpassphrase
 	autoLockMu     sync.Mutex  // Protects autoLockTimer and autoLockGen
 	autoLockGen    uint64      // Generation counter to invalidate superseded timers
+	stopOnce       sync.Once
 }
 
 // Config holds RPC server configuration
@@ -196,6 +204,12 @@ func (s *Server) broadcastAndRespond(tx *wire.MsgTx, reqID interface{}, result m
 		return errorResponse(reqID, -1, "Network not available: peer manager not initialized")
 	}
 	if err := s.peerMgr.BroadcastTx(tx); err != nil {
+		if errors.Is(err, network.ErrNoPeers) {
+			s.logWarn("transaction accepted locally but not relayed",
+				"tx_hash", tx.TxHash().String())
+			result["warning"] = err.Error()
+			return successResponse(reqID, result)
+		}
 		return errorResponse(reqID, -1, fmt.Sprintf("Failed to broadcast transaction: %v", err))
 	}
 	return successResponse(reqID, result)
@@ -206,6 +220,19 @@ func NewServer(cfg *Config) (*Server, error) {
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on %s: %w", cfg.ListenAddr, err)
+	}
+
+	// Warn when both credentials are empty and the listen address is not loopback.
+	// An unprotected RPC server on a non-loopback address exposes wallet and name
+	// operations to anyone with network access.
+	if cfg.RPCUser == "" && cfg.RPCPassword == "" {
+		if host, _, splitErr := net.SplitHostPort(cfg.ListenAddr); splitErr == nil {
+			ip := net.ParseIP(host)
+			if !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
+				log.Printf("WARNING: RPC server listening on %s with no credentials configured — "+
+					"all RPC methods are accessible without authentication", cfg.ListenAddr)
+			}
+		}
 	}
 
 	// Set default rate limit if not configured
@@ -223,6 +250,13 @@ func NewServer(cfg *Config) (*Server, error) {
 	// Initialize logger for RPC server
 	logger := logging.GetDefault().WithComponent("rpc")
 
+	// Generate a per-process HMAC key for constant-time credential comparison.
+	authKey := make([]byte, 32)
+	if _, err := rand.Read(authKey); err != nil {
+		listener.Close()
+		return nil, fmt.Errorf("failed to generate auth key: %w", err)
+	}
+
 	s := &Server{
 		blockchain:     cfg.Blockchain,
 		peerMgr:        cfg.PeerMgr,
@@ -230,6 +264,7 @@ func NewServer(cfg *Config) (*Server, error) {
 		listener:       listener,
 		rpcUser:        cfg.RPCUser,
 		rpcPassword:    cfg.RPCPassword,
+		authKey:        authKey,
 		rateLimiter:    newRateLimiter(rateLimit),
 		maxRequestSize: maxRequestSize,
 		logger:         logger,
@@ -264,25 +299,30 @@ func (s *Server) Start() <-chan error {
 	return errCh
 }
 
-// Stop stops the RPC server
+// Stop stops the RPC server.
+// Safe to call multiple times; only the first call has effect.
 func (s *Server) Stop() error {
-	// Stop rate limiter cleanup goroutine
-	if s.rateLimiter != nil {
-		s.rateLimiter.stop()
-	}
-
-	// Close the HTTP server
-	serverErr := s.server.Close()
-
-	// Close the listener to release the port binding
-	// This is especially important for tests that create servers without starting them
-	if s.listener != nil {
-		if err := s.listener.Close(); err != nil && serverErr == nil {
-			serverErr = err
+	var stopErr error
+	s.stopOnce.Do(func() {
+		// Stop rate limiter cleanup goroutine
+		if s.rateLimiter != nil {
+			s.rateLimiter.stop()
 		}
-	}
 
-	return serverErr
+		// Close the HTTP server
+		serverErr := s.server.Close()
+
+		// Close the listener to release the port binding
+		// This is especially important for tests that create servers without starting them
+		if s.listener != nil {
+			if err := s.listener.Close(); err != nil && serverErr == nil {
+				serverErr = err
+			}
+		}
+
+		stopErr = serverErr
+	})
+	return stopErr
 }
 
 // Close closes the RPC server (alias for Stop for compatibility)
@@ -293,15 +333,20 @@ func (s *Server) Close() error {
 // checkAuth validates HTTP Basic Authentication credentials.
 // Returns true if the request contains valid credentials matching
 // the configured rpcUser and rpcPassword.
-// Uses constant-time comparison to prevent timing attacks.
+// Uses HMAC-SHA256 with a per-process random key before constant-time
+// comparison to prevent length-based timing side-channels.
 func (s *Server) checkAuth(r *http.Request) bool {
 	user, pass, ok := r.BasicAuth()
 	if !ok {
 		return false
 	}
-	userMatch := subtle.ConstantTimeCompare([]byte(user), []byte(s.rpcUser))
-	passMatch := subtle.ConstantTimeCompare([]byte(pass), []byte(s.rpcPassword))
-	return userMatch == 1 && passMatch == 1
+	mac := hmac.New(sha256.New, s.authKey)
+	mac.Write([]byte(s.rpcUser + ":" + s.rpcPassword))
+	expectedMAC := mac.Sum(nil)
+	mac.Reset()
+	mac.Write([]byte(user + ":" + pass))
+	providedMAC := mac.Sum(nil)
+	return subtle.ConstantTimeCompare(expectedMAC, providedMAC) == 1
 }
 
 // withPanicRecovery wraps an HTTP handler with panic recovery middleware.
@@ -621,7 +666,6 @@ func (s *Server) getMetrics(req *Request) *Response {
 		ID:      req.ID,
 	}
 }
-
 
 // logWarn logs a warning if the server logger is initialised; otherwise it is a no-op.
 func (s *Server) logWarn(msg string, args ...interface{}) {

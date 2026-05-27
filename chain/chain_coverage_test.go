@@ -349,7 +349,7 @@ func TestGetNameNewHeightFound(t *testing.T) {
 
 	rand := []byte("randombytes12345")
 	name := "d/test"
-	commitHash := computeCommitHash(rand, name, bc.chainParams)
+	commitHash := computeCommitHash(rand, name)
 	if err := ndb.PutNameNew(commitHash, 42); err != nil {
 		t.Fatalf("PutNameNew: %v", err)
 	}

@@ -1,6 +1,7 @@
 package network
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -118,11 +119,11 @@ func TestSyncTickNilBlockchain(t *testing.T) {
 	defer pm.mempool.Stop()
 
 	sm := &SyncManager{
-		pm:              pm,
-		blockchain:      nil, // nil blockchain
+		pm:               pm,
+		blockchain:       nil, // nil blockchain
 		headersFirstMode: true,
-		requestedBlocks: make(map[chainhash.Hash]time.Time),
-		quit:            make(chan struct{}),
+		requestedBlocks:  make(map[chainhash.Hash]time.Time),
+		quit:             make(chan struct{}),
 	}
 	defer close(sm.quit)
 
@@ -141,12 +142,12 @@ func TestSyncTickCaughtUp(t *testing.T) {
 	defer pm.mempool.Stop()
 
 	sm := &SyncManager{
-		pm:              pm,
-		blockchain:      bc,
+		pm:               pm,
+		blockchain:       bc,
 		headersFirstMode: true,
-		bestHeight:      0, // same as genesis (height 0) → caught up
-		requestedBlocks: make(map[chainhash.Hash]time.Time),
-		quit:            make(chan struct{}),
+		bestHeight:       0, // same as genesis (height 0) → caught up
+		requestedBlocks:  make(map[chainhash.Hash]time.Time),
+		quit:             make(chan struct{}),
 	}
 	defer close(sm.quit)
 
@@ -253,13 +254,13 @@ func TestSyncTickBehind(t *testing.T) {
 	defer pm.mempool.Stop()
 
 	sm := &SyncManager{
-		pm:              pm,
-		blockchain:      bc,
+		pm:               pm,
+		blockchain:       bc,
 		headersFirstMode: true,
-		bestHeight:      100, // we're "behind" (best says 100, we're at 0)
-		bestPeer:        nil, // no peer to sync from
-		requestedBlocks: make(map[chainhash.Hash]time.Time),
-		quit:            make(chan struct{}),
+		bestHeight:       100, // we're "behind" (best says 100, we're at 0)
+		bestPeer:         nil, // no peer to sync from
+		requestedBlocks:  make(map[chainhash.Hash]time.Time),
+		quit:             make(chan struct{}),
 	}
 	defer close(sm.quit)
 
@@ -285,416 +286,415 @@ func createTestBlockchain(t *testing.T, tmpDir string) *chain.BlockChain {
 
 // createTestOutboundPeer creates an unconnected outbound peer for testing.
 func createTestOutboundPeer(t *testing.T) *btcpeer.Peer {
-t.Helper()
-p, err := btcpeer.NewOutboundPeer(&btcpeer.Config{
-UserAgentName:    "nmcd-test",
-UserAgentVersion: "0.1.0",
-ChainParams:      &chaincfg.MainNetParams,
-}, "127.0.0.1:8334")
-if err != nil {
-t.Fatalf("failed to create test peer: %v", err)
-}
-return p
+	t.Helper()
+	p, err := btcpeer.NewOutboundPeer(&btcpeer.Config{
+		UserAgentName:    "nmcd-test",
+		UserAgentVersion: "0.1.0",
+		ChainParams:      &chaincfg.MainNetParams,
+	}, "127.0.0.1:8334")
+	if err != nil {
+		t.Fatalf("failed to create test peer: %v", err)
+	}
+	return p
 }
 
 // TestOnBlockWithRealBlockchain tests onBlock processes a block with a real blockchain.
 func TestOnBlockWithRealBlockchain(t *testing.T) {
-tmpDir := t.TempDir()
-bc := createTestBlockchain(t, tmpDir)
-defer bc.Close()
+	tmpDir := t.TempDir()
+	bc := createTestBlockchain(t, tmpDir)
+	defer bc.Close()
 
-pm := createTestPeerManager(t)
-pm.blockchain = bc
-defer pm.mempool.Stop()
+	pm := createTestPeerManager(t)
+	pm.blockchain = bc
+	defer pm.mempool.Stop()
 
-p := createTestOutboundPeer(t)
+	p := createTestOutboundPeer(t)
 
-// Build a minimal (invalid) block — ProcessBlock will fail, covering the error branch.
-msg := wire.NewMsgBlock(&wire.BlockHeader{
-Version: 1,
-})
+	// Build a minimal (invalid) block — ProcessBlock will fail, covering the error branch.
+	msg := wire.NewMsgBlock(&wire.BlockHeader{
+		Version: 1,
+	})
 
-// Should log an error but not panic
-pm.onBlock(p, msg, nil)
+	// Should log an error but not panic
+	pm.onBlock(p, msg, nil)
 }
 
 // TestSyncBlocksNilBlockchainCoverage tests SyncBlocks is a no-op when blockchain is nil.
 func TestSyncBlocksNilBlockchainCoverage(t *testing.T) {
-pm := createTestPeerManager(t)
-pm.blockchain = nil
-defer pm.mempool.Stop()
+	pm := createTestPeerManager(t)
+	pm.blockchain = nil
+	defer pm.mempool.Stop()
 
-// Should warn and return without panic
-pm.SyncBlocks()
+	// Should warn and return without panic
+	pm.SyncBlocks()
 }
 
 // TestSyncBlocksWithBlockchain tests SyncBlocks with a real blockchain but no peers.
 func TestSyncBlocksWithBlockchain(t *testing.T) {
-tmpDir := t.TempDir()
-bc := createTestBlockchain(t, tmpDir)
-defer bc.Close()
+	tmpDir := t.TempDir()
+	bc := createTestBlockchain(t, tmpDir)
+	defer bc.Close()
 
-pm := createTestPeerManager(t)
-pm.blockchain = bc
-defer pm.mempool.Stop()
+	pm := createTestPeerManager(t)
+	pm.blockchain = bc
+	defer pm.mempool.Stop()
 
-// No connected peers — getheaders loop should be a no-op, no panic.
-pm.SyncBlocks()
+	// No connected peers — getheaders loop should be a no-op, no panic.
+	pm.SyncBlocks()
 }
 
 // TestRequestHeadersWithBlockchain tests requestHeaders succeeds with a real blockchain.
 func TestRequestHeadersWithBlockchain(t *testing.T) {
-tmpDir := t.TempDir()
-bc := createTestBlockchain(t, tmpDir)
-defer bc.Close()
+	tmpDir := t.TempDir()
+	bc := createTestBlockchain(t, tmpDir)
+	defer bc.Close()
 
-sm := &SyncManager{
-blockchain:      bc,
-requestedBlocks: make(map[chainhash.Hash]time.Time),
-quit:            make(chan struct{}),
-}
-defer close(sm.quit)
+	sm := &SyncManager{
+		blockchain:      bc,
+		requestedBlocks: make(map[chainhash.Hash]time.Time),
+		quit:            make(chan struct{}),
+	}
+	defer close(sm.quit)
 
-// requestHeaders with nil peer: blockchain path runs but QueueMessage is not called
-sm.requestHeaders(nil)
+	// requestHeaders with nil peer: blockchain path runs but QueueMessage is not called
+	sm.requestHeaders(nil)
 }
 
 // TestStartSyncWithBlockchain tests startSync sets syncPeer and calls requestHeaders.
 func TestStartSyncWithBlockchain(t *testing.T) {
-tmpDir := t.TempDir()
-bc := createTestBlockchain(t, tmpDir)
-defer bc.Close()
+	tmpDir := t.TempDir()
+	bc := createTestBlockchain(t, tmpDir)
+	defer bc.Close()
 
-sm := &SyncManager{
-blockchain:      bc,
-requestedBlocks: make(map[chainhash.Hash]time.Time),
-quit:            make(chan struct{}),
-}
-defer close(sm.quit)
+	sm := &SyncManager{
+		blockchain:      bc,
+		requestedBlocks: make(map[chainhash.Hash]time.Time),
+		quit:            make(chan struct{}),
+	}
+	defer close(sm.quit)
 
-p := createTestOutboundPeer(t)
-sm.startSync(p)
+	p := createTestOutboundPeer(t)
+	sm.startSync(p)
 
-if sm.syncPeer != p {
-t.Error("Expected syncPeer to be set to the provided peer")
-}
+	if sm.syncPeer != p {
+		t.Error("Expected syncPeer to be set to the provided peer")
+	}
 }
 
 // TestOnGetDataTxNotInMempool tests onGetData when the requested tx is not in mempool.
 func TestOnGetDataTxNotInMempool(t *testing.T) {
-pm := createTestPeerManager(t)
-defer pm.mempool.Stop()
+	pm := createTestPeerManager(t)
+	defer pm.mempool.Stop()
 
-p := createTestOutboundPeer(t)
+	p := createTestOutboundPeer(t)
 
-getData := wire.NewMsgGetData()
-var unknownTxHash chainhash.Hash
-unknownTxHash[0] = 0xde
-getData.AddInvVect(wire.NewInvVect(wire.InvTypeTx, &unknownTxHash))
+	getData := wire.NewMsgGetData()
+	var unknownTxHash chainhash.Hash
+	unknownTxHash[0] = 0xde
+	getData.AddInvVect(wire.NewInvVect(wire.InvTypeTx, &unknownTxHash))
 
-// Should log "transaction not found in mempool" and not panic
-pm.onGetData(p, getData)
+	// Should log "transaction not found in mempool" and not panic
+	pm.onGetData(p, getData)
 }
 
 // TestOnGetDataBlockNilBlockchain tests onGetData block request with nil blockchain.
 func TestOnGetDataBlockNilBlockchain(t *testing.T) {
-pm := createTestPeerManager(t)
-pm.blockchain = nil
-defer pm.mempool.Stop()
+	pm := createTestPeerManager(t)
+	pm.blockchain = nil
+	defer pm.mempool.Stop()
 
-p := createTestOutboundPeer(t)
+	p := createTestOutboundPeer(t)
 
-getData := wire.NewMsgGetData()
-var blockHash chainhash.Hash
-getData.AddInvVect(wire.NewInvVect(wire.InvTypeBlock, &blockHash))
+	getData := wire.NewMsgGetData()
+	var blockHash chainhash.Hash
+	getData.AddInvVect(wire.NewInvVect(wire.InvTypeBlock, &blockHash))
 
-// serveBlock should log "cannot serve block" and return without panic
-pm.onGetData(p, getData)
+	// serveBlock should log "cannot serve block" and return without panic
+	pm.onGetData(p, getData)
 }
 
 // TestParseAuxPowIfPresentWithBlockchain tests parseAuxPowIfPresent with a blockchain.
 func TestParseAuxPowIfPresentWithBlockchain(t *testing.T) {
-tmpDir := t.TempDir()
-bc := createTestBlockchain(t, tmpDir)
-defer bc.Close()
+	tmpDir := t.TempDir()
+	bc := createTestBlockchain(t, tmpDir)
+	defer bc.Close()
 
-pm := createTestPeerManager(t)
-pm.blockchain = bc
-defer pm.mempool.Stop()
+	pm := createTestPeerManager(t)
+	pm.blockchain = bc
+	defer pm.mempool.Stop()
 
-genesis := bc.BestSnapshot()
-msg := wire.NewMsgBlock(&wire.BlockHeader{})
+	genesis := bc.BestSnapshot()
+	msg := wire.NewMsgBlock(&wire.BlockHeader{})
 
-// SetBlockAuxPowFromBytes will fail for a random payload — covers the warn branch.
-pm.parseAuxPowIfPresent(&genesis.Hash, msg, []byte{0xff, 0xfe})
+	// SetBlockAuxPowFromBytes will fail for a random payload — covers the warn branch.
+	pm.parseAuxPowIfPresent(&genesis.Hash, msg, []byte{0xff, 0xfe})
 }
 
 // TestUpdatePeerHeightHigherPeer tests that UpdatePeerHeight sets bestHeight.
 func TestUpdatePeerHeightHigherPeer(t *testing.T) {
-sm := &SyncManager{
-requestedBlocks: make(map[chainhash.Hash]time.Time),
-quit:            make(chan struct{}),
-}
-defer close(sm.quit)
+	sm := &SyncManager{
+		requestedBlocks: make(map[chainhash.Hash]time.Time),
+		quit:            make(chan struct{}),
+	}
+	defer close(sm.quit)
 
-p := createTestOutboundPeer(t)
-sm.UpdatePeerHeight(p, 500)
+	p := createTestOutboundPeer(t)
+	sm.UpdatePeerHeight(p, 500)
 
-if sm.bestHeight != 500 {
-t.Errorf("expected bestHeight=500, got %d", sm.bestHeight)
-}
-if sm.bestPeer != p {
-t.Error("expected bestPeer to be set")
-}
+	if sm.bestHeight != 500 {
+		t.Errorf("expected bestHeight=500, got %d", sm.bestHeight)
+	}
+	if sm.bestPeer != p {
+		t.Error("expected bestPeer to be set")
+	}
 }
 
 // TestOnVerAckBranchCoverage exercises the onVerAck function with registered peer.
 func TestOnVerAckBranchCoverage(t *testing.T) {
-pm := createTestPeerManager(t)
-defer pm.mempool.Stop()
+	pm := createTestPeerManager(t)
+	defer pm.mempool.Stop()
 
-p := createTestOutboundPeer(t)
+	p := createTestOutboundPeer(t)
 
-// Register peer so the scoring branch is exercised (p is in pm.peers)
-pm.mu.Lock()
-pm.peers[p.ID()] = p
-pm.mu.Unlock()
+	// Register peer so the scoring branch is exercised (p is in pm.peers)
+	pm.mu.Lock()
+	pm.peers[p.ID()] = p
+	pm.mu.Unlock()
 
-// onVerAck calls scoreManager.RecordSuccess for a registered peer.
-pm.onVerAck(p, nil)
+	// onVerAck calls scoreManager.RecordSuccess for a registered peer.
+	pm.onVerAck(p, nil)
 
-pm.mu.Lock()
-delete(pm.peers, p.ID())
-pm.mu.Unlock()
+	pm.mu.Lock()
+	delete(pm.peers, p.ID())
+	pm.mu.Unlock()
 }
 
 // TestBroadcastTxSuccessPath tests BroadcastTx adds tx to mempool and broadcasts.
 func TestBroadcastTxSuccessPath(t *testing.T) {
-pm := createTestPeerManager(t)
-defer pm.mempool.Stop()
+	pm := createTestPeerManager(t)
+	defer pm.mempool.Stop()
 
-tx := createTestTransaction()
+	tx := createTestTransaction()
 
-// No peers connected — BroadcastTx should succeed: tx added to mempool.
-err := pm.BroadcastTx(tx)
-if err != nil {
-t.Errorf("unexpected error from BroadcastTx: %v", err)
-}
+	err := pm.BroadcastTx(tx)
+	if !errors.Is(err, ErrNoPeers) {
+		t.Errorf("expected ErrNoPeers from BroadcastTx, got: %v", err)
+	}
 }
 
 // TestHandleHeadersAlreadyHaveBlock tests HandleHeaders when we already have the block.
 func TestHandleHeadersAlreadyHaveBlock(t *testing.T) {
-tmpDir := t.TempDir()
-bc := createTestBlockchain(t, tmpDir)
-defer bc.Close()
+	tmpDir := t.TempDir()
+	bc := createTestBlockchain(t, tmpDir)
+	defer bc.Close()
 
-pm := createTestPeerManager(t)
-defer pm.mempool.Stop()
+	pm := createTestPeerManager(t)
+	defer pm.mempool.Stop()
 
-sm := &SyncManager{
-pm:               pm,
-blockchain:       bc,
-headersFirstMode: false, // Not in IBD — no sync peer check
-requestedBlocks:  make(map[chainhash.Hash]time.Time),
-quit:             make(chan struct{}),
-}
-defer close(sm.quit)
+	sm := &SyncManager{
+		pm:               pm,
+		blockchain:       bc,
+		headersFirstMode: false, // Not in IBD — no sync peer check
+		requestedBlocks:  make(map[chainhash.Hash]time.Time),
+		quit:             make(chan struct{}),
+	}
+	defer close(sm.quit)
 
-p := createTestOutboundPeer(t)
+	p := createTestOutboundPeer(t)
 
-// Build a headers message with the genesis block hash — we already have it.
-genesis := bc.BestSnapshot()
-msg := &wire.MsgHeaders{}
-genesisHdr := wire.BlockHeader{PrevBlock: genesis.Hash}
-msg.AddBlockHeader(&genesisHdr)
+	// Build a headers message with the genesis block hash — we already have it.
+	genesis := bc.BestSnapshot()
+	msg := &wire.MsgHeaders{}
+	genesisHdr := wire.BlockHeader{PrevBlock: genesis.Hash}
+	msg.AddBlockHeader(&genesisHdr)
 
-// HandleHeaders should skip the genesis hash (already known) and not call requestBlock.
-sm.HandleHeaders(p, msg)
+	// HandleHeaders should skip the genesis hash (already known) and not call requestBlock.
+	sm.HandleHeaders(p, msg)
 
-// requestedBlocks should remain empty since we skipped the known block.
-sm.mu.Lock()
-count := len(sm.requestedBlocks)
-sm.mu.Unlock()
-// The genesis header hash computed from the empty-ish header won't be in the chain,
-// but SetBlockAuxPow / BlockByHash will return error, so requestBlock may be called.
-// The key check: no panic and test completes.
-_ = count
+	// requestedBlocks should remain empty since we skipped the known block.
+	sm.mu.Lock()
+	count := len(sm.requestedBlocks)
+	sm.mu.Unlock()
+	// The genesis header hash computed from the empty-ish header won't be in the chain,
+	// but SetBlockAuxPow / BlockByHash will return error, so requestBlock may be called.
+	// The key check: no panic and test completes.
+	_ = count
 }
 
 // TestFindReplacementPeerWithCandidate tests findReplacementPeer when a candidate exists.
 func TestFindReplacementPeerWithCandidate(t *testing.T) {
-pm := createTestPeerManager(t)
-defer pm.mempool.Stop()
+	pm := createTestPeerManager(t)
+	defer pm.mempool.Stop()
 
-p1 := createTestOutboundPeer(t)
-candidate, _ := btcpeer.NewOutboundPeer(&btcpeer.Config{
-UserAgentName:    "nmcd-test",
-UserAgentVersion: "0.1.0",
-ChainParams:      &chaincfg.MainNetParams,
-}, "192.168.1.1:8334")
+	p1 := createTestOutboundPeer(t)
+	candidate, _ := btcpeer.NewOutboundPeer(&btcpeer.Config{
+		UserAgentName:    "nmcd-test",
+		UserAgentVersion: "0.1.0",
+		ChainParams:      &chaincfg.MainNetParams,
+	}, "192.168.1.1:8334")
 
-// Add candidate to peers map
-pm.mu.Lock()
-pm.peers[candidate.ID()] = candidate
-pm.mu.Unlock()
+	// Add candidate to peers map
+	pm.mu.Lock()
+	pm.peers[candidate.ID()] = candidate
+	pm.mu.Unlock()
 
-sm := &SyncManager{
-pm:              pm,
-requestedBlocks: make(map[chainhash.Hash]time.Time),
-quit:            make(chan struct{}),
-}
-defer close(sm.quit)
+	sm := &SyncManager{
+		pm:              pm,
+		requestedBlocks: make(map[chainhash.Hash]time.Time),
+		quit:            make(chan struct{}),
+	}
+	defer close(sm.quit)
 
-sm.mu.Lock()
-result := sm.findReplacementPeer(p1)
-sm.mu.Unlock()
+	sm.mu.Lock()
+	result := sm.findReplacementPeer(p1)
+	sm.mu.Unlock()
 
-if result == nil {
-t.Error("expected a replacement peer, got nil")
-}
-if result.Addr() != candidate.Addr() {
-t.Errorf("expected candidate peer %s, got %s", candidate.Addr(), result.Addr())
-}
+	if result == nil {
+		t.Error("expected a replacement peer, got nil")
+	}
+	if result.Addr() != candidate.Addr() {
+		t.Errorf("expected candidate peer %s, got %s", candidate.Addr(), result.Addr())
+	}
 }
 
 // TestFindReplacementPeerNilPM tests findReplacementPeer with nil pm.
 func TestFindReplacementPeerNilPM(t *testing.T) {
-sm := &SyncManager{
-pm:              nil,
-requestedBlocks: make(map[chainhash.Hash]time.Time),
-quit:            make(chan struct{}),
-}
-defer close(sm.quit)
+	sm := &SyncManager{
+		pm:              nil,
+		requestedBlocks: make(map[chainhash.Hash]time.Time),
+		quit:            make(chan struct{}),
+	}
+	defer close(sm.quit)
 
-sm.mu.Lock()
-result := sm.findReplacementPeer(nil)
-sm.mu.Unlock()
+	sm.mu.Lock()
+	result := sm.findReplacementPeer(nil)
+	sm.mu.Unlock()
 
-if result != nil {
-t.Error("expected nil when pm is nil")
-}
+	if result != nil {
+		t.Error("expected nil when pm is nil")
+	}
 }
 
 // TestHandleHeadersNilBlockchain tests HandleHeaders returns early for nil blockchain.
 func TestHandleHeadersNilBlockchain(t *testing.T) {
-sm := &SyncManager{
-blockchain:      nil,
-requestedBlocks: make(map[chainhash.Hash]time.Time),
-quit:            make(chan struct{}),
-}
-defer close(sm.quit)
+	sm := &SyncManager{
+		blockchain:      nil,
+		requestedBlocks: make(map[chainhash.Hash]time.Time),
+		quit:            make(chan struct{}),
+	}
+	defer close(sm.quit)
 
-p := createTestOutboundPeer(t)
-msg := &wire.MsgHeaders{}
-msg.AddBlockHeader(&wire.BlockHeader{Version: 1})
+	p := createTestOutboundPeer(t)
+	msg := &wire.MsgHeaders{}
+	msg.AddBlockHeader(&wire.BlockHeader{Version: 1})
 
-// Should return after "blockchain == nil" check without panic
-sm.HandleHeaders(p, msg)
+	// Should return after "blockchain == nil" check without panic
+	sm.HandleHeaders(p, msg)
 }
 
 // TestHandleHeadersHeadFirstNoSyncPeer tests that headers are skipped when no sync peer exists.
 func TestHandleHeadersHeadFirstNoSyncPeer(t *testing.T) {
-tmpDir := t.TempDir()
-bc := createTestBlockchain(t, tmpDir)
-defer bc.Close()
+	tmpDir := t.TempDir()
+	bc := createTestBlockchain(t, tmpDir)
+	defer bc.Close()
 
-sm := &SyncManager{
-blockchain:       bc,
-headersFirstMode: true,
-syncPeer:         nil, // no sync peer
-requestedBlocks:  make(map[chainhash.Hash]time.Time),
-quit:             make(chan struct{}),
-}
-defer close(sm.quit)
+	sm := &SyncManager{
+		blockchain:       bc,
+		headersFirstMode: true,
+		syncPeer:         nil, // no sync peer
+		requestedBlocks:  make(map[chainhash.Hash]time.Time),
+		quit:             make(chan struct{}),
+	}
+	defer close(sm.quit)
 
-p := createTestOutboundPeer(t)
-msg := &wire.MsgHeaders{}
-msg.AddBlockHeader(&wire.BlockHeader{Version: 2})
+	p := createTestOutboundPeer(t)
+	msg := &wire.MsgHeaders{}
+	msg.AddBlockHeader(&wire.BlockHeader{Version: 2})
 
-// Should log "no active sync peer" and return without calling requestBlock.
-sm.HandleHeaders(p, msg)
+	// Should log "no active sync peer" and return without calling requestBlock.
+	sm.HandleHeaders(p, msg)
 
-sm.mu.Lock()
-count := len(sm.requestedBlocks)
-sm.mu.Unlock()
-if count != 0 {
-t.Errorf("expected no requested blocks, got %d", count)
-}
+	sm.mu.Lock()
+	count := len(sm.requestedBlocks)
+	sm.mu.Unlock()
+	if count != 0 {
+		t.Errorf("expected no requested blocks, got %d", count)
+	}
 }
 
 // TestOnGetHeadersWithBlockchain tests onGetHeaders with a real blockchain.
 func TestOnGetHeadersWithBlockchain(t *testing.T) {
-tmpDir := t.TempDir()
-bc := createTestBlockchain(t, tmpDir)
-defer bc.Close()
+	tmpDir := t.TempDir()
+	bc := createTestBlockchain(t, tmpDir)
+	defer bc.Close()
 
-pm := createTestPeerManager(t)
-pm.blockchain = bc
-defer pm.mempool.Stop()
+	pm := createTestPeerManager(t)
+	pm.blockchain = bc
+	defer pm.mempool.Stop()
 
-p := createTestOutboundPeer(t)
-msg := &wire.MsgGetHeaders{}
+	p := createTestOutboundPeer(t)
+	msg := &wire.MsgGetHeaders{}
 
-// Should locate headers and call QueueMessage (message dropped since peer unconnected).
-pm.onGetHeaders(p, msg)
+	// Should locate headers and call QueueMessage (message dropped since peer unconnected).
+	pm.onGetHeaders(p, msg)
 }
 
 // TestOnGetBlocksWithBlockchain tests onGetBlocks with a real blockchain.
 func TestOnGetBlocksWithBlockchain(t *testing.T) {
-tmpDir := t.TempDir()
-bc := createTestBlockchain(t, tmpDir)
-defer bc.Close()
+	tmpDir := t.TempDir()
+	bc := createTestBlockchain(t, tmpDir)
+	defer bc.Close()
 
-pm := createTestPeerManager(t)
-pm.blockchain = bc
-defer pm.mempool.Stop()
+	pm := createTestPeerManager(t)
+	pm.blockchain = bc
+	defer pm.mempool.Stop()
 
-p := createTestOutboundPeer(t)
-msg := &wire.MsgGetBlocks{}
+	p := createTestOutboundPeer(t)
+	msg := &wire.MsgGetBlocks{}
 
-// Should locate blocks and call QueueMessage (dropped since peer unconnected).
-pm.onGetBlocks(p, msg)
+	// Should locate blocks and call QueueMessage (dropped since peer unconnected).
+	pm.onGetBlocks(p, msg)
 }
 
 // TestBroadcastTxWithPeerLoop tests BroadcastTx iterates over peers (loop coverage).
 func TestBroadcastTxWithPeerLoop(t *testing.T) {
-pm := createTestPeerManager(t)
-defer pm.mempool.Stop()
+	pm := createTestPeerManager(t)
+	defer pm.mempool.Stop()
 
-p := createTestOutboundPeer(t)
+	p := createTestOutboundPeer(t)
 
-// Add unconnected peer to map so the loop body is executed.
-pm.mu.Lock()
-pm.peers[p.ID()] = p
-pm.mu.Unlock()
+	// Add unconnected peer to map so the loop body is executed.
+	pm.mu.Lock()
+	pm.peers[p.ID()] = p
+	pm.mu.Unlock()
 
-tx := createTestTransaction()
-err := pm.BroadcastTx(tx)
-if err != nil {
-t.Errorf("unexpected error: %v", err)
-}
+	tx := createTestTransaction()
+	err := pm.BroadcastTx(tx)
+	if !errors.Is(err, ErrNoPeers) {
+		t.Errorf("expected ErrNoPeers for unconnected peer, got: %v", err)
+	}
 }
 
 // TestRelayTransactionWithPeerInMap tests relayTransaction iterates over peers.
 func TestRelayTransactionWithPeerInMap(t *testing.T) {
-pm := createTestPeerManager(t)
-defer pm.mempool.Stop()
+	pm := createTestPeerManager(t)
+	defer pm.mempool.Stop()
 
-p := createTestOutboundPeer(t)
+	p := createTestOutboundPeer(t)
 
-// Add source peer and a second peer so the relay loop runs.
-p2, _ := btcpeer.NewOutboundPeer(&btcpeer.Config{
-UserAgentName:    "nmcd-test",
-UserAgentVersion: "0.1.0",
-ChainParams:      &chaincfg.MainNetParams,
-}, "10.0.0.1:8334")
+	// Add source peer and a second peer so the relay loop runs.
+	p2, _ := btcpeer.NewOutboundPeer(&btcpeer.Config{
+		UserAgentName:    "nmcd-test",
+		UserAgentVersion: "0.1.0",
+		ChainParams:      &chaincfg.MainNetParams,
+	}, "10.0.0.1:8334")
 
-pm.mu.Lock()
-pm.peers[p.ID()] = p
-pm.peers[p2.ID()] = p2
-pm.mu.Unlock()
+	pm.mu.Lock()
+	pm.peers[p.ID()] = p
+	pm.peers[p2.ID()] = p2
+	pm.mu.Unlock()
 
-tx := createTestTransaction()
-// Should not panic; relay to p2 (not the source p).
-pm.relayTransaction(tx, p)
+	tx := createTestTransaction()
+	// Should not panic; relay to p2 (not the source p).
+	pm.relayTransaction(tx, p)
 }

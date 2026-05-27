@@ -28,11 +28,13 @@ type SyncManager struct {
 	requestedBlocks  map[chainhash.Hash]time.Time // Track block requests to avoid duplicates
 
 	// Best known height from peers
-	bestHeight int32
-	bestPeer   *peer.Peer
+	bestHeight  int32
+	bestPeer    *peer.Peer
+	peerHeights map[*peer.Peer]int32
 
-	quit chan struct{}
-	wg   sync.WaitGroup
+	quit     chan struct{}
+	wg       sync.WaitGroup
+	stopOnce sync.Once
 }
 
 // NewSyncManager creates a new sync manager
@@ -42,6 +44,7 @@ func NewSyncManager(pm *PeerManager) *SyncManager {
 		blockchain:       pm.blockchain,
 		headersFirstMode: true, // Start in IBD mode
 		requestedBlocks:  make(map[chainhash.Hash]time.Time),
+		peerHeights:      make(map[*peer.Peer]int32),
 		quit:             make(chan struct{}),
 	}
 
@@ -52,9 +55,10 @@ func NewSyncManager(pm *PeerManager) *SyncManager {
 	return sm
 }
 
-// Stop stops the sync manager
+// Stop stops the sync manager.
+// Safe to call multiple times; only the first call has effect.
 func (sm *SyncManager) Stop() {
-	close(sm.quit)
+	sm.stopOnce.Do(func() { close(sm.quit) })
 	sm.wg.Wait()
 }
 
@@ -75,46 +79,57 @@ func (sm *SyncManager) syncLoop() {
 	}
 }
 
-// syncTick runs periodically to maintain sync state
+// syncTick runs periodically to maintain sync state.
 func (sm *SyncManager) syncTick() {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	// Skip if blockchain is not initialized
-	if sm.blockchain == nil {
+	sm.mu.RLock()
+	blockchain := sm.blockchain
+	sm.mu.RUnlock()
+	if blockchain == nil {
 		return
 	}
 
-	// Get our current best block height
-	bestSnapshot := sm.blockchain.BestSnapshot()
-	ourHeight := bestSnapshot.Height
+	ourHeight := blockchain.BestSnapshot().Height
+	var peerToSync *peer.Peer
+	var peerHeight int32
 
-	// Check if we need to sync
+	sm.mu.Lock()
 	if sm.bestHeight > ourHeight {
-		// We're behind, start syncing
-		if sm.syncPeer == nil && sm.bestPeer != nil {
-			sm.startSync(sm.bestPeer)
+		if sm.syncPeer == nil {
+			if sm.bestPeer == nil {
+				sm.bestPeer = sm.findReplacementPeer(nil)
+			}
+			if sm.bestPeer != nil {
+				sm.syncPeer = sm.bestPeer
+				peerToSync = sm.syncPeer
+				peerHeight = sm.bestHeight
+			}
 		}
 	} else if sm.headersFirstMode {
-		// We're caught up, exit IBD mode
 		log.Printf("Initial Block Download complete. Synced to height %d", ourHeight)
 		sm.headersFirstMode = false
 		sm.syncPeer = nil
 	}
+	sm.cleanupOldRequestsLocked(time.Now())
+	sm.mu.Unlock()
 
-	// Clean up old block requests (>2 minutes old)
-	sm.cleanupOldRequests()
+	if peerToSync != nil {
+		log.Printf("Starting sync with peer %s (height: %d)", peerToSync.Addr(), peerHeight)
+		sm.requestHeaders(peerToSync)
+	}
 }
 
-// startSync begins syncing from the specified peer
+// startSync begins syncing from the specified peer.
 func (sm *SyncManager) startSync(p *peer.Peer) {
 	if p == nil {
 		return
 	}
-	sm.syncPeer = p
-	log.Printf("Starting sync with peer %s (height: %d)", p.Addr(), sm.bestHeight)
 
-	// Request headers from this peer
+	sm.mu.Lock()
+	sm.syncPeer = p
+	peerHeight := sm.bestHeight
+	sm.mu.Unlock()
+
+	log.Printf("Starting sync with peer %s (height: %d)", p.Addr(), peerHeight)
 	sm.requestHeaders(p)
 }
 
@@ -152,12 +167,8 @@ func (sm *SyncManager) requestHeaders(p *peer.Peer) {
 	log.Printf("Sent getheaders request to %s", p.Addr())
 }
 
-// HandleHeaders processes a headers message from a peer
-// This is called by the PeerManager when headers are received
+// HandleHeaders processes a headers message from a peer.
 func (sm *SyncManager) HandleHeaders(p *peer.Peer, msg *wire.MsgHeaders) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
 	headerCount := len(msg.Headers)
 	if headerCount == 0 {
 		if p != nil {
@@ -168,82 +179,81 @@ func (sm *SyncManager) HandleHeaders(p *peer.Peer, msg *wire.MsgHeaders) {
 		return
 	}
 
-	// Skip processing if we don't have a blockchain or peer
-	if sm.blockchain == nil || p == nil {
+	sm.mu.RLock()
+	blockchain := sm.blockchain
+	if blockchain == nil || p == nil {
+		sm.mu.RUnlock()
 		return
 	}
-
-	// Only accept headers from the active sync peer to prevent spam.
-	// During headers-first sync, reject all headers unless a sync peer is selected.
 	if sm.headersFirstMode {
 		if sm.syncPeer == nil {
+			sm.mu.RUnlock()
 			log.Printf("Ignoring headers from %s: no active sync peer", p.Addr())
 			return
 		}
 		if p.Addr() != sm.syncPeer.Addr() {
-			log.Printf("Ignoring headers from non-sync peer %s (sync peer is %s)", p.Addr(), sm.syncPeer.Addr())
+			peerAddr := sm.syncPeer.Addr()
+			sm.mu.RUnlock()
+			log.Printf("Ignoring headers from non-sync peer %s (sync peer is %s)", p.Addr(), peerAddr)
 			return
 		}
 	}
+	headers := append([]*wire.BlockHeader(nil), msg.Headers...)
+	sm.mu.RUnlock()
 
-	if p != nil {
-		log.Printf("Received %d headers from %s", headerCount, p.Addr())
-	} else {
-		log.Printf("Received %d headers", headerCount)
-	}
-
-	// Process each header by requesting the full block
-	// In headers-first sync, we validate headers first, then download blocks
-	for _, header := range msg.Headers {
+	log.Printf("Received %d headers from %s", headerCount, p.Addr())
+	for _, header := range headers {
 		blockHash := header.BlockHash()
 
-		// Skip if we already requested this block recently
-		if _, exists := sm.requestedBlocks[blockHash]; exists {
+		sm.mu.RLock()
+		_, exists := sm.requestedBlocks[blockHash]
+		sm.mu.RUnlock()
+		if exists {
 			continue
 		}
 
-		// Check if we already have this block
-		_, err := sm.blockchain.BlockByHash(&blockHash)
-		if err == nil {
-			// We already have this block, skip it
+		if _, err := blockchain.BlockByHash(&blockHash); err == nil {
 			continue
 		}
 
-		// Request the full block
 		sm.requestBlock(p, &blockHash)
 	}
 
-	// If we received max headers (2000), there may be more available
-	// Request more headers to continue the chain
 	if headerCount == wire.MaxBlockHeadersPerMsg {
 		sm.requestHeaders(p)
 	}
 }
 
-// requestBlock requests a full block from a peer
-// This method must be called while holding sm.mu lock
+// requestBlock requests a full block from a peer.
 func (sm *SyncManager) requestBlock(p *peer.Peer, hash *chainhash.Hash) {
-	if p == nil {
+	if p == nil || hash == nil {
 		return
 	}
 
-	// Mark as requested
+	sm.mu.Lock()
+	if _, exists := sm.requestedBlocks[*hash]; exists {
+		sm.mu.Unlock()
+		return
+	}
 	sm.requestedBlocks[*hash] = time.Now()
+	sm.mu.Unlock()
 
-	// Create getdata message for the block
 	msg := wire.NewMsgGetData()
 	msg.AddInvVect(wire.NewInvVect(wire.InvTypeBlock, hash))
-
-	// Send to peer
 	p.QueueMessage(msg, nil)
 }
 
-// UpdatePeerHeight updates the best known height from a peer
-// This is called when we receive a version message from a peer
+// UpdatePeerHeight updates the best known height from a peer.
 func (sm *SyncManager) UpdatePeerHeight(p *peer.Peer, height int32) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
+	if sm.peerHeights == nil {
+		sm.peerHeights = make(map[*peer.Peer]int32)
+	}
+	if p != nil {
+		sm.peerHeights[p] = height
+	}
 	if height > sm.bestHeight {
 		sm.bestHeight = height
 		sm.bestPeer = p
@@ -263,21 +273,24 @@ func (sm *SyncManager) IsSyncing() bool {
 }
 
 // OnPeerDisconnected is called when a peer disconnects.
-// If the disconnected peer was the sync peer, clear it so a new peer can be selected.
 func (sm *SyncManager) OnPeerDisconnected(p *peer.Peer) {
+	if p == nil {
+		return
+	}
+
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	// Clear sync peer if it disconnected
 	if sm.syncPeer != nil && sm.syncPeer.Addr() == p.Addr() {
 		log.Printf("Sync peer %s disconnected, will reselect", p.Addr())
 		sm.syncPeer = nil
 	}
 
-	// Clear best peer if it disconnected
+	delete(sm.peerHeights, p)
 	if sm.bestPeer != nil && sm.bestPeer.Addr() == p.Addr() {
 		log.Printf("Best peer %s disconnected, will reselect", p.Addr())
-		sm.bestPeer = sm.findReplacementPeer(p)
+		sm.bestHeight = sm.maxPeerHeightLocked()
+		sm.bestPeer = nil
 	}
 }
 
@@ -287,6 +300,10 @@ func (sm *SyncManager) findReplacementPeer(disconnected *peer.Peer) *peer.Peer {
 	if sm.pm == nil {
 		return nil
 	}
+
+	var fallback *peer.Peer
+	var replacement *peer.Peer
+	var bestHeight int32 = -1
 
 	sm.pm.mu.RLock()
 	defer sm.pm.mu.RUnlock()
@@ -298,16 +315,39 @@ func (sm *SyncManager) findReplacementPeer(disconnected *peer.Peer) *peer.Peer {
 		if disconnected != nil && candidate.Addr() == disconnected.Addr() {
 			continue
 		}
-		return candidate
+		if fallback == nil {
+			fallback = candidate
+		}
+		if height, ok := sm.peerHeights[candidate]; ok && height > bestHeight {
+			bestHeight = height
+			replacement = candidate
+		}
 	}
-
-	return nil
+	if replacement != nil {
+		return replacement
+	}
+	return fallback
 }
 
-// cleanupOldRequests removes block requests older than 2 minutes
-// This method must be called while holding sm.mu lock
+func (sm *SyncManager) maxPeerHeightLocked() int32 {
+	var maxHeight int32
+	for _, height := range sm.peerHeights {
+		if height > maxHeight {
+			maxHeight = height
+		}
+	}
+	return maxHeight
+}
+
+// cleanupOldRequests removes block requests older than 2 minutes.
 func (sm *SyncManager) cleanupOldRequests() {
-	now := time.Now()
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.cleanupOldRequestsLocked(time.Now())
+}
+
+// cleanupOldRequestsLocked removes block requests older than 2 minutes.
+func (sm *SyncManager) cleanupOldRequestsLocked(now time.Time) {
 	for hash, requestTime := range sm.requestedBlocks {
 		if now.Sub(requestTime) > 2*time.Minute {
 			delete(sm.requestedBlocks, hash)

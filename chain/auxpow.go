@@ -1,6 +1,7 @@
 package chain
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -343,9 +344,13 @@ func (ap *AuxPow) ValidateAuxPow(blockHash, targetDifficulty *chainhash.Hash) er
 	// or if it properly connects to the coinbase.
 
 	if len(ap.ChainMerkleBranch.Branch) == 0 {
-		// Direct commitment: aux block hash should be in coinbase
-		// This is valid for single-chain merged mining
-		// We accept this case as it means the block hash is directly committed
+		// Direct commitment: verify block hash appears in coinbase
+		coinbaseData := serializeCoinbaseForSearch(&ap.CoinbaseTx)
+		blockHashBytes := (*blockHash)[:]
+		reversedBlockHash := reverseHashBytes(*blockHash)
+		if !bytesContain(coinbaseData, blockHashBytes) && !bytesContain(coinbaseData, reversedBlockHash[:]) {
+			return fmt.Errorf("auxpow: block hash not found in coinbase for direct commitment")
+		}
 	} else {
 		// Verify structural validity first
 		if len(ap.ChainMerkleBranch.Branch) > 32 {
@@ -377,16 +382,15 @@ func (ap *AuxPow) ValidateAuxPow(blockHash, targetDifficulty *chainhash.Hash) er
 				computedRoot = chainhash.DoubleHashH(combined[:])
 			}
 
-			// Check if the computed root appears in coinbase data.
-			// The merged mining commitment (magic fabe6d6d + root) stores the root in
-			// display byte order, while btcd's chainhash.Hash is internally stored in
-			// reversed (wire) byte order. We search for both orderings to handle either.
-			coinbaseData := serializeCoinbaseForSearch(&ap.CoinbaseTx)
-			reversedRoot := reverseHashBytes(computedRoot)
-			if !bytesContain(coinbaseData, computedRoot[:]) && !bytesContain(coinbaseData, reversedRoot[:]) {
-				return fmt.Errorf("chain merkle root not committed in coinbase: computed root %s not found in coinbase data",
-					computedRoot.String())
-			}
+		// Check if the computed root appears in the coinbase using the proper
+		// Namecoin merged-mining commitment format (magic + root + size + nonce).
+		// This is stricter than a raw byte-substring search and prevents an
+		// attacker from constructing a coinbase that contains the root bytes
+		// without the required structural commitment.
+		coinbaseData := serializeCoinbaseForSearch(&ap.CoinbaseTx)
+		if err := checkMergeMiningCommitment(coinbaseData, computedRoot, len(ap.ChainMerkleBranch.Branch)); err != nil {
+			return fmt.Errorf("chain merkle root not committed in coinbase: %w", err)
+		}
 		}
 	}
 
@@ -497,6 +501,65 @@ func reverseHashBytes(h chainhash.Hash) chainhash.Hash {
 		rev[i] = h[chainhash.HashSize-1-i]
 	}
 	return rev
+}
+
+// auxPowMagic is the Namecoin merged-mining header magic bytes (0xfabe6d6d).
+// This 4-byte sequence immediately precedes the merge-mined chain's merkle root
+// commitment in the parent-chain coinbase transaction.
+var auxPowMagic = []byte{0xfa, 0xbe, 0x6d, 0x6d}
+
+// checkMergeMiningCommitment verifies that computedRoot is committed in
+// coinbaseData using the Namecoin merged-mining header format:
+//
+//	magic(4) | root(32) | merkleTreeSize(4 LE) | nonce(4 LE)
+//
+// merkleTreeSize must equal 1<<branchLen. Returns nil on success.
+// Returns an error if no valid commitment is found or if multiple commitments exist.
+func checkMergeMiningCommitment(coinbaseData []byte, computedRoot chainhash.Hash, branchLen int) error {
+	if branchLen < 0 || branchLen >= 32 {
+		return fmt.Errorf("auxpow: invalid chain merkle branch length %d (must be 0..31)", branchLen)
+	}
+
+	expectedSize := uint32(1) << uint(branchLen)
+	reversedRoot := reverseHashBytes(computedRoot)
+
+	validCommitCount := 0
+	rest := coinbaseData
+
+	for {
+		idx := bytes.Index(rest, auxPowMagic)
+		if idx < 0 {
+			break
+		}
+		offset := idx + len(auxPowMagic)
+
+		// Need root(32) + merkleSize(4) after the magic.
+		if offset+36 > len(rest) {
+			rest = rest[idx+1:]
+			continue
+		}
+
+		var root chainhash.Hash
+		copy(root[:], rest[offset:offset+32])
+		size := binary.LittleEndian.Uint32(rest[offset+32 : offset+36])
+
+		// Accept both internal and wire byte-orderings of the root.
+		rootMatch := root == computedRoot || root == reversedRoot
+
+		if rootMatch && size == expectedSize {
+			validCommitCount++
+		}
+
+		rest = rest[idx+1:]
+	}
+
+	if validCommitCount > 1 {
+		return fmt.Errorf("auxpow: %d valid merged-mining commitment(s) in coinbase, expected exactly one", validCommitCount)
+	}
+	if validCommitCount == 0 {
+		return fmt.Errorf("auxpow: no valid merged-mining commitment (magic fabe6d6d + root + size) found in coinbase (expected root %s, size %d)", computedRoot, expectedSize)
+	}
+	return nil
 }
 
 // bytesContain checks if haystack contains needle
