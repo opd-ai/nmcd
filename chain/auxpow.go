@@ -366,15 +366,15 @@ func (ap *AuxPow) ValidateAuxPow(blockHash, targetDifficulty *chainhash.Hash) er
 				computedRoot = chainhash.DoubleHashH(combined[:])
 			}
 
-		// Check if the computed root appears in the coinbase using the proper
-		// Namecoin merged-mining commitment format (magic + root + size + nonce).
-		// This is stricter than a raw byte-substring search and prevents an
-		// attacker from constructing a coinbase that contains the root bytes
-		// without the required structural commitment.
-		coinbaseData := serializeCoinbaseForSearch(&ap.CoinbaseTx)
-		if err := checkMergeMiningCommitment(coinbaseData, computedRoot, len(ap.ChainMerkleBranch.Branch)); err != nil {
-			return fmt.Errorf("chain merkle root not committed in coinbase: %w", err)
-		}
+			// Check if the computed root appears in the coinbase using the proper
+			// Namecoin merged-mining commitment format (magic + root + size + nonce).
+			// This is stricter than a raw byte-substring search and prevents an
+			// attacker from constructing a coinbase that contains the root bytes
+			// without the required structural commitment.
+			coinbaseData := serializeCoinbaseForSearch(&ap.CoinbaseTx)
+			if err := checkMergeMiningCommitment(coinbaseData, computedRoot, len(ap.ChainMerkleBranch.Branch)); err != nil {
+				return fmt.Errorf("chain merkle root not committed in coinbase: %w", err)
+			}
 		}
 	}
 
@@ -545,5 +545,3 @@ func checkMergeMiningCommitment(coinbaseData []byte, computedRoot chainhash.Hash
 	}
 	return nil
 }
-
-

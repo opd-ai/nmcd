@@ -23,7 +23,7 @@ type rateLimiter struct {
 	maxSize  int                      // maximum number of IPs to track (prevents unbounded growth)
 	lruList  *list.List               // doubly linked list for LRU ordering
 	cleanup  *time.Ticker             // cleanup ticker
-	done     chan struct{}             // cleanup stop signal
+	done     chan struct{}            // cleanup stop signal
 	stopOnce sync.Once
 }
 
