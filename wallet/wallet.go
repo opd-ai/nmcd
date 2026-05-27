@@ -336,6 +336,12 @@ func (w *Wallet) GetKey(address string) (*KeyPair, error) {
 // EncryptWallet encrypts the wallet with a password.
 // This migrates an unencrypted wallet to encrypted format.
 // Returns an error if the wallet is already encrypted.
+//
+// Password policy: minimum 8 characters with at least 2 character classes
+// (uppercase, lowercase, digit, special). This policy does not include a
+// breach-list lookup; callers concerned with credential stuffing should
+// validate passwords against a compromised-password database before calling
+// this method.
 func (w *Wallet) EncryptWallet(password string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -387,6 +393,11 @@ func zeroSlice(b []byte) {
 
 // Lock locks an encrypted wallet, clearing keys from memory.
 // Returns an error if the wallet is not encrypted.
+//
+// Limitation: btcec.PrivateKey does not expose its internal key bytes for
+// zeroing. Lock drops all references to key objects (making them eligible for
+// GC) and zeroes serialized copies, but the canonical private key bytes inside
+// btcec.PrivateKey may persist in heap memory until garbage-collected.
 func (w *Wallet) Lock() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -439,6 +450,8 @@ func (w *Wallet) Unlock(password string) error {
 		return fmt.Errorf("wallet is already unlocked")
 	}
 
+	// Convert password to []byte (always allocates a new copy in Go, so the
+	// caller cannot retain a reference to these bytes).
 	pw := []byte(password)
 
 	// Verify password using constant-time comparison to prevent timing attacks

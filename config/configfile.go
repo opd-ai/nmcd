@@ -48,17 +48,33 @@ func ConfigPath(dataDir string) string {
 // LoadConfigFile reads and parses the nmcd.conf configuration file.
 // If the file doesn't exist, it returns an empty FileConfig with no error.
 // This allows the daemon to work without a config file using defaults.
+//
+// If the config file contains an RPC password and has world-readable permissions
+// (other-read bit set), LoadConfigFile returns an error to prevent credential
+// exposure on shared hosts.
 func LoadConfigFile(path string) (*FileConfig, error) {
 	// Check if file exists
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
 		// File doesn't exist - return empty config (not an error)
 		return &FileConfig{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat config file %s: %w", path, err)
 	}
 
 	// Read and parse config file
 	var cfg FileConfig
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config file %s: %w", path, err)
+	}
+
+	// Warn if credentials are present and file is world-readable
+	if cfg.RPC.Password != "" {
+		mode := info.Mode().Perm()
+		if mode&0o004 != 0 {
+			return nil, fmt.Errorf("config file %s contains RPC password but has world-readable permissions (%04o); set mode to 0600", path, mode)
+		}
 	}
 
 	return &cfg, nil

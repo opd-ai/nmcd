@@ -202,6 +202,10 @@ func createRateLimitTickers(config LoadTestConfig) []*time.Ticker {
 }
 
 // runLoadWorker runs a single load test worker goroutine.
+// Note: each worker uses a per-goroutine ticker; the actual aggregate RPS may
+// slightly exceed the configured RateLimit due to scheduling jitter between
+// goroutine wakeups. This drift is negligible at high concurrencies but may be
+// observable (≤1 extra request/tick) at low concurrencies (1–2 workers).
 func runLoadWorker(wg *sync.WaitGroup, client *RPCClient, ctx context.Context, stopChan chan struct{}, tickers []*time.Ticker, workerID int, result *TestResult, counters *loadTestCounters) {
 	defer wg.Done()
 

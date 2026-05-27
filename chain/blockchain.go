@@ -224,6 +224,9 @@ func (bc *BlockChain) clearBlockAuxPow(blockHash *chainhash.Hash) {
 
 // ProcessBlock processes a block, validates name operations, and returns its chain status.
 //
+// The supplied block is treated as read-only; the caller retains ownership and
+// may safely reuse the block after ProcessBlock returns.
+//
 // Return values (isMainChain, isOrphan, err):
 //
 //	(true,  false, nil) — block accepted onto the main chain; name database updated.

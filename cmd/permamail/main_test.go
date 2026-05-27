@@ -139,11 +139,11 @@ func TestUsageString(t *testing.T) {
 
 // TestVersionString tests version constant
 func TestVersionString(t *testing.T) {
-	if version == "" {
+	if appVersion == "" {
 		t.Error("Version string should not be empty")
 	}
 
-	if !strings.Contains(version, ".") {
+	if !strings.Contains(appVersion, ".") {
 		t.Error("Version should contain a dot (e.g., 0.1.0)")
 	}
 }

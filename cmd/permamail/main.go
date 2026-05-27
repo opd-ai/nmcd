@@ -25,11 +25,12 @@ import (
 
 	"github.com/opd-ai/nmcd/bridge"
 	"github.com/opd-ai/nmcd/client"
+	"github.com/opd-ai/nmcd/internal/version"
 	"github.com/opd-ai/nmcd/mail"
 )
 
-// version is set via ldflags during build
-var version = "0.1.0"
+// appVersion may be overridden via ldflags (e.g. -ldflags "-X main.appVersion=...")
+var appVersion = version.Version
 
 var usage = `permamail - Decentralized email forwarding via Namecoin
 
@@ -70,7 +71,7 @@ Examples:
   permamail serve --upstream smtp.sendgrid.net --upstreamport 587 \
                   --smtpuser apikey --smtppass <api-key>
 
-Version: ` + version + `
+Version: ` + appVersion + `
 `
 
 // CLI holds command-line configuration
@@ -124,7 +125,7 @@ func main() {
 		fmt.Fprintf(os.Stdout, "%s", usage)
 		os.Exit(0)
 	case "version", "-v", "--version":
-		fmt.Printf("permamail version %s\n", version)
+		fmt.Printf("permamail version %s\n", appVersion)
 		os.Exit(0)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n%s", command, usage)

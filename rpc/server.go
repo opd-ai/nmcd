@@ -28,6 +28,7 @@ import (
 	"github.com/opd-ai/nmcd/chain"
 	"github.com/opd-ai/nmcd/config"
 	"github.com/opd-ai/nmcd/internal/logging"
+	"github.com/opd-ai/nmcd/internal/version"
 	"github.com/opd-ai/nmcd/metrics"
 	"github.com/opd-ai/nmcd/network"
 	"github.com/opd-ai/nmcd/wallet"
@@ -316,13 +317,12 @@ func (s *Server) Stop() error {
 
 		// Close the listener to release the port binding
 		// This is especially important for tests that create servers without starting them
+		var listenerErr error
 		if s.listener != nil {
-			if err := s.listener.Close(); err != nil && serverErr == nil {
-				serverErr = err
-			}
+			listenerErr = s.listener.Close()
 		}
 
-		stopErr = serverErr
+		stopErr = errors.Join(serverErr, listenerErr)
 	})
 	return stopErr
 }
@@ -337,20 +337,48 @@ func (s *Server) Close() error {
 // the configured rpcUser and rpcPassword.
 // Uses HMAC-SHA256 with a per-process random key before constant-time
 // comparison to prevent length-based timing side-channels.
+// Credentials are restricted to printable ASCII to avoid Unicode normalization
+// ambiguities (e.g., NFC vs NFD representations hashing differently).
 func (s *Server) checkAuth(r *http.Request) bool {
 	user, pass, ok := r.BasicAuth()
 	if !ok {
 		return false
 	}
-	mac := hmac.New(sha256.New, s.authKey)
-	writeHMACField(mac, []byte(s.rpcUser))
-	writeHMACField(mac, []byte(s.rpcPassword))
+	if !isASCII(user) || !isASCII(pass) {
+		return false
+	}
+	s.mu.RLock()
+	rpcUser := s.rpcUser
+	rpcPass := s.rpcPassword
+	authKey := s.authKey
+	s.mu.RUnlock()
+
+	mac := hmac.New(sha256.New, authKey)
+	writeHMACField(mac, []byte(rpcUser))
+	writeHMACField(mac, []byte(rpcPass))
 	expectedMAC := mac.Sum(nil)
 	mac.Reset()
 	writeHMACField(mac, []byte(user))
 	writeHMACField(mac, []byte(pass))
 	providedMAC := mac.Sum(nil)
 	return subtle.ConstantTimeCompare(expectedMAC, providedMAC) == 1
+}
+
+// SetCredentials atomically replaces the RPC username, password, and HMAC key.
+// This enables credential rotation without restarting the daemon.
+func (s *Server) SetCredentials(user, pass string) {
+	newKey := make([]byte, 32)
+	if _, err := rand.Read(newKey); err != nil {
+		// Fallback: keep existing key if entropy source fails
+		s.mu.RLock()
+		newKey = s.authKey
+		s.mu.RUnlock()
+	}
+	s.mu.Lock()
+	s.rpcUser = user
+	s.rpcPassword = pass
+	s.authKey = newKey
+	s.mu.Unlock()
 }
 
 // writeHMACField writes a length-prefixed field to the HMAC to prevent
@@ -360,6 +388,16 @@ func writeHMACField(mac hash.Hash, data []byte) {
 	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(data)))
 	mac.Write(lenBuf[:])
 	mac.Write(data)
+}
+
+// isASCII reports whether s contains only printable ASCII characters (0x20–0x7E).
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] > 0x7E {
+			return false
+		}
+	}
+	return true
 }
 
 // withPanicRecovery wraps an HTTP handler with panic recovery middleware.
@@ -572,7 +610,7 @@ func (s *Server) getInfo(req *Request) *Response {
 	}
 
 	info := map[string]interface{}{
-		"version":     "0.1.0",
+		"version":     version.Version,
 		"blocks":      best.Height,
 		"connections": connections,
 		"difficulty":  getDifficultyRatio(best.Bits, s.blockchain.ChainParams()),

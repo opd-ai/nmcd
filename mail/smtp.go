@@ -72,6 +72,9 @@ type RelayConfig struct {
 
 	// MaxMessageSize is the maximum size in bytes for incoming messages
 	MaxMessageSize int64
+
+	// MaxConnections is the maximum number of concurrent connections (0 = 100)
+	MaxConnections int
 }
 
 // DefaultRelayConfig returns a RelayConfig with sensible defaults.
@@ -111,6 +114,7 @@ type Relay struct {
 	mu       sync.Mutex
 	started  bool
 	logger   *log.Logger
+	connSem  chan struct{} // semaphore to limit concurrent connections
 }
 
 // NewRelay creates a new SMTP relay with the given router and configuration.
@@ -134,10 +138,15 @@ type Relay struct {
 //	}
 //	defer relay.Stop()
 func NewRelay(router *Router, config RelayConfig) *Relay {
+	maxConns := config.MaxConnections
+	if maxConns <= 0 {
+		maxConns = 100
+	}
 	return &Relay{
-		router: router,
-		config: config,
-		logger: log.New(log.Writer(), "[smtp-relay] ", log.LstdFlags),
+		router:  router,
+		config:  config,
+		logger:  log.New(log.Writer(), "[smtp-relay] ", log.LstdFlags),
+		connSem: make(chan struct{}, maxConns),
 	}
 }
 
@@ -215,6 +224,9 @@ func (r *Relay) acceptLoop() {
 			continue
 		}
 
+		// Acquire connection semaphore slot
+		r.connSem <- struct{}{}
+
 		// Handle connection in background
 		r.wg.Add(1)
 		go r.handleConnection(conn)
@@ -223,6 +235,7 @@ func (r *Relay) acceptLoop() {
 
 // handleConnection processes a single SMTP connection.
 func (r *Relay) handleConnection(conn net.Conn) {
+	defer func() { <-r.connSem }()
 	defer r.wg.Done()
 	defer conn.Close()
 
@@ -280,7 +293,7 @@ func (s *smtpSession) processCommands() error {
 			return err
 		}
 
-		cmd := strings.ToUpper(strings.TrimSpace(line))
+		cmd := strings.TrimSpace(line)
 		if err := s.dispatchCommand(cmd); err != nil {
 			return err
 		}
@@ -293,25 +306,27 @@ func (s *smtpSession) processCommands() error {
 
 // shouldQuit checks if the session should terminate after processing the command.
 func (s *smtpSession) shouldQuit(cmd string) bool {
-	return cmd == "QUIT"
+	return strings.EqualFold(cmd, "QUIT")
 }
 
 // dispatchCommand routes a command to its handler.
+// The cmd parameter preserves the original case for address extraction.
 func (s *smtpSession) dispatchCommand(cmd string) error {
+	upper := strings.ToUpper(cmd)
 	switch {
-	case strings.HasPrefix(cmd, "HELO "), strings.HasPrefix(cmd, "EHLO "):
+	case strings.HasPrefix(upper, "HELO "), strings.HasPrefix(upper, "EHLO "):
 		return s.handleHelo(cmd)
-	case strings.HasPrefix(cmd, "MAIL FROM:"):
+	case strings.HasPrefix(upper, "MAIL FROM:"):
 		return s.handleMailFrom(cmd)
-	case strings.HasPrefix(cmd, "RCPT TO:"):
+	case strings.HasPrefix(upper, "RCPT TO:"):
 		return s.handleRcptTo(cmd)
-	case cmd == "DATA":
+	case upper == "DATA":
 		return s.handleData()
-	case cmd == "QUIT":
+	case upper == "QUIT":
 		return s.handleQuit()
-	case cmd == "RSET":
+	case upper == "RSET":
 		return s.handleReset()
-	case cmd == "NOOP":
+	case upper == "NOOP":
 		return s.handleNoop()
 	default:
 		return s.handleUnknown()
@@ -464,7 +479,7 @@ func (s *smtpSession) forwardMessage(ctx context.Context, from, to string, body 
 	if err != nil {
 		return err
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	if err := s.sendEnvelope(client, from, realAddr); err != nil {
 		return err
