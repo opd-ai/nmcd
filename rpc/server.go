@@ -5,9 +5,11 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"log"
 	"math/big"
 	"net"
@@ -26,6 +28,7 @@ import (
 	"github.com/opd-ai/nmcd/chain"
 	"github.com/opd-ai/nmcd/config"
 	"github.com/opd-ai/nmcd/internal/logging"
+	"github.com/opd-ai/nmcd/internal/version"
 	"github.com/opd-ai/nmcd/metrics"
 	"github.com/opd-ai/nmcd/network"
 	"github.com/opd-ai/nmcd/wallet"
@@ -314,13 +317,12 @@ func (s *Server) Stop() error {
 
 		// Close the listener to release the port binding
 		// This is especially important for tests that create servers without starting them
+		var listenerErr error
 		if s.listener != nil {
-			if err := s.listener.Close(); err != nil && serverErr == nil {
-				serverErr = err
-			}
+			listenerErr = s.listener.Close()
 		}
 
-		stopErr = serverErr
+		stopErr = errors.Join(serverErr, listenerErr)
 	})
 	return stopErr
 }
@@ -335,18 +337,78 @@ func (s *Server) Close() error {
 // the configured rpcUser and rpcPassword.
 // Uses HMAC-SHA256 with a per-process random key before constant-time
 // comparison to prevent length-based timing side-channels.
+// Credentials are restricted to printable ASCII to avoid Unicode normalization
+// ambiguities (e.g., NFC vs NFD representations hashing differently).
 func (s *Server) checkAuth(r *http.Request) bool {
 	user, pass, ok := r.BasicAuth()
 	if !ok {
 		return false
 	}
-	mac := hmac.New(sha256.New, s.authKey)
-	mac.Write([]byte(s.rpcUser + ":" + s.rpcPassword))
+	if !isASCII(user) || !isASCII(pass) {
+		return false
+	}
+	s.mu.RLock()
+	rpcUser := s.rpcUser
+	rpcPass := s.rpcPassword
+	authKey := s.authKey
+	s.mu.RUnlock()
+
+	mac := hmac.New(sha256.New, authKey)
+	writeHMACField(mac, []byte(rpcUser))
+	writeHMACField(mac, []byte(rpcPass))
 	expectedMAC := mac.Sum(nil)
 	mac.Reset()
-	mac.Write([]byte(user + ":" + pass))
+	writeHMACField(mac, []byte(user))
+	writeHMACField(mac, []byte(pass))
 	providedMAC := mac.Sum(nil)
 	return subtle.ConstantTimeCompare(expectedMAC, providedMAC) == 1
+}
+
+func (s *Server) authEnabled() bool {
+	s.mu.RLock()
+	enabled := s.rpcUser != "" || s.rpcPassword != ""
+	s.mu.RUnlock()
+	return enabled
+}
+
+// SetCredentials atomically replaces the RPC username, password, and HMAC key.
+// This enables credential rotation without restarting the daemon.
+func (s *Server) SetCredentials(user, pass string) error {
+	if !isASCII(user) || !isASCII(pass) {
+		return errors.New("rpc credentials must be printable ASCII")
+	}
+	newKey := make([]byte, 32)
+	if _, err := rand.Read(newKey); err != nil {
+		// Fallback: keep existing key if entropy source fails
+		s.mu.RLock()
+		newKey = s.authKey
+		s.mu.RUnlock()
+	}
+	s.mu.Lock()
+	s.rpcUser = user
+	s.rpcPassword = pass
+	s.authKey = newKey
+	s.mu.Unlock()
+	return nil
+}
+
+// writeHMACField writes a length-prefixed field to the HMAC to prevent
+// ambiguous credential parsing when user or pass contains separator characters.
+func writeHMACField(mac hash.Hash, data []byte) {
+	var lenBuf [4]byte
+	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(data)))
+	mac.Write(lenBuf[:])
+	mac.Write(data)
+}
+
+// isASCII reports whether s contains only printable ASCII characters (0x20–0x7E).
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] > 0x7E {
+			return false
+		}
+	}
+	return true
 }
 
 // withPanicRecovery wraps an HTTP handler with panic recovery middleware.
@@ -433,7 +495,7 @@ func (s *Server) validateHTTPRequest(w http.ResponseWriter, r *http.Request) err
 		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 		return fmt.Errorf("rate limit exceeded")
 	}
-	if (s.rpcUser != "" || s.rpcPassword != "") && !s.checkAuth(r) {
+	if s.authEnabled() && !s.checkAuth(r) {
 		w.Header().Set("WWW-Authenticate", `Basic realm="nmcd RPC"`)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return fmt.Errorf("unauthorized")
@@ -547,15 +609,8 @@ func getDifficultyRatio(bits uint32, params *chaincfg.Params) float64 {
 
 // getInfo returns general information
 func (s *Server) getInfo(req *Request) *Response {
-	if s.blockchain == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32603,
-				Message: "Blockchain not initialized",
-			},
-			ID: req.ID,
-		}
+	if r := s.requireBlockchain(req.ID); r != nil {
+		return r
 	}
 
 	best := s.blockchain.BestSnapshot()
@@ -566,7 +621,7 @@ func (s *Server) getInfo(req *Request) *Response {
 	}
 
 	info := map[string]interface{}{
-		"version":     "0.1.0",
+		"version":     version.Version,
 		"blocks":      best.Height,
 		"connections": connections,
 		"difficulty":  getDifficultyRatio(best.Bits, s.blockchain.ChainParams()),
@@ -581,15 +636,8 @@ func (s *Server) getInfo(req *Request) *Response {
 
 // getBlockCount returns the current block count
 func (s *Server) getBlockCount(req *Request) *Response {
-	if s.blockchain == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32603,
-				Message: "Blockchain not initialized",
-			},
-			ID: req.ID,
-		}
+	if r := s.requireBlockchain(req.ID); r != nil {
+		return r
 	}
 
 	best := s.blockchain.BestSnapshot()
@@ -603,15 +651,8 @@ func (s *Server) getBlockCount(req *Request) *Response {
 
 // getBestBlockHash returns the best block hash
 func (s *Server) getBestBlockHash(req *Request) *Response {
-	if s.blockchain == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32603,
-				Message: "Blockchain not initialized",
-			},
-			ID: req.ID,
-		}
+	if r := s.requireBlockchain(req.ID); r != nil {
+		return r
 	}
 
 	best := s.blockchain.BestSnapshot()

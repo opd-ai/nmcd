@@ -182,8 +182,12 @@ func (ndb *NameDatabase) GetUTXO(txHash *chainhash.Hash, outIndex uint32) (*UTXO
 // This works correctly for fixed-length address encodings (e.g. P2PKH) where
 // all keys for a given address type have the same length.  If non-P2PKH
 // outputs with different-length address strings are ever stored, they will
-// be silently skipped — the index key schema would need a separator byte to
-// handle variable-length addresses safely.
+// be silently skipped — the index key schema would need a separator byte or
+// length-prefix to handle variable-length addresses safely.
+//
+// Extension note: to support SegWit bech32 or other variable-length address
+// formats, prepend a 1-byte address-length prefix to the key and update both
+// AddUTXO and the Cursor scan in this function accordingly.
 func (ndb *NameDatabase) GetUTXOsForAddress(address string) ([]*UTXO, error) {
 	if address == "" {
 		return nil, fmt.Errorf("address cannot be empty")

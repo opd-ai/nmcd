@@ -307,22 +307,6 @@ func (ap *AuxPow) ValidateAuxPow(blockHash, targetDifficulty *chainhash.Hash) er
 	// We verify that the aux block hash, when walked up the chain merkle branch,
 	// produces a hash that appears in the coinbase transaction.
 
-	// Compute the expected root by applying the chain merkle branch to the block hash
-	// This should produce a value that's committed in the coinbase
-	computedRoot := *blockHash
-	for i, sibling := range ap.ChainMerkleBranch.Branch {
-		sideBit := (ap.ChainMerkleBranch.SideMask >> uint(i)) & 1
-		var combined [64]byte
-		if sideBit == 0 {
-			copy(combined[:32], computedRoot[:])
-			copy(combined[32:], sibling[:])
-		} else {
-			copy(combined[:32], sibling[:])
-			copy(combined[32:], computedRoot[:])
-		}
-		computedRoot = chainhash.DoubleHashH(combined[:])
-	}
-
 	// The computed root should appear in the coinbase transaction's outputs
 	// Check if it matches any output script or the coinbase itself
 	// For simplicity and compatibility with various merge-mining formats,
@@ -348,7 +332,7 @@ func (ap *AuxPow) ValidateAuxPow(blockHash, targetDifficulty *chainhash.Hash) er
 		coinbaseData := serializeCoinbaseForSearch(&ap.CoinbaseTx)
 		blockHashBytes := (*blockHash)[:]
 		reversedBlockHash := reverseHashBytes(*blockHash)
-		if !bytesContain(coinbaseData, blockHashBytes) && !bytesContain(coinbaseData, reversedBlockHash[:]) {
+		if !bytes.Contains(coinbaseData, blockHashBytes) && !bytes.Contains(coinbaseData, reversedBlockHash[:]) {
 			return fmt.Errorf("auxpow: block hash not found in coinbase for direct commitment")
 		}
 	} else {
@@ -562,32 +546,4 @@ func checkMergeMiningCommitment(coinbaseData []byte, computedRoot chainhash.Hash
 	return nil
 }
 
-// bytesContain checks if haystack contains needle
-func bytesContain(haystack, needle []byte) bool {
-	if len(needle) == 0 {
-		return true
-	}
-	if len(needle) > len(haystack) {
-		return false
-	}
 
-	for i := 0; i <= len(haystack)-len(needle); i++ {
-		if bytesEqual(haystack[i:i+len(needle)], needle) {
-			return true
-		}
-	}
-	return false
-}
-
-// bytesEqual checks if two byte slices are equal
-func bytesEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}

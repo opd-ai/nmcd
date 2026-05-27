@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"go.etcd.io/bbolt"
 )
 
 // setupTestHistoryRecords creates three test history records for testing
@@ -1139,4 +1140,42 @@ func TestScanNames(t *testing.T) {
 			t.Errorf("Expected 6 names with empty prefix, got %d", len(results))
 		}
 	})
+}
+
+// TestPutNameCorruptExistingRecord verifies that PutName returns an error
+// when the existing record in the database is corrupt and cannot be decoded.
+func TestPutNameCorruptExistingRecord(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "names.db")
+	ndb, err := NewNameDatabase(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ndb.Close()
+
+	// Inject corrupt data directly into the names bucket
+	testName := "d/corrupt"
+	corruptData := []byte{0xFF} // Invalid version byte
+	err = ndb.db.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket(namesBucket)
+		return bucket.Put([]byte(testName), corruptData)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Now try to PutName over the corrupt record — should return an error
+	txHash, _ := chainhash.NewHashFromStr("0000000000000000000000000000000000000000000000000000000000000099")
+	record := &NameRecord{
+		Name:      testName,
+		Value:     `{"ip":"1.2.3.4"}`,
+		TxHash:    *txHash,
+		Height:    100,
+		ExpiresAt: 36100,
+		Address:   "Ntest",
+	}
+	err = ndb.PutName(testName, record)
+	if err == nil {
+		t.Fatal("expected error from PutName with corrupt existing record, got nil")
+	}
 }

@@ -130,6 +130,13 @@ type LoadTestConfig struct {
 
 // RPCLoadTest performs sustained RPC load testing
 func RPCLoadTest(config LoadTestConfig) (*TestResult, error) {
+	if config.Concurrency <= 0 {
+		return nil, fmt.Errorf("concurrency must be > 0")
+	}
+	if config.Duration <= 0 {
+		return nil, fmt.Errorf("duration must be > 0")
+	}
+
 	result := &TestResult{
 		Name:         "RPC Load Test",
 		ErrorDetails: make([]string, 0),
@@ -150,15 +157,18 @@ func RPCLoadTest(config LoadTestConfig) (*TestResult, error) {
 
 	start := time.Now()
 	stopChan := make(chan struct{})
+	workerCtx, workerCancel := context.WithCancel(ctx)
+	defer workerCancel()
 
 	var wg sync.WaitGroup
 	for i := 0; i < config.Concurrency; i++ {
 		wg.Add(1)
-		go runLoadWorker(&wg, client, ctx, stopChan, tickers, i, result, counters)
+		go runLoadWorker(&wg, client, workerCtx, stopChan, tickers, i, result, counters)
 	}
 
 	time.Sleep(config.Duration)
 	close(stopChan)
+	workerCancel()
 	wg.Wait()
 
 	populateLoadTestResult(result, counters, time.Since(start))
@@ -192,6 +202,10 @@ func createRateLimitTickers(config LoadTestConfig) []*time.Ticker {
 }
 
 // runLoadWorker runs a single load test worker goroutine.
+// Note: each worker uses a per-goroutine ticker; the actual aggregate RPS may
+// slightly exceed the configured RateLimit due to scheduling jitter between
+// goroutine wakeups. This drift is negligible at high concurrencies but may be
+// observable (≤1 extra request/tick) at low concurrencies (1–2 workers).
 func runLoadWorker(wg *sync.WaitGroup, client *RPCClient, ctx context.Context, stopChan chan struct{}, tickers []*time.Ticker, workerID int, result *TestResult, counters *loadTestCounters) {
 	defer wg.Done()
 

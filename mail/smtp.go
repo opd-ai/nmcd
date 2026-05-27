@@ -17,6 +17,10 @@ import (
 
 var errMessageSizeExceeded = errors.New("message exceeds maximum size")
 
+// perReadTimeout is the maximum time allowed for a single read operation.
+// This prevents slow-loris attacks where a client sends data very slowly.
+const perReadTimeout = 30 * time.Second
+
 type messageSizeExceededError struct {
 	maxSize int64
 }
@@ -68,6 +72,9 @@ type RelayConfig struct {
 
 	// MaxMessageSize is the maximum size in bytes for incoming messages
 	MaxMessageSize int64
+
+	// MaxConnections is the maximum number of concurrent connections (0 = 100)
+	MaxConnections int
 }
 
 // DefaultRelayConfig returns a RelayConfig with sensible defaults.
@@ -107,6 +114,7 @@ type Relay struct {
 	mu       sync.Mutex
 	started  bool
 	logger   *log.Logger
+	connSem  chan struct{} // semaphore to limit concurrent connections
 }
 
 // NewRelay creates a new SMTP relay with the given router and configuration.
@@ -130,10 +138,15 @@ type Relay struct {
 //	}
 //	defer relay.Stop()
 func NewRelay(router *Router, config RelayConfig) *Relay {
+	maxConns := config.MaxConnections
+	if maxConns <= 0 {
+		maxConns = 100
+	}
 	return &Relay{
-		router: router,
-		config: config,
-		logger: log.New(log.Writer(), "[smtp-relay] ", log.LstdFlags),
+		router:  router,
+		config:  config,
+		logger:  log.New(log.Writer(), "[smtp-relay] ", log.LstdFlags),
+		connSem: make(chan struct{}, maxConns),
 	}
 }
 
@@ -211,6 +224,15 @@ func (r *Relay) acceptLoop() {
 			continue
 		}
 
+		// Acquire connection semaphore slot
+		select {
+		case r.connSem <- struct{}{}:
+		default:
+			r.logger.Printf("Connection limit reached (%d), rejecting %s", cap(r.connSem), conn.RemoteAddr())
+			conn.Close()
+			continue
+		}
+
 		// Handle connection in background
 		r.wg.Add(1)
 		go r.handleConnection(conn)
@@ -219,13 +241,11 @@ func (r *Relay) acceptLoop() {
 
 // handleConnection processes a single SMTP connection.
 func (r *Relay) handleConnection(conn net.Conn) {
+	defer func() { <-r.connSem }()
 	defer r.wg.Done()
 	defer conn.Close()
 
 	// Set connection timeouts
-	if r.config.ReadTimeout > 0 {
-		conn.SetReadDeadline(time.Now().Add(r.config.ReadTimeout))
-	}
 	if r.config.WriteTimeout > 0 {
 		conn.SetWriteDeadline(time.Now().Add(r.config.WriteTimeout))
 	}
@@ -234,10 +254,11 @@ func (r *Relay) handleConnection(conn net.Conn) {
 
 	// Implement minimal SMTP protocol
 	session := &smtpSession{
-		conn:   conn,
-		relay:  r,
-		logger: r.logger,
-		reader: bufio.NewReader(conn),
+		conn:      conn,
+		relay:     r,
+		logger:    r.logger,
+		reader:    bufio.NewReader(conn),
+		startTime: time.Now(),
 	}
 
 	if err := session.handle(); err != nil {
@@ -247,12 +268,13 @@ func (r *Relay) handleConnection(conn net.Conn) {
 
 // smtpSession represents a single SMTP session.
 type smtpSession struct {
-	conn   net.Conn
-	relay  *Relay
-	logger *log.Logger
-	from   string
-	to     []string
-	reader *bufio.Reader
+	conn      net.Conn
+	relay     *Relay
+	logger    *log.Logger
+	from      string
+	to        []string
+	reader    *bufio.Reader
+	startTime time.Time
 }
 
 // handle processes the SMTP protocol for this session.
@@ -276,7 +298,7 @@ func (s *smtpSession) processCommands() error {
 			return err
 		}
 
-		cmd := strings.ToUpper(strings.TrimSpace(line))
+		cmd := strings.TrimSpace(line)
 		if err := s.dispatchCommand(cmd); err != nil {
 			return err
 		}
@@ -289,25 +311,27 @@ func (s *smtpSession) processCommands() error {
 
 // shouldQuit checks if the session should terminate after processing the command.
 func (s *smtpSession) shouldQuit(cmd string) bool {
-	return cmd == "QUIT"
+	return strings.EqualFold(cmd, "QUIT")
 }
 
 // dispatchCommand routes a command to its handler.
+// The cmd parameter preserves the original case for address extraction.
 func (s *smtpSession) dispatchCommand(cmd string) error {
+	upper := strings.ToUpper(cmd)
 	switch {
-	case strings.HasPrefix(cmd, "HELO "), strings.HasPrefix(cmd, "EHLO "):
+	case strings.HasPrefix(upper, "HELO "), strings.HasPrefix(upper, "EHLO "):
 		return s.handleHelo(cmd)
-	case strings.HasPrefix(cmd, "MAIL FROM:"):
+	case strings.HasPrefix(upper, "MAIL FROM:"):
 		return s.handleMailFrom(cmd)
-	case strings.HasPrefix(cmd, "RCPT TO:"):
+	case strings.HasPrefix(upper, "RCPT TO:"):
 		return s.handleRcptTo(cmd)
-	case cmd == "DATA":
+	case upper == "DATA":
 		return s.handleData()
-	case cmd == "QUIT":
+	case upper == "QUIT":
 		return s.handleQuit()
-	case cmd == "RSET":
+	case upper == "RSET":
 		return s.handleReset()
-	case cmd == "NOOP":
+	case upper == "NOOP":
 		return s.handleNoop()
 	default:
 		return s.handleUnknown()
@@ -460,7 +484,7 @@ func (s *smtpSession) forwardMessage(ctx context.Context, from, to string, body 
 	if err != nil {
 		return err
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	if err := s.sendEnvelope(client, from, realAddr); err != nil {
 		return err
@@ -571,6 +595,8 @@ func (s *smtpSession) sendBody(client *smtp.Client, body []byte) error {
 
 // readLine reads a single line from the connection.
 func (s *smtpSession) readLine() (string, error) {
+	// Refresh per-read deadline to prevent slow-loris attacks
+	s.setReadDeadline()
 	line, err := s.reader.ReadString('\n')
 	if err != nil {
 		return "", err
@@ -601,6 +627,8 @@ func (s *smtpSession) readDataBody() ([]byte, error) {
 	var sizeErr error
 
 	for {
+		// Refresh per-read deadline for each line read
+		s.setReadDeadline()
 		line, err := s.reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
@@ -625,7 +653,7 @@ func (s *smtpSession) readDataBody() ([]byte, error) {
 		}
 
 		// Enforce size limit before appending.
-		if int64(len(body)+len(line)) > maxSize {
+		if int64(len(body))+int64(len(line)) > maxSize {
 			sizeErr = &messageSizeExceededError{maxSize: maxSize}
 			continue
 		}
@@ -639,6 +667,17 @@ func (s *smtpSession) readDataBody() ([]byte, error) {
 	}
 
 	return body, nil
+}
+
+func (s *smtpSession) setReadDeadline() {
+	deadline := time.Now().Add(perReadTimeout)
+	if s.relay.config.ReadTimeout > 0 {
+		sessionDeadline := s.startTime.Add(s.relay.config.ReadTimeout)
+		if sessionDeadline.Before(deadline) {
+			deadline = sessionDeadline
+		}
+	}
+	_ = s.conn.SetReadDeadline(deadline)
 }
 
 // extractAddress extracts an email address from a parameter string.

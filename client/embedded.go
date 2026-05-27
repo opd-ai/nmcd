@@ -478,7 +478,7 @@ func (c *EmbeddedClient) checkNameAvailability(name string) error {
 	existing, err := c.nameDB.GetName(name)
 	if err == nil {
 		bestHeight := c.chain.BestSnapshot().Height
-		if existing.ExpiresAt > bestHeight {
+		if existing.ExpiresAt >= bestHeight {
 			return fmt.Errorf("%w: %s", ErrNameExists, name)
 		}
 	}
