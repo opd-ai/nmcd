@@ -130,6 +130,11 @@ func (sm *SyncManager) requestHeaders(p *peer.Peer) {
 		return
 	}
 
+	if p == nil {
+		log.Printf("Cannot request headers: no peer provided")
+		return
+	}
+
 	// Get our latest block locator
 	locator, err := sm.blockchain.LatestBlockLocator()
 	if err != nil {
@@ -218,6 +223,10 @@ func (sm *SyncManager) HandleHeaders(p *peer.Peer, msg *wire.MsgHeaders) {
 // requestBlock requests a full block from a peer
 // This method must be called while holding sm.mu lock
 func (sm *SyncManager) requestBlock(p *peer.Peer, hash *chainhash.Hash) {
+	if p == nil {
+		return
+	}
+
 	// Mark as requested
 	sm.requestedBlocks[*hash] = time.Now()
 
