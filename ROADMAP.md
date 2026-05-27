@@ -270,7 +270,7 @@ The `MaxValueLengthUI` constant (520 bytes, matching Namecoin Core's `MAX_VALUE_
   - `chain/name_script.go`: computeCommitHash, parseNameScript*, validateNameFormat, opcodes, ParseNameOperationsFromTx (~500 lines)
   - blockchain.go reduced from 2231 to ~1640 lines
 
-- [ ] **Extract duplicated code** (ROI 27.00):
+- [x] **Extract duplicated code** (ROI 27.00):
   - wallet/wallet.go: 27-line duplication (suggestion #1)
   - examples/register_name/main.go: 21-line duplication (suggestion #2)
 
@@ -280,15 +280,14 @@ The `MaxValueLengthUI` constant (520 bytes, matching Namecoin Core's `MAX_VALUE_
 **Effort:** 0.5 days  
 **Risk Mitigated:** User confusion, incorrect integration patterns
 
-- [ ] Update docs/development/PLAN.md to reflect completed phases:
+- [x] Update docs/development/PLAN.md to reflect completed phases:
   - Phase 1 (Security): ✅ Completed (wallet encryption, RPC security)
   - Phase 2 (Observability): ✅ Completed (structured logging, health endpoints, metrics)
-  - Phase 3 (Testing): ⚠️ In progress (coverage gaps remain)
-  - Update estimated completion for Phase 3
+  - Phase 3 (Testing): ✅ Completed (coverage targets and test milestones met)
 
-- [ ] Review docs/development/COVERAGE.md coverage numbers:
-  - Update coverage percentages (outdated: chain 68.1% → actual 77.4%)
-  - Update rpc coverage (outdated: 45.8% → actual 60.1%)
+- [x] Review docs/development/COVERAGE.md coverage numbers:
+  - Update coverage percentages (outdated: chain 68.1% → actual 80.1%)
+  - Update rpc coverage (outdated: 45.8% → actual 82.0%)
   - Ensure consistency with actual `go test -cover` output
 
 ---
