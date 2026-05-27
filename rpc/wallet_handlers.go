@@ -345,7 +345,7 @@ func (s *Server) getBalance(req *Request) *Response {
 //
 // Returns array of UTXO objects with txid, vout, address, amount, confirmations, etc.
 func (s *Server) listUnspent(req *Request) *Response {
-	if err := s.validateListUnspentState(); err != nil {
+	if err := s.validateListUnspentState(req.ID); err != nil {
 		return err
 	}
 
@@ -361,24 +361,12 @@ func (s *Server) listUnspent(req *Request) *Response {
 }
 
 // validateListUnspentState checks wallet and blockchain availability.
-func (s *Server) validateListUnspentState() *Response {
+func (s *Server) validateListUnspentState(reqID interface{}) *Response {
 	if s.wallet == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: "Wallet not initialized. Start the node with wallet enabled.",
-			},
-		}
+		return errorResponse(reqID, -1, "Wallet not initialized. Start the node with wallet enabled.")
 	}
 	if s.blockchain == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32603,
-				Message: "Blockchain not initialized",
-			},
-		}
+		return errorResponse(reqID, -32603, "Blockchain not initialized")
 	}
 	return nil
 }
@@ -485,8 +473,10 @@ func (s *Server) buildUTXOResult(utxo *namedb.UTXO, bestHeight int32, minConf, m
 }
 
 // calculateConfirmations computes confirmations for a UTXO at a given height.
+// Heights >= 0 are treated as confirmed (genesis block is at height 0).
+// Negative heights indicate unconfirmed transactions.
 func (s *Server) calculateConfirmations(utxoHeight, bestHeight int32) int {
-	if utxoHeight > 0 {
+	if utxoHeight >= 0 {
 		return int(bestHeight - utxoHeight + 1)
 	}
 	return 0

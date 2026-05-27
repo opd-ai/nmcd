@@ -168,13 +168,4 @@ func TestBoundedRateLimiterEvictionOrder(t *testing.T) {
 func TestRateLimiterStopCleanup(t *testing.T) {
 	rl := newRateLimiter(100)
 	rl.stop() // should not block or panic
-
-	// Calling stop twice should not panic (done channel is already closed)
-	defer func() {
-		if r := recover(); r != nil {
-			t.Errorf("second stop() caused panic: %v", r)
-		}
-	}()
-	// Note: closing a closed channel panics; stop() does this so calling twice panics.
-	// This test confirms single stop() is safe.
 }

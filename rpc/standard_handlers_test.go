@@ -167,8 +167,8 @@ func TestCalculateConfirmations(t *testing.T) {
 	}{
 		{"confirmed at tip", 10, 10, 1},
 		{"1 conf below tip", 9, 10, 2},
-		{"unconfirmed (height 0)", 0, 100, 0},
-		{"genesis block", 1, 100, 100},
+		{"unconfirmed (height -1)", -1, 100, 0},
+		{"genesis block", 0, 100, 101},
 	}
 
 	for _, tc := range tests {
