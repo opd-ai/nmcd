@@ -69,7 +69,7 @@ func LoadConfigFile(path string) (*FileConfig, error) {
 		return nil, fmt.Errorf("failed to parse config file %s: %w", path, err)
 	}
 
-	// Warn if credentials are present and file is world-readable
+	// Reject world-readable config files that contain RPC credentials.
 	if cfg.RPC.Password != "" {
 		mode := info.Mode().Perm()
 		if mode&0o004 != 0 {

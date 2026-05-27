@@ -1145,12 +1145,7 @@ func TestScanNames(t *testing.T) {
 // TestPutNameCorruptExistingRecord verifies that PutName returns an error
 // when the existing record in the database is corrupt and cannot be decoded.
 func TestPutNameCorruptExistingRecord(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "namedb-corrupt-test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
-
+	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "names.db")
 	ndb, err := NewNameDatabase(dbPath)
 	if err != nil {

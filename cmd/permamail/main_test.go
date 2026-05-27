@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/opd-ai/nmcd/internal/version"
 )
 
 // TestParseBackupAddresses tests the parseBackupAddresses helper function
@@ -139,11 +141,11 @@ func TestUsageString(t *testing.T) {
 
 // TestVersionString tests version constant
 func TestVersionString(t *testing.T) {
-	if appVersion == "" {
+	if version.Version == "" {
 		t.Error("Version string should not be empty")
 	}
 
-	if !strings.Contains(appVersion, ".") {
+	if !strings.Contains(version.Version, ".") {
 		t.Error("Version should contain a dot (e.g., 0.1.0)")
 	}
 }

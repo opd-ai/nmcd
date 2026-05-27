@@ -1091,7 +1091,7 @@ cd nmcd
 make build
 
 # Or build with custom version
-go build -ldflags="-X main.version=1.0.0" ./cmd/nmcd
+go build -ldflags="-X github.com/opd-ai/nmcd/internal/version.Version=1.0.0" ./cmd/nmcd
 ```
 
 ### Official Releases
@@ -1162,4 +1162,3 @@ Please ensure:
 ## License
 
 See LICENSE file for details.
-

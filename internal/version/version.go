@@ -2,5 +2,6 @@
 package version
 
 // Version is the current release version of the nmcd daemon.
-// Update this value when tagging a new release.
-const Version = "0.1.0"
+// It may be overridden at build time via:
+// -ldflags "-X github.com/opd-ai/nmcd/internal/version.Version=x.y.z"
+var Version = "0.1.0"

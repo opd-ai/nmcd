@@ -14,9 +14,6 @@ import (
 	"github.com/opd-ai/nmcd/internal/version"
 )
 
-// version may be overridden via ldflags during build (e.g. -ldflags "-X main.appVersion=...")
-var appVersion = version.Version
-
 func main() {
 	// Parse command line flags
 	cfg := parseFlags()
@@ -40,7 +37,7 @@ func main() {
 	logging.SetDefault(logger)
 
 	logger.Info("nmcd starting",
-		"version", appVersion,
+		"version", version.Version,
 		"network", cfg.Network,
 		"data_dir", cfg.DataDir,
 	)
@@ -209,6 +206,6 @@ func applyStringFlagOverrides(cfg *config.Config, f *cliFlags) {
 func init() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 	fmt.Println("nmcd - Pure Go Namecoin using btcd")
-	fmt.Printf("Version %s\n", appVersion)
+	fmt.Printf("Version %s\n", version.Version)
 	fmt.Println()
 }

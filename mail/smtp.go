@@ -225,7 +225,13 @@ func (r *Relay) acceptLoop() {
 		}
 
 		// Acquire connection semaphore slot
-		r.connSem <- struct{}{}
+		select {
+		case r.connSem <- struct{}{}:
+		default:
+			r.logger.Printf("Connection limit reached (%d), rejecting %s", cap(r.connSem), conn.RemoteAddr())
+			conn.Close()
+			continue
+		}
 
 		// Handle connection in background
 		r.wg.Add(1)
@@ -240,9 +246,6 @@ func (r *Relay) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
 	// Set connection timeouts
-	if r.config.ReadTimeout > 0 {
-		conn.SetReadDeadline(time.Now().Add(r.config.ReadTimeout))
-	}
 	if r.config.WriteTimeout > 0 {
 		conn.SetWriteDeadline(time.Now().Add(r.config.WriteTimeout))
 	}
@@ -251,10 +254,11 @@ func (r *Relay) handleConnection(conn net.Conn) {
 
 	// Implement minimal SMTP protocol
 	session := &smtpSession{
-		conn:   conn,
-		relay:  r,
-		logger: r.logger,
-		reader: bufio.NewReader(conn),
+		conn:      conn,
+		relay:     r,
+		logger:    r.logger,
+		reader:    bufio.NewReader(conn),
+		startTime: time.Now(),
 	}
 
 	if err := session.handle(); err != nil {
@@ -264,12 +268,13 @@ func (r *Relay) handleConnection(conn net.Conn) {
 
 // smtpSession represents a single SMTP session.
 type smtpSession struct {
-	conn   net.Conn
-	relay  *Relay
-	logger *log.Logger
-	from   string
-	to     []string
-	reader *bufio.Reader
+	conn      net.Conn
+	relay     *Relay
+	logger    *log.Logger
+	from      string
+	to        []string
+	reader    *bufio.Reader
+	startTime time.Time
 }
 
 // handle processes the SMTP protocol for this session.
@@ -591,7 +596,7 @@ func (s *smtpSession) sendBody(client *smtp.Client, body []byte) error {
 // readLine reads a single line from the connection.
 func (s *smtpSession) readLine() (string, error) {
 	// Refresh per-read deadline to prevent slow-loris attacks
-	s.conn.SetReadDeadline(time.Now().Add(perReadTimeout))
+	s.setReadDeadline()
 	line, err := s.reader.ReadString('\n')
 	if err != nil {
 		return "", err
@@ -623,7 +628,7 @@ func (s *smtpSession) readDataBody() ([]byte, error) {
 
 	for {
 		// Refresh per-read deadline for each line read
-		s.conn.SetReadDeadline(time.Now().Add(perReadTimeout))
+		s.setReadDeadline()
 		line, err := s.reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
@@ -662,6 +667,17 @@ func (s *smtpSession) readDataBody() ([]byte, error) {
 	}
 
 	return body, nil
+}
+
+func (s *smtpSession) setReadDeadline() {
+	deadline := time.Now().Add(perReadTimeout)
+	if s.relay.config.ReadTimeout > 0 {
+		sessionDeadline := s.startTime.Add(s.relay.config.ReadTimeout)
+		if sessionDeadline.Before(deadline) {
+			deadline = sessionDeadline
+		}
+	}
+	_ = s.conn.SetReadDeadline(deadline)
 }
 
 // extractAddress extracts an email address from a parameter string.

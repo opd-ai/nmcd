@@ -364,9 +364,19 @@ func (s *Server) checkAuth(r *http.Request) bool {
 	return subtle.ConstantTimeCompare(expectedMAC, providedMAC) == 1
 }
 
+func (s *Server) authEnabled() bool {
+	s.mu.RLock()
+	enabled := s.rpcUser != "" || s.rpcPassword != ""
+	s.mu.RUnlock()
+	return enabled
+}
+
 // SetCredentials atomically replaces the RPC username, password, and HMAC key.
 // This enables credential rotation without restarting the daemon.
-func (s *Server) SetCredentials(user, pass string) {
+func (s *Server) SetCredentials(user, pass string) error {
+	if !isASCII(user) || !isASCII(pass) {
+		return errors.New("rpc credentials must be printable ASCII")
+	}
 	newKey := make([]byte, 32)
 	if _, err := rand.Read(newKey); err != nil {
 		// Fallback: keep existing key if entropy source fails
@@ -379,6 +389,7 @@ func (s *Server) SetCredentials(user, pass string) {
 	s.rpcPassword = pass
 	s.authKey = newKey
 	s.mu.Unlock()
+	return nil
 }
 
 // writeHMACField writes a length-prefixed field to the HMAC to prevent
@@ -484,7 +495,7 @@ func (s *Server) validateHTTPRequest(w http.ResponseWriter, r *http.Request) err
 		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 		return fmt.Errorf("rate limit exceeded")
 	}
-	if (s.rpcUser != "" || s.rpcPassword != "") && !s.checkAuth(r) {
+	if s.authEnabled() && !s.checkAuth(r) {
 		w.Header().Set("WWW-Authenticate", `Basic realm="nmcd RPC"`)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return fmt.Errorf("unauthorized")
