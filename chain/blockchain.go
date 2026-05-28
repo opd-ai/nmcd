@@ -979,7 +979,7 @@ func (bc *BlockChain) processTransactionInputs(msgTx *wire.MsgTx, height int32) 
 		utxo, err := bc.nameDB.GetUTXO(&txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index)
 		if err == nil && utxo != nil {
 			if err := bc.nameDB.StoreSpentUTXO(utxo, height); err != nil {
-				log.Printf("Warning: Failed to store spent UTXO %s:%d at height %d: %v",
+				return fmt.Errorf("store spent UTXO %s:%d at height %d: %w",
 					txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index, height, err)
 			}
 		}

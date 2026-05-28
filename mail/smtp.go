@@ -685,6 +685,11 @@ func (s *smtpSession) setReadDeadline() {
 func extractAddress(param string) string {
 	param = strings.TrimSpace(param)
 
+	// Reject embedded CRLF for defense-in-depth
+	if strings.ContainsAny(param, "\r\n") {
+		return ""
+	}
+
 	// Handle <address> format
 	if strings.HasPrefix(param, "<") && strings.HasSuffix(param, ">") {
 		return param[1 : len(param)-1]

@@ -377,6 +377,7 @@ func (c *CLI) serve(args []string) error {
 	// Wait for shutdown signal
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
 	<-sigChan
 
 	fmt.Println("\nShutting down...")

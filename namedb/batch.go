@@ -3,6 +3,7 @@ package namedb
 import (
 	"encoding/binary"
 	"fmt"
+	"log"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"go.etcd.io/bbolt"
@@ -192,9 +193,14 @@ func (bw *BatchWriter) updateExpirationIndex(namesBucket, expirationBucket *bbol
 	existingData := namesBucket.Get([]byte(name))
 	if existingData != nil {
 		existingRecord, decodeErr := decodeNameRecord(existingData)
-		if decodeErr == nil {
+		if decodeErr != nil {
+			// Log the decode error instead of silently skipping index maintenance
+			log.Printf("namedb: skipping expiration index update for %q: decode error %v", name, decodeErr)
+		} else {
 			oldExpirationKey := makeExpirationKey(existingRecord.ExpiresAt, name)
-			expirationBucket.Delete(oldExpirationKey)
+			if err := expirationBucket.Delete(oldExpirationKey); err != nil {
+				return fmt.Errorf("delete old expiration index for %s: %w", name, err)
+			}
 		}
 	}
 	return nil
@@ -229,9 +235,14 @@ func (bw *BatchWriter) removeExpirationIndex(namesBucket, expirationBucket *bbol
 	existingData := namesBucket.Get([]byte(name))
 	if existingData != nil {
 		existingRecord, decodeErr := decodeNameRecord(existingData)
-		if decodeErr == nil {
+		if decodeErr != nil {
+			// Log the decode error instead of silently skipping index maintenance
+			log.Printf("namedb: skipping expiration index removal for %q: decode error %v", name, decodeErr)
+		} else {
 			expirationKey := makeExpirationKey(existingRecord.ExpiresAt, name)
-			expirationBucket.Delete(expirationKey)
+			if err := expirationBucket.Delete(expirationKey); err != nil {
+				return fmt.Errorf("delete expiration index for %s: %w", name, err)
+			}
 		}
 	}
 	return nil
@@ -358,12 +369,18 @@ func (bw *BatchWriter) removeUTXOFromAddressIndex(utxoBucket, utxoAddrBucket *bb
 	data := utxoBucket.Get(key)
 	if data != nil {
 		utxo, err := decodeUTXO(&uk.txHash, uk.outIndex, data)
-		if err == nil {
+		if err != nil {
+			// Log decode error but don't fail the entire operation
+			log.Printf("namedb: could not decode UTXO for address index removal: %v", err)
+		} else {
 			addrKey := make([]byte, len(utxo.Address)+32+4)
 			copy(addrKey, []byte(utxo.Address))
 			copy(addrKey[len(utxo.Address):], uk.txHash[:])
 			binary.BigEndian.PutUint32(addrKey[len(utxo.Address)+32:], uk.outIndex)
-			utxoAddrBucket.Delete(addrKey)
+			if err := utxoAddrBucket.Delete(addrKey); err != nil {
+				return fmt.Errorf("remove UTXO from address index %s:%d: %w",
+					utxo.Address, uk.outIndex, err)
+			}
 		}
 	}
 	return nil

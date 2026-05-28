@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -841,6 +842,9 @@ func CreateNameUpdateTxRaw(
 ) (*wire.MsgTx, error) {
 	if feeRate < 0 {
 		return nil, fmt.Errorf("feeRate cannot be negative: %d", feeRate)
+	}
+	if changeAddress == nil {
+		return nil, errors.New("changeAddress must not be nil")
 	}
 
 	// Get pubkey hash from destination address
