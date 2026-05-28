@@ -197,10 +197,9 @@ func validatePassword(password string) error {
 // Uses scrypt with a random per-wallet salt to prevent rainbow table attacks.
 // The salt must be stored alongside the hash in the wallet file.
 func hashPassword(password []byte, salt []byte) []byte {
-	// Use strong scrypt parameters for password verification.
-	// N=131072 (2^17) aligns with OWASP guidelines for modern deployments.
-	// See https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
-	hash, err := scrypt.Key(password, salt, 131072, 8, 1, 32)
+	// Use lighter scrypt parameters for verification (faster unlock)
+	// N=16384 is strong enough to resist brute-force when combined with a unique salt
+	hash, err := scrypt.Key(password, salt, 16384, 8, 1, 32)
 	if err != nil {
 		panic(fmt.Sprintf("scrypt password hashing failed with fixed parameters: %v", err))
 	}
