@@ -424,3 +424,56 @@ func TestRPCLoadTestZeroDuration(t *testing.T) {
 		t.Fatal("expected error for zero duration, got nil")
 	}
 }
+
+// TestRPCLoadTestWorkerCancellation verifies that RPCLoadTest returns promptly
+// after the configured Duration even when workers have in-flight HTTP calls that
+// would otherwise block for up to 30s. The workerCtx cancellation should abort
+// in-flight requests so the function returns well within Duration + 3s.
+func TestRPCLoadTestWorkerCancellation(t *testing.T) {
+	// srvCtx is cancelled at the end of the test to unblock any server-side
+	// goroutines that are still waiting, allowing httptest.Server.Close to
+	// return cleanly.
+	srvCtx, srvCancel := context.WithCancel(context.Background())
+
+	var requestCount int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&requestCount, 1)
+		if n == 1 {
+			// First request: return a minimal valid JSON-RPC response for the
+			// connectivity check so RPCLoadTest can proceed to start workers.
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintln(w, `{"jsonrpc":"2.0","id":1,"result":{}}`)
+			return
+		}
+		// Subsequent worker requests block until the client cancels them or
+		// the test itself ends, to simulate slow in-flight calls.
+		select {
+		case <-r.Context().Done():
+		case <-srvCtx.Done():
+		case <-time.After(30 * time.Second):
+		}
+	}))
+	defer func() {
+		srvCancel()
+		server.Close()
+	}()
+
+	const testDuration = 200 * time.Millisecond
+	const maxExtraTime = 3 * time.Second
+
+	start := time.Now()
+	_, err := RPCLoadTest(LoadTestConfig{
+		RPCURL:      server.URL,
+		Concurrency: 2,
+		Duration:    testDuration,
+	})
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("RPCLoadTest returned unexpected error: %v", err)
+	}
+	if elapsed > testDuration+maxExtraTime {
+		t.Errorf("RPCLoadTest took %v; expected < %v (workers did not cancel promptly)",
+			elapsed, testDuration+maxExtraTime)
+	}
+}
