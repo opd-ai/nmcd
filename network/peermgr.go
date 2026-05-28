@@ -638,7 +638,9 @@ func (pm *PeerManager) BroadcastBlock(block *wire.MsgBlock) {
 	pm.mu.RLock()
 	targets := make([]*peer.Peer, 0, len(pm.peers))
 	for _, p := range pm.peers {
-		targets = append(targets, p)
+		if p != nil && p.Connected() {
+			targets = append(targets, p)
+		}
 	}
 	pm.mu.RUnlock()
 

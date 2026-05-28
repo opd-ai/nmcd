@@ -152,8 +152,12 @@ func initPrometheus(cfg *config.Config) (*http.Server, *prometheus.Registry) {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
 	httpServer := &http.Server{
-		Addr:    cfg.PrometheusAddr,
-		Handler: mux,
+		Addr:              cfg.PrometheusAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 	log.Printf("Prometheus metrics will be served on http://%s/metrics", cfg.PrometheusAddr)
 	return httpServer, registry

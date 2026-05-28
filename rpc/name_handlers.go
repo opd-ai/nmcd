@@ -81,6 +81,9 @@ func (s *Server) nameUpdate(req *Request) *Response {
 	if errResp := s.requireWallet(req.ID); errResp != nil {
 		return errResp
 	}
+	if errResp := s.requireBlockchain(req.ID); errResp != nil {
+		return errResp
+	}
 
 	params, errResp := parseStringParams(req.Params, req.ID, 2, "[\"name\", \"value\"] or [\"name\", \"value\", \"address\"]")
 	if errResp != nil {
@@ -304,6 +307,9 @@ func (s *Server) nameNew(req *Request) *Response {
 	if errResp := s.requireWallet(req.ID); errResp != nil {
 		return errResp
 	}
+	if errResp := s.requireBlockchain(req.ID); errResp != nil {
+		return errResp
+	}
 
 	params, errResp := parseStringParams(req.Params, req.ID, 1, "[\"name\"]")
 	if errResp != nil {
@@ -373,6 +379,9 @@ func (s *Server) checkNameNotActive(name string, reqID interface{}) *Response {
 //   - status: "broadcasted" indicating transaction is in mempool
 func (s *Server) nameFirstUpdate(req *Request) *Response {
 	if errResp := s.requireWallet(req.ID); errResp != nil {
+		return errResp
+	}
+	if errResp := s.requireBlockchain(req.ID); errResp != nil {
 		return errResp
 	}
 

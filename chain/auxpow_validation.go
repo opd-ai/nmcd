@@ -91,6 +91,10 @@ func (bc *BlockChain) verifyAuxPowProof(block *btcutil.Block, auxPow *AuxPow, bl
 
 	var targetHash chainhash.Hash
 	targetBytes := targetDifficulty.Bytes()
+	if len(targetBytes) > chainhash.HashSize {
+		return fmt.Errorf("compact target exceeds 256 bits: %d bytes for block %s at height %d",
+			len(targetBytes), blockHash.String(), height)
+	}
 	for i := 0; i < len(targetBytes); i++ {
 		targetHash[len(targetBytes)-1-i] = targetBytes[i]
 	}

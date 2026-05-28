@@ -281,13 +281,13 @@ func (sm *SyncManager) OnPeerDisconnected(p *peer.Peer) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	if sm.syncPeer != nil && sm.syncPeer.Addr() == p.Addr() {
+	if sm.syncPeer != nil && sm.syncPeer == p {
 		log.Printf("Sync peer %s disconnected, will reselect", p.Addr())
 		sm.syncPeer = nil
 	}
 
 	delete(sm.peerHeights, p)
-	if sm.bestPeer != nil && sm.bestPeer.Addr() == p.Addr() {
+	if sm.bestPeer != nil && sm.bestPeer == p {
 		log.Printf("Best peer %s disconnected, will reselect", p.Addr())
 		sm.bestHeight = sm.maxPeerHeightLocked()
 		sm.bestPeer = nil
@@ -312,7 +312,7 @@ func (sm *SyncManager) findReplacementPeer(disconnected *peer.Peer) *peer.Peer {
 		if candidate == nil {
 			continue
 		}
-		if disconnected != nil && candidate.Addr() == disconnected.Addr() {
+		if disconnected != nil && candidate == disconnected {
 			continue
 		}
 		if fallback == nil {

@@ -279,9 +279,11 @@ func NewServer(cfg *Config) (*Server, error) {
 	mux.HandleFunc("/ready", s.withPanicRecovery(s.handleReady))
 
 	s.server = &http.Server{
-		Handler:      mux,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	return s, nil
