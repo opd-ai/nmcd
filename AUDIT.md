@@ -1,305 +1,200 @@
-# UNIVERSAL BUG AUDIT (END-TO-END) — 2026-05-27
+# UNIVERSAL BUG AUDIT (END-TO-END) — 2026-05-28
 
 ## Project Profile
-
-- **Purpose**: `nmcd` is a pure-Go Namecoin daemon and Go library that provides full-node functionality (P2P, IBD, AuxPoW validation, name database, wallet, JSON-RPC) and a programmatic Go API (`client.NewEmbedded`, `client.NewDaemon`, `client.NewAuto`) for resolving `.bit` names. It also bundles a `permamail` SMTP relay that resolves `.bit` addresses.
-- **Target users**: Go developers integrating Namecoin name resolution into their applications (library-first), and operators wanting a standalone Namecoin node without C dependencies.
-- **Deployment model**: Single-binary daemon or in-process embedded library; optional SMTP relay (`permamail`). Configurable via JSON config file and/or CLI flags. JSON-RPC defaults to loopback.
-- **Critical paths** (packages on which the project's primary stated goals depend):
-  - `chain` — consensus, AuxPoW validation, expiration/restoration on reorgs.
-  - `namedb` — bbolt-backed name+UTXO database, indexes, expiration index, LRU cache.
-  - `rpc` + `client` — Namecoin-Core-compatible JSON-RPC and embedded API surface.
-  - `network` — peer manager, headers-first IBD, sync.
-  - `wallet` — key management, AES-256-GCM encryption with scrypt KDF, Namecoin name scripts.
+- **Purpose**: `nmcd` is a pure-Go Namecoin library-and-daemon built on `btcd` libraries (not a fork). It can be embedded directly into Go applications (`client.NewClient` with `ModeAuto`/`ModeEmbedded`) or run as a standalone JSON-RPC daemon.
+- **Target users**: Go developers needing in-process Namecoin name resolution/registration, and operators running a standalone daemon for RPC.
+- **Deployment model**: Library import OR daemon process bound to a local TCP port (defaults to loopback). `cmd/permamail` provides an additional SMTP relay daemon that uses Namecoin records for routing.
+- **Critical paths** (deserve deeper scrutiny):
+  1. `chain/` — block validation, AuxPow validation, name-script parsing
+  2. `namedb/` — bbolt persistence of name and UTXO state; reorg restore paths
+  3. `network/` — P2P peer manager, headers-first sync, mempool
+  4. `rpc/` — exposed JSON-RPC handlers, auth, request parsing
+  5. `wallet/` — key encryption, transaction construction, signing
+  6. `client/` — public API surface used by library consumers
 - **Trust boundaries**:
-  - **Network**: blocks, headers, addr, tx, inv, getdata messages from peers (entered through `network` and validated in `chain`).
-  - **JSON-RPC**: HTTP body from any caller (validated in `rpc/server.go` via `MaxBytesReader`, rate limit, optional basic-auth).
-  - **SMTP**: untrusted SMTP commands and message bodies from any caller of `permamail` (`mail/smtp.go`).
-  - **Config / CLI**: trusted (operator-supplied).
-  - **Wallet password**: operator-supplied, never logged; cleared on lock.
+  - Untrusted bytes from P2P peers (`network/`) → block/tx validation in `chain/` → persistence in `namedb/`
+  - Untrusted JSON-RPC requests (`rpc/`) → wallet/chain operations; protected by optional HTTP Basic auth (constant-time HMAC compare) and a token-bucket rate limiter
+  - Untrusted SMTP traffic (`mail/`, `cmd/permamail/`)
+  - File-system inputs: `DataDir`, config TOML, wallet files
 
 ## Audit Scope
-
-| Domain | Scope |
-|--------|-------|
-| Module | `github.com/opd-ai/nmcd` (Go 1.24.11) |
-| Production packages audited | 15 (see Coverage Log) |
-| Production Go files audited | 69 non-test |
-| Functions inspected | 239 functions + 464 methods (full inventory; high-complexity / >50-line / hot-path functions read line-by-line) |
-| LOC (production) | ~10,371 |
-| Examples / `loadtest/cmd` | Inspected for security-relevant patterns only |
-| Vendored dependencies | Reviewed dependency list in `go.mod`; no direct vulnerability research found relevant CVEs for the project's pinned versions of `btcsuite/btcd`, `bbolt`, `golang.org/x/crypto`. |
-
-go-stats-generator summary (from baseline):
-
-| Metric | Value |
-|--------|-------|
-| Total functions | 239 |
-| Total methods | 464 |
-| Average cyclomatic complexity | 1.97 |
-| Functions with cyclomatic > 10 | 9 |
-| Functions > 50 lines | 49 |
-| Doc coverage (package + exported) | ~64% (4 packages below 50%: `bridge` 0.4, `config` 0.6, `main`/`cmd` 1.3, `shared` 0.3 on cohesion index — doc coverage broadly OK for primary packages) |
-| Duplication ratio | 0.47% |
-| Circular dependencies | 0 |
-| go vet warnings | 0 |
-| `go test -race ./...` | All packages PASS |
+- **Packages audited** (16): `bridge`, `chain`, `client`, `cmd/nmcd`, `cmd/permamail`, `config`, `internal/logging`, `internal/server`, `internal/version`, `loadtest`, `mail`, `metrics`, `namedb`, `network`, `rpc`, `wallet`. The `examples/*` packages were scope-checked but treated as documentation samples (not production code).
+- **Functions inspected**: 706 declared functions across 21,245 LOC (excluding `_test.go`).
+- **go-stats-generator metrics summary**:
+  - Total functions: 706
+  - Functions above cyclomatic complexity 15: **1** (`namedb.RestoreExpiredNamesForBlock`, complexity 17)
+  - Average cyclomatic complexity: **3.49**
+  - Functions above 50 lines: 60+ (top: `metrics.NewPrometheusCollector` 243 lines; `chain.ValidateAuxPow` 110; `namedb.RestoreExpiredNamesForBlock` 106; `chain.ProcessBlock` 105)
+  - Duplication: 7 clones detected (all in `examples/*` or low-impact helpers; suggestion ratio low)
+- **Baseline test/vet results**:
+  - `go test -race ./...` — **all suites pass** (`ok` for every non-example package, including `client` 47s, `wallet` 51s, `rpc` 18s)
+  - `go vet ./...` — **0 warnings**
 
 ## Coverage Log
-
-Per the end-to-end rule, every package was inspected against every applicable checklist category. ✅ = inspected and applied; — = category not applicable to the package.
+Every package below was inspected for each Phase 3b–3j category. ✅ = category reviewed and either clean or findings recorded below; ➖ = category not applicable (no code of that kind in the package).
 
 | Package | 3b Logic | 3c Nil | 3d Errors | 3e Resources | 3f Concurrency | 3g Security | 3h Aliasing | 3i Init | 3j API |
-|---------|----------|--------|-----------|--------------|----------------|-------------|-------------|---------|--------|
-| `chain` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `namedb` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `network` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `rpc` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `client` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `wallet` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `mail` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `bridge` | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `config` | ✅ | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | ✅ |
-| `metrics` | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `internal/logging` | ✅ | ✅ | ✅ | — | ✅ | ✅ | — | ✅ | ✅ |
-| `internal/server` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ |
-| `loadtest` | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ |
-| `cmd/nmcd` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ |
-| `cmd/permamail` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ |
+|---|---|---|---|---|---|---|---|---|---|
+| bridge | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ✅ | ✅ | ✅ |
+| chain | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| client | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| cmd/nmcd | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| cmd/permamail | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| config | ✅ | ✅ | ✅ | ✅ | ➖ | ✅ | ✅ | ✅ | ✅ |
+| internal/logging | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| internal/server | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| internal/version | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ | ✅ |
+| loadtest | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ✅ | ✅ | ✅ |
+| mail | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| metrics | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| namedb | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| network | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| rpc | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| wallet | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ## Goal-Achievement Summary
 
-Goals are extracted from `README.md`.
-
 | Stated Goal | Status | Blocking Findings |
-|-------------|--------|-------------------|
-| Library-first Go API (Embedded / Daemon / Auto) | ✅ | — |
-| Pure Go — no C dependencies | ✅ | — (no `cgo` directives in production code) |
-| Full Namecoin consensus rules (12,000-block expiry) | ⚠️ | M-01 (pre-check helpers in `rpc` / `client` disagree with consensus on the boundary case `ExpiresAt == bestHeight`) |
-| AuxPoW validation (Namecoin chain ID 0x0001) | ✅ | L-04 (dead code in fallback path; functionally correct) |
-| Headers-first IBD with parallel block download | ⚠️ | L-08 (per-tick header request only; no parallel block-download fan-out) |
-| Thread-safe APIs | ✅ | `go test -race ./...` passes; no races observed |
-| JSON-RPC with optional basic-auth | ✅ | L-09 (auth HMAC concatenates `user+":"+pass` with no escaping) |
-| Wallet encryption with AES-256-GCM + scrypt | ✅ | L-12 (`Lock()` zeroes a *copy* of the private key; documented limitation) |
-| Permamail SMTP relay refusing non-TLS auth | ✅ | — (refuses cleartext-auth at `mail/smtp.go:530-533`) |
-| SemVer / v1.0.0 API stability | ❌ | G-01 in GAPS.md (current is v0.x) |
-| Automatic daemon discovery at `localhost:8336` | ✅ | — |
+|---|---|---|
+| Library-first design (in-process embedding via `client`) | ✅ | none |
+| Embedded or daemon mode with auto-detection | ✅ | none |
+| Thread-safe public client API | ✅ | none |
+| Pure Go / no C dependencies | ✅ | none (verified via `go.sum`) |
+| bbolt-backed name database with expiration | ⚠️ | H-2, H-3 (silent index-write failures can leave stale expiration index) |
+| Headers-first block synchronization | ⚠️ | H-4, H-5 (sync-peer identity confusion on reconnect with same address) |
+| RPC server resists abuse | ⚠️ | H-6, H-7, H-8 (nil-deref panics in `name_update`/`name_new`/`name_firstupdate` when wallet is configured without blockchain; recovered by panic middleware but returns 500) |
+| Wallet encryption protects user passwords | ⚠️ | H-1 (scrypt N=16384 below modern OWASP guidance) |
+| AuxPow validation rejects invalid proofs | ⚠️ | H-9 (target-bytes copy lacks length guard; edge case but defensive) |
+| `~18,000 LOC of production code` claim | ❌ | G-1, G-2 (actual ≈21,245 LOC; ROADMAP cites contradictory 9,729) |
+| RPC API documentation reflects implemented surface | ❌ | G-3 (≈11 RPC methods implemented but not listed in README) |
+| Mempool relays validated transactions | ✅ | none |
 
-Legend: ✅ implemented and substantively correct, ⚠️ implemented with caveats, ❌ not yet implemented.
-
----
+(Status legend: ✅ delivered, ⚠️ delivered with defects, ❌ not delivered as documented.)
 
 ## Findings
 
-All findings include the exact file, line, bug class, concrete consequence, and remediation. Severities follow the rubric defined in the audit prompt. Findings are numbered for cross-reference.
+All findings include a specific file and line, observed consequence, and remediation with a validation command. Severity follows the prompt's classification table.
 
 ### CRITICAL
 
-*(No CRITICAL findings. Consensus-layer name expiration logic in `chain/blockchain.go` is correct (`>=` boundary); the related off-by-one is in pre-broadcast guards in `rpc` and `client`, classified MEDIUM because the consensus path still rejects invalid registrations.)*
+- [ ] **C-1 — HTTP server has no timeouts (Slowloris) on `prometheus_exporter` internal server** — `internal/server/server.go:154-157` — resource / security — `http.Server` is constructed with `Handler` and `Addr` only; `ReadTimeout`, `WriteTimeout`, `IdleTimeout`, and `ReadHeaderTimeout` all default to zero (no limit). A single slow client can hold a connection open indefinitely, exhausting file descriptors and goroutines on the metrics endpoint. The same `internal/server.Server` is wired into the Prometheus exporter (`metrics/prometheus.go`, `examples/prometheus_exporter`).
+  **Remediation:** Set `ReadHeaderTimeout: 10 * time.Second`, `ReadTimeout: 30 * time.Second`, `WriteTimeout: 30 * time.Second`, `IdleTimeout: 60 * time.Second` on the `http.Server` literal in `internal/server/server.go`. Validate with `go test -race ./internal/server/...` and `go vet ./...`.
 
 ### HIGH
 
-- [x] **H-01 — Divide-by-zero panic when `LoadTestConfig.Concurrency == 0` and `RateLimit > 0`** — `loadtest/runner.go:183` — bug class: Logic / Boundary — **Consequence**: `rpw := config.RateLimit / config.Concurrency` panics with `runtime error: integer divide by zero` before any worker is spawned, taking down a long-running load-test process. Even though `loadtest` is a tool, it is documented in the README as a public Go API (`loadtest.RPCLoadTest`) and is exported. — **Remediation**: At the top of `RPCLoadTest` (around `loadtest/runner.go:132`), validate `if config.Concurrency <= 0 { return nil, fmt.Errorf("concurrency must be > 0") }` and validate `Duration > 0`. Add a unit test in `loadtest/runner_test.go` that calls `RPCLoadTest(LoadTestConfig{RateLimit:10})` and asserts it returns an error rather than panicking. Validate: `go test ./loadtest/...`. ✅ COMPLETED: Validation at lines 133-138; tests at lines 403-426.
+- [ ] **H-1 — Wallet scrypt key-derivation work factor is below modern guidance** — `wallet/encryption.go:202` — security (weak crypto) — `hashPassword` uses `scrypt(N=16384, r=8, p=1)` (the values from RFC 7914 ca. 2012). Current OWASP/NIST guidance is `N≥2^17` for new deployments. The accompanying comment claims `N=16384 ... is strong enough to resist brute-force`, which contradicts the project's own `deriveKey` constant of `N=32768` for actual encryption-key derivation. An attacker who obtains the wallet file can mount faster offline brute-force attacks against weak passwords.
+  **Remediation:** Raise `scryptN` in `hashPassword` to at least `1<<17` (preferably `1<<19`) and remove the misleading comment; add a wallet-file version bump path so existing files re-hash on next unlock. Validate: `go test ./wallet/...`.
+
+- [ ] **H-2 — Silent `bbolt.Bucket.Delete` failure leaves stale expiration index (update path)** — `namedb/batch.go:197` — error handling — `BatchWriter.updateExpirationIndex` calls `expirationBucket.Delete(oldExpirationKey)` and discards the returned `error`, then returns `nil`. A later read at the same key during expiration sweep can resurrect or double-expire a name. Reachable on every `Put` of an existing name.
+  **Remediation:** Capture the error: `if err := expirationBucket.Delete(oldExpirationKey); err != nil { return fmt.Errorf("delete old expiration index: %w", err) }`. Also do not silently swallow `decodeErr` — log or wrap it. Validate: `go test -race ./namedb/...`.
+
+- [ ] **H-3 — Silent `bbolt.Bucket.Delete` failure leaves stale expiration index (delete path)** — `namedb/batch.go:234` — error handling — Same defect as H-2 in `removeExpirationIndex`, executed during batched name deletions. The function always returns `nil`, so callers cannot detect partial-commit corruption.
+  **Remediation:** Capture and return the `Delete` error; surface `decodeErr` instead of silently skipping. Validate: `go test -race ./namedb/...`.
+
+- [ ] **H-4 — Sync-peer identity tracked by address string allows confusion on reconnect** — `network/sync.go:284` — concurrency / logic — `OnPeerDisconnected` compares `sm.syncPeer.Addr() == p.Addr()`. If peer P1 disconnects and a new connection P2 with the same address (but different `*peer.Peer`) becomes the sync peer beforehand, the disconnect callback for P1 will nil out `sm.syncPeer` and stall sync until the next selection cycle.
+  **Remediation:** Compare by pointer identity (`sm.syncPeer == p`) for the active comparison. The address can remain as a logging field. Validate: `go test -race ./network/...`.
+
+- [ ] **H-5 — Best-peer identity tracked by address string — same race as H-4** — `network/sync.go:290` — concurrency / logic — `OnPeerDisconnected` also nils `sm.bestPeer` if any peer with the same address as the previous `bestPeer` disconnects. Same fix as H-4.
+  **Remediation:** Change to `sm.bestPeer == p`. Validate: `go test -race ./network/...`.
+
+- [ ] **H-6 — `name_update` RPC handler can nil-deref blockchain when wallet is configured without blockchain** — `rpc/name_handlers.go:80,143` — nil safety — `nameUpdate` calls `requireWallet` but not `requireBlockchain`; `parseOptionalDestAddress` then dereferences `s.blockchain.ChainParams()` at line 143. The `rpc.Server` constructor (`rpc/server.go:222`) accepts `cfg.Blockchain == nil` without rejecting it, and the daemon mode of `client.NewDaemonClient` is intended for blockchain-less wallet usage. The panic is caught by `withPanicRecovery` (`rpc/server.go:280`), so the process survives, but every such request returns HTTP 500 and the panic is reported in logs.
+  **Remediation:** Add `if errResp := s.requireBlockchain(req.ID); errResp != nil { return errResp }` immediately after the `requireWallet` check in `nameUpdate`. Validate: `go test -race ./rpc/...` plus a targeted test that constructs `Server{wallet: x, blockchain: nil}` and calls `name_update`.
+
+- [ ] **H-7 — `name_new` RPC handler can nil-deref blockchain** — `rpc/name_handlers.go:304,349` — nil safety — Same defect as H-6: `nameNew` only checks `requireWallet`; `checkNameNotActive` invokes `s.blockchain.GetName(...)`.
+  **Remediation:** Add a `requireBlockchain` guard at function entry. Validate: same as H-6.
+
+- [ ] **H-8 — `name_firstupdate` RPC handler can nil-deref blockchain** — `rpc/name_handlers.go:375,430` — nil safety — Same defect as H-6/H-7: `nameFirstUpdate` only checks `requireWallet`; `validateNameNewCommitment` invokes `s.blockchain.GetNameDB()`.
+  **Remediation:** Add a `requireBlockchain` guard at function entry. Validate: same as H-6.
+
+- [ ] **H-9 — `StoreSpentUTXO` failures are logged but not propagated** — `chain/blockchain.go:981-984` — error handling — `processTransactionInputs` is declared `error` but logs and continues whenever `bc.nameDB.StoreSpentUTXO(utxo, height)` fails, and ultimately `return nil`s. The on-disk spent-UTXO journal is the input to `RestoreSpentUTXOsForBlock` during chain reorgs; if writes silently fail (disk full, bbolt error), reorg recovery will be permanently incomplete and the index will diverge from the canonical chain.
+  **Remediation:** Return the wrapped error: `if err := bc.nameDB.StoreSpentUTXO(utxo, height); err != nil { return fmt.Errorf("store spent UTXO %s:%d: %w", txIn.PreviousOutPoint.Hash, txIn.PreviousOutPoint.Index, err) }`. If best-effort behaviour is genuinely intended, document it in the function GoDoc and add a metric. Validate: `go test -race ./chain/... ./namedb/...`.
+
+- [ ] **H-10 — `CreateNameUpdateTxRaw` can call `txscript.PayToAddrScript(nil)` when changeAddress is nil and change is dust-or-greater** — `wallet/wallet.go:835-862` (with `addChangeOutput` at `wallet/wallet.go:682`) — nil safety — `CreateNameUpdateTxRaw` accepts a `changeAddress btcutil.Address` parameter without validating it; if `nil` is passed and the residual `changeValue ≥ DustLimit`, `addChangeOutput` calls `txscript.PayToAddrScript(nil)`, which panics inside `btcutil`. No upstream caller currently passes `nil`, but the function is exported and the contract is undocumented.
+  **Remediation:** Reject `nil` at function entry with `return nil, errors.New("changeAddress must not be nil")`, or fall back to a wallet-managed address. Validate: `go test ./wallet/...` plus a regression test with a `nil` address.
 
 ### MEDIUM
 
-- [x] **M-01 — Expiration boundary inconsistency between consensus and pre-check helpers** — `rpc/name_handlers.go:354` (`checkNameNotActive` uses `ExpiresAt > bestHeight`) and `client/embedded.go:481` (`checkNameAvailability` uses `ExpiresAt > bestHeight`) — bug class: Logic / API contract — **Consequence**: At the exact block where `ExpiresAt == bestHeight`, these pre-broadcast helpers treat the name as still active (so they refuse a re-registration), while the consensus rule in `chain/blockchain.go:597` and `:1555` treats the name as still active using `ExpiresAt >= height` — these agree in direction but disagree with the rest of the codebase which uses *strict* `ExpiresAt < bestHeight` for "expired" (`rpc/name_handlers.go:163`, `chain/blockchain.go:656`, `:1601`, `client/embedded.go:295`, `:710`, `:896`). The end-result is *user-visible* inconsistency: `name_show` will report a name with `ExpiresAt == bestHeight` as **not expired** while `name_new` will report it as **available** in some flows and **unavailable** in others, depending on which helper was hit. — **Data flow**: `nameNew` RPC → `checkNameNotActive(name, best.Height)` → returns "active" when `ExpiresAt > bestHeight`. `chain.ProcessBlock` on the same height accepts a `FIRSTUPDATE` from a different owner because the consensus check is `ExpiresAt >= height` (active) — actually consistent direction. The inconsistency is between the **two strictness conventions** (`>` and `>=`), not between consensus and guards, but the two RPC/client guards are *less strict* than the bulk of the codebase. — **Remediation**: In `rpc/name_handlers.go:354` and `client/embedded.go:481`, change `ExpiresAt > bestHeight` to `ExpiresAt >= bestHeight` so both helpers match the consensus check at `chain/blockchain.go:597`. Add a regression test in `rpc/name_registration_test.go` that registers a name at height H, fast-forwards to height H+12000 (expiration boundary), and asserts that `name_new` rejects re-registration at the exact expiration height (`ExpiresAt == bestHeight`, still active) and accepts it only when `bestHeight > ExpiresAt` (name truly expired). Validate: `go test -race ./rpc/... ./client/...`. ✅ COMPLETED: Both locations use >= (lines 354, 481, 600); boundary test in chain/blockchain_test.go confirms that re-registration is rejected at `ExpiresAt == bestHeight` (still active) and succeeds only when `bestHeight > ExpiresAt`.
+- [ ] **M-1 — RPC HTTP server lacks `IdleTimeout` and `ReadHeaderTimeout`** — `rpc/server.go:283-284` — security / resource — `ReadTimeout` and `WriteTimeout` are set to 30s, but `IdleTimeout` is unset and `ReadHeaderTimeout` defaults to `ReadTimeout`. Keep-alive abuse and slowloris-style header trickling are partially but not fully mitigated.
+  **Remediation:** Add `IdleTimeout: 60 * time.Second, ReadHeaderTimeout: 10 * time.Second` to the `http.Server` literal. Validate: `go test -race ./rpc/...`.
 
-- [x] **M-02 — Stale expiration-index entry on silent decode failure in `namedb.PutName`** — `namedb/namedb.go:270-278` — bug class: Resource / Data integrity — **Consequence**: When `PutName` updates an existing name, it decodes the prior record to remove the old `expiresIdx` entry before writing the new one. If `decodeNameRecord` fails (corrupted DB or schema drift), the code silently continues without removing the old index entry, leaving a dangling pointer that will cause `CleanupOldExpiredNames` and `RestoreExpiredNamesForBlock` to attempt operations on a name whose record no longer matches the index. Over time this produces ghost names in `name_scan` results and wasted work in the expiration scanner. — **Data flow**: `PutName(name, newRec)` → `b.Get(name)` returns corrupt bytes → `decodeNameRecord(...)` returns err → branch silently skips index cleanup → `b.Put(name, encode(newRec))` writes new record → old `expiresIdx` row still references this name at the prior expiration height. — **Remediation**: In `namedb/namedb.go:270-278`, if `decodeNameRecord` returns an error, *either* (a) propagate the error and refuse the write so the caller can choose to recover, *or* (b) range over `expiresIdx` to remove every entry whose value equals `name` before writing. Option (a) is preferable because silent corruption recovery hides bugs. Add a regression test in `namedb/namedb_test.go` that injects a corrupt name record and asserts `PutName` returns a wrapped error. Validate: `go test -race ./namedb/...`. ✅ COMPLETED: Line 274 now propagates error via fmt.Errorf return.
+- [ ] **M-2 — AuxPow target-byte unrolling lacks an upper-bound guard** — `chain/auxpow_validation.go:93-96` — logic / defensive — `targetBytes := targetDifficulty.Bytes()` then `for i := 0; i < len(targetBytes); i++ { targetHash[len(targetBytes)-1-i] = targetBytes[i] }`. `chainhash.Hash` is `[32]byte`; if `len(targetBytes) > 32` (only reachable for malformed/extreme `Bits`), the index overflows and panics. `blockchain.CompactToBig` clamps to 256 bits for valid headers, so this is largely unreachable in practice, but a malicious peer feeding a crafted header would trigger a panic that is *not* wrapped by recover in this code path.
+  **Remediation:** Replace with `if len(targetBytes) > chainhash.HashSize { return fmt.Errorf("compact target exceeds 256 bits") }` before the loop, or use `copy(targetHash[chainhash.HashSize-len(targetBytes):], reverse(targetBytes))`. Validate: `go test -race ./chain/...`.
 
-- [x] **M-03 — `loadtest` shutdown can be delayed by in-flight HTTP call (default branch never re-checks `stopChan`)** — `loadtest/runner.go:206-238` — bug class: Concurrency / Shutdown — **Consequence**: `runLoadWorker` selects on `stopChan` only at the top of each loop iteration. Once it enters the `default` branch it performs a synchronous `client.Call` with the package-level `http.Client` timeout of 30s. After `close(stopChan)` in `RPCLoadTest`, every worker can take up to 30s to terminate, blocking `wg.Wait()`. Compounded with `config.Concurrency` workers, this delays returning a `TestResult`. — **Remediation**: Pass a derived `ctx, cancel := context.WithCancel(ctx)` into `runLoadWorker` and call `cancel()` immediately after `close(stopChan)` in `RPCLoadTest` (`loadtest/runner.go:161`). This causes in-flight `Call` to abort via `context.Canceled`. Validate: `go test -race ./loadtest/...` (existing tests still pass) and add a worker-cancellation test that asserts `RPCLoadTest` returns within `Duration + 1s` rather than `Duration + 30s`. ✅ COMPLETED: workerCtx created at line 160, workerCancel() called at line 171; TestRPCLoadTestWorkerCancellation in runner_test.go verifies that RPCLoadTest returns within Duration + 3s even when the server takes 30s per request.
+- [ ] **M-3 — Sync peer-height map keyed by `*peer.Peer` pointer** — `network/sync.go:255,289,321,334` — concurrency / logic — `peerHeights[p] = height` uses the peer pointer as the map key while other branches compare by address string (see H-4/H-5). The two access patterns can disagree if the peer pool reuses pointers after disconnect, leaving stale height data.
+  **Remediation:** Pick a single canonical identity (preferably the `*peer.Peer` pointer for the lifetime of a connection) and use it consistently for all sync-state lookups, including `OnPeerDisconnected`. Validate: `go test -race ./network/...`.
 
-- [x] **M-04 — SMTP `readDataBody` deadline is set once for the entire session, allowing a single slow connection to block a goroutine for the whole `ReadTimeout` window** — `mail/smtp.go:226-230` and `:603-635` — bug class: Concurrency / DoS — **Consequence**: `handleConnection` sets `conn.SetReadDeadline(time.Now().Add(r.config.ReadTimeout))` exactly once. The default `ReadTimeout` is 5 minutes (`DefaultRelayConfig`). A malicious or slow client can sit at any read point (line-by-line `readLine`, or inside `readDataBody`) for up to that 5-minute budget regardless of how slowly it sends bytes, with no per-read or per-line timeout. With many such connections an attacker can sustain a goroutine pool of size N for 5 minutes each, exhausting accept loop concurrency for the relay. — **Remediation**: Refresh `conn.SetReadDeadline` before each `s.reader.ReadString('\n')` call in `readLine` and `readDataBody`, using a smaller per-read timeout (e.g. 30s) and a separate total-message deadline (e.g. `config.ReadTimeout`). Wrap the connection in a deadline-resetting `net.Conn` adapter, or call `conn.SetReadDeadline` at the top of each helper. Validate: `go test -race ./mail/...` plus a new test that opens a TCP connection, sends nothing, and asserts the session is closed within 60s rather than 5 minutes. ✅ COMPLETED (implementation): connSem semaphore added (lines 227-234); setReadDeadline() called before each read (line 631); per-read timeout implemented as package-level constant `perReadTimeout = 30s`. The slow-client regression test was not added because `perReadTimeout` is a fixed 30s constant that would make the test suite unacceptably slow; the implementation evidence is sufficient to confirm the fix.
+- [ ] **M-4 — `name_update`/`name_new`/`name_firstupdate` panics are recovered but counted as 500s without distinguishing programmer error** — `rpc/server.go:280-...` (and the H-6/H-7/H-8 sites) — observability — The `withPanicRecovery` middleware converts panics into generic HTTP 500 responses. This conceals nil-deref bugs and makes operators see only "Internal Server Error". Combined with H-6/H-7/H-8, real bugs are silently shipped to clients.
+  **Remediation:** When the recovered value is a runtime error (`runtime.Error`), include the panic site in structured logs at `ERROR` level (already partially done) and surface a distinguishable error code (e.g., `-32099 "panic recovered"`). Validate: `go test -race ./rpc/...`.
+
+- [ ] **M-5 — `silent decodeNameRecord` skip in batch index maintenance** — `namedb/batch.go:194,231` — error handling — `if decodeErr == nil { ... }`-style branches silently skip index maintenance for records that fail to decode (corruption or schema drift). This hides on-disk corruption from operators.
+  **Remediation:** Surface the error: at minimum, `log.Printf("namedb: skipping expiration index update for %q: %v", name, decodeErr)`; ideally return it as a wrapped error and abort the batch. Validate: `go test -race ./namedb/...`.
+
+- [ ] **M-6 — `BroadcastBlock` queues `inv` to disconnected peers** — `network/peermgr.go:640` — resource — Unlike `relayTransaction` (`network/peermgr.go:494`), `BroadcastTx` (`network/peermgr.go:671`), and `SyncBlocks` (`network/peermgr.go:743`), the loop in `BroadcastBlock` does not call `p.Connected()` before appending to the broadcast target list. Queued sends on disconnected peers waste work and may briefly retain peer state past disconnect.
+  **Remediation:** Add the `if !p.Connected() { continue }` guard before appending. Validate: `go test -race ./network/...`.
+
+- [ ] **M-7 — `cmd/permamail` signal handler goroutine is not stopped on shutdown** — `cmd/permamail/main.go:379` — resource — `signal.Notify(sigChan, ...)` is called without a paired `signal.Stop(sigChan)` before `serve()` returns. In a long-running process this is once-only, but the signal-channel goroutine is retained for the life of the process and accumulates if `serve` is ever called more than once (tests, restarts).
+  **Remediation:** `defer signal.Stop(sigChan)` immediately after the `Notify` call. Validate: `go test ./cmd/permamail/...`.
+
+- [ ] **M-8 — SMTP `extractAddress` does not reject CRLF in user input** — `mail/smtp.go:685-695` — security (input validation, defense-in-depth) — `extractAddress` parses the argument of `MAIL FROM`/`RCPT TO` without rejecting embedded `\r` or `\n`. The `net/smtp` client used downstream sanitizes for its own command framing, but defense-in-depth is appropriate for a server that may pass these values into logs, headers, and routing decisions.
+  **Remediation:** After parsing, return early on `strings.ContainsAny(addr, "\r\n")`. Validate: `go test ./mail/...`.
 
 ### LOW
 
-- [x] **L-01 — Dead computed value in AuxPoW chain-merkle-branch validation** — `chain/auxpow.go:310-324` — bug class: Logic / Dead code — **Consequence**: A `computedRoot` is computed by walking `auxPow.ChainMerkleBranch` and is then *never used*; the immediately following if/else branches recompute the same value as `checkMergeMiningCommitment` / direct-commitment lookups. The first walk is wasted CPU and obscures the intent of the function. No correctness impact (subsequent branches are authoritative). — **Remediation**: Remove the first merkle-walk block (`chain/auxpow.go:310-324`) and rely solely on the `checkMergeMiningCommitment` / `bytesContain` branches. Validate: `go test -race ./chain/...`.
+- [ ] **L-1 — `hashPassword` comment misrepresents the chosen work factor** — `wallet/encryption.go:202` — documentation / API — Comment asserts `N=16384` is "strong enough to resist brute-force", which contradicts both the project's own `deriveKey` (`N=32768`) and current public guidance. Even after H-1 is fixed, the comment should be honest about the trade-off.
+  **Remediation:** Rewrite the comment to cite the chosen N, the documented attacker model, and a link to the relevant guidance. Validate: `go vet ./wallet/...`.
 
-- [x] **L-02 — Reimplementation of stdlib helpers** — `chain/auxpow.go:566` (`bytesContain`) and `chain/auxpow.go:583` (`bytesEqual`) — bug class: Code smell / Maintainability — **Consequence**: Duplicate the behavior of `bytes.Contains` and `bytes.Equal`. The `bytes` package is already imported in `auxpow.go`. Local versions slightly increase the surface area for bugs and obscure the intent. — **Remediation**: Replace `bytesContain` and `bytesEqual` call sites with `bytes.Contains` / `bytes.Equal` and delete the helpers. Validate: `go vet ./chain/... && go test -race ./chain/...`.
+- [ ] **L-2 — `removeUTXOFromAddressIndex` silently ignores `Delete` errors** — `namedb/batch.go:366` — error handling — Same class as H-2/H-3 but on a lower-impact index (address → UTXO mapping). Leaves orphan address-index entries that will eventually be pruned on the next full UTXO rebuild but can confuse `listunspent` queries until then.
+  **Remediation:** Capture and propagate the `Delete` error. Validate: `go test -race ./namedb/...`.
 
-- [ ] **L-03 — Weak direct-commitment detection when AuxPoW `ChainMerkleBranch` is empty** — `chain/auxpow.go:347-353` — bug class: Security / Robustness — **Consequence**: When the chain-merkle branch is empty (single-chain AuxPoW), the validator falls back to scanning the coinbase script for the *raw* parent block hash via `bytesContain`. This is materially weaker than the magic-prefix check in `checkMergeMiningCommitment` because any 32-byte sequence in the coinbase that happens to equal the block hash will succeed. With attacker-controlled coinbase data, a parent coinbase that *legitimately* mines to a different chain could be misclassified as an AuxPoW for nmcd. In practice the parent PoW work limit and the rest of the consensus rules constrain this, but the safety margin is much lower than for the magic-prefix path. — **Remediation**: Either (a) require `checkMergeMiningCommitment` (with `MergedMiningHeader` magic) for all AuxPoW headers and treat empty `ChainMerkleBranch` as invalid, matching the Namecoin Core constraint that the magic header is required when not at the start of the coinbase, or (b) tighten the direct-commitment check to verify the hash is at a coinbase offset consistent with the documented format. Validate: `go test -race ./chain/...` plus a new fuzz test against `ValidateAuxPow`.
+- [ ] **L-3 — `signal.Notify` in `cmd/nmcd` should be paired with `signal.Stop`** — `cmd/nmcd/main.go` (signal-handling block in `main`) — resource — Same class as M-7, but `cmd/nmcd` is a `main` that only runs once per process, so the leak is theoretical.
+  **Remediation:** `defer signal.Stop(sigChan)` for symmetry. Validate: `go build ./cmd/nmcd/...`.
 
-- [ ] **L-04 — `bytesContain` false positives in coinbase scan when block hash appears in script data** — `chain/auxpow.go:347-353` (related to L-03) — bug class: Logic — **Consequence**: A malicious miner could embed the target Namecoin block hash inside coinbase data such that `bytesContain` succeeds even though no proper merge-mining commitment exists. Net effect is bounded by the parent PoW requirement, so impact is low, but the check is overly permissive. — **Remediation**: Same as L-03.
+- [ ] **L-4 — Largest function (`metrics.NewPrometheusCollector`, 243 lines) is composed of mechanical metric declarations and is correctly straight-line code, but its size makes future drift risky** — `metrics/prometheus.go:99-...` — code organization — No bug today. Flagged because the prompt requires inspection of every function above 50 lines.
+  **Remediation:** Optional — group metric definitions into helper slices indexed by name to keep the constructor short. Validate: `go test ./metrics/...`.
 
-- [x] **L-05 — Auth HMAC concatenates `user + ":" + pass` allowing ambiguous credential parsing** — `rpc/server.go:343-349` — bug class: Security / Logic — **Consequence**: `checkAuth` builds the HMAC input as `s.rpcUser + ":" + s.rpcPassword`. If the configured `RPCUser` contains a `:`, an attacker who supplies `user="a"`, `pass="b:c"` produces the same HMAC as a configured pair `user="a:b", pass="c"`. The Constant-time compare then matches. The likelihood is low because operators rarely include `:` in usernames, but the HMAC contract should be unambiguous. — **Remediation**: Replace the concatenation with two separate `mac.Write` calls for `user` and `pass` separated by a length-prefix, or hash `user` and `pass` independently and constant-time-compare both. Validate: `go test -race ./rpc/...`.
+- [ ] **L-5 — `loadtest.MemoryLeakTest` allocates without bound by design** — `loadtest/runner.go:306` — false-positive considered — The function intentionally retains references to drive memory pressure for load testing. Comment near the function acknowledges this. No action.
+  **Remediation:** None. Add a `//nolint:` style annotation if/when the project adopts a linter that flags this. Validate: n/a.
 
-- [x] **L-06 — `requireBlockchain` helper is defined but bypassed by `getInfo`, `getBlockCount`, `getBestBlockHash`** — `rpc/server.go:130-135` and call sites `:548-558`, `:582-593`, `:604-615` — bug class: Code smell / Duplication drift — **Consequence**: Each of the three handlers re-implements the same nil-check inline instead of calling `requireBlockchain`. If the helper's error format is updated, these handlers will silently drift. — **Remediation**: Replace inline blocks at lines 548-558, 582-593, 604-615 with `if r := s.requireBlockchain(req.ID); r != nil { return r }`. Validate: `go test -race ./rpc/...`.
+- [ ] **L-6 — Duplicate clones in `examples/*`** — `examples/embedded_client/main.go:55-60` and `:81-86`; `examples/simple_resolve/main.go:85-90`; `loadtest/runner.go:504-509` (six-line repeated wallet/setup snippet, similarity > 0.9) — duplication — Examples intentionally duplicate setup boilerplate for clarity. Not a defect.
+  **Remediation:** None for examples. If a shared `examples/internal` helper is introduced, dedupe there. Validate: n/a.
 
-- [x] **L-07 — `Wallet.Lock()` zeroes a *copy* of the private key, not the canonical bytes inside `btcec.PrivateKey`** — `wallet/wallet.go:408-414` — bug class: Security / Memory hygiene — **Consequence**: After `Lock()`, the actual private key bytes remain in heap memory inside the `btcec.PrivateKey` struct until garbage-collected. The intention of `Lock()` is to defeat forensic memory recovery, but it does not achieve that goal. The code comment at `wallet/wallet.go:402-407` explicitly acknowledges this. Risk is bounded because the entire `keys` map is dropped and the `btcec.PrivateKey` objects become unreachable, but it is weaker than the docstring's promise. — **Remediation**: Document the limitation prominently in `Lock`'s GoDoc (already partially done in the inline comment) and consider switching to a custom key type that holds raw bytes the package controls. As a minimum, escalate the limitation from an inline comment into the exported GoDoc. Validate: `go test -race ./wallet/...`.
-
-- [ ] **L-08 — Headers-first IBD only requests headers from one peer at a time, then issues `getdata` for blocks serially within `HandleHeaders`** — `network/sync.go:171-225` — bug class: Performance / API contract — **Consequence**: README promises "headers-first IBD with parallel block download". In practice `HandleHeaders` iterates the received batch and calls `requestBlock(p, &blockHash)` against the single sync peer for each header. There is no fan-out to other peers and no pipelining beyond the 2000-header batch boundary, capping IBD throughput at one peer's bandwidth. — **Remediation**: Distribute `requestBlock` calls across `sm.peerHeights` using a simple round-robin or weighted-by-height strategy. Add a per-peer `requestedBlocks` map to bound outstanding requests per peer. Validate: `go test -race ./network/...` and integration test against a multi-peer simulator.
-
-- [x] **L-09 — `processCommands` uppercase prefix matching prevents `MAIL FROM:` addresses containing literal uppercase tokens** — `mail/smtp.go:279`, dispatch at `:296-314` — bug class: Logic / Protocol compliance — **Consequence**: `cmd := strings.ToUpper(strings.TrimSpace(line))` is used for *both* dispatch *and* address extraction (`handleMailFrom` and `handleRcptTo` slice into the uppercased string starting at offset 10 / 8). This means the stored `s.from` and `s.to` addresses are uppercase even though `strings.ToLower(addr)` is applied later. The net effect of the lower-then-upper-then-lower flow is benign for case-insensitive emails (local parts are technically case-sensitive per RFC 5321 but rarely matter), but a `MAIL FROM:` containing a quoted-string with internal uppercase preserved is silently lower-cased. **More importantly**, the `cmd` passed to `handleMailFrom`/`handleRcptTo` is the uppercase version, so the address slice has its case wrongly squashed before lower-casing — yielding inconsistent storage if a downstream check ever required case preservation. — **Remediation**: Parse the raw `line` (preserving case) and only uppercase the verb prefix for dispatch (e.g., `verb := strings.ToUpper(strings.SplitN(line, " ", 2)[0])`). Validate: `go test -race ./mail/...`.
-
-- [x] **L-10 — Long-lived per-process HMAC key prevents credential rotation without restart** — `rpc/server.go:253-258` — bug class: API / Operations — **Consequence**: `authKey` is generated at `NewServer` and never rotated. Combined with `s.rpcUser`/`s.rpcPassword` being set once and not protected by a mutex, there is no live-reload path for credentials. Not exploitable, but reduces operability of long-running daemons. — **Remediation**: Add a `Server.SetCredentials(user, pass string)` method that takes `s.mu.Lock()` and updates the fields. Document the rotation procedure in the RPC docstring. Validate: `go test -race ./rpc/...`.
-
-- [ ] **L-11 — `findReplacementPeer` acquires `sm.pm.mu.RLock()` while holding `sm.mu.Lock()`** — `network/sync.go:298-309` (called from `:99` inside `syncTick` which holds `sm.mu.Lock()` since `:95`) — bug class: Concurrency / Deadlock risk — **Consequence**: Establishes a fixed lock order `sm.mu → sm.pm.mu`. If any other code path takes `sm.pm.mu` first and then needs `sm.mu` (for example a `peer.Peer` callback into `SyncManager` while `PeerManager` is iterating its peer map under its own RLock), a deadlock is possible. `go test -race` does not detect lock-order inversions and the test suite does not exercise this concurrency. Currently no inversion appears to exist (all callers take `sm.mu` first), but this is fragile. — **Remediation**: Refactor `findReplacementPeer` to take a snapshot of the peer list under `sm.pm.mu.RLock()` *without* holding `sm.mu`, then re-acquire `sm.mu.Lock()` to update sync state. Document lock order in a comment at the top of `network/sync.go`. Validate: `go test -race ./network/...`.
-
-- [x] **L-12 — Defer on `client.Close()` after `client.Quit()` in `forwardMessage`** — `mail/smtp.go:463` (defer) and `:566-568` (Quit) — bug class: Resource / Idempotency — **Consequence**: `smtp.Client.Close()` after `Quit()` returns a "connection already closed" style error which is silenced by the defer. Functionally harmless but masks any other close error the deferred call might surface (e.g., a connection that never sent QUIT due to early return). — **Remediation**: Replace the bare `defer client.Close()` with `defer func() { _ = client.Close() }()` to make the silencing explicit, or only call `Close` in the early-error paths and rely on `Quit` in the happy path. Validate: `go test -race ./mail/...`.
-
-- [x] **L-13 — `validatePassword` accepts passwords with only 2 character classes** — `wallet/encryption.go:189-191` — bug class: Security / API contract — **Consequence**: Lower bound of 8 characters and 2 character classes is below contemporary recommendations (NIST SP 800-63B no longer mandates character-class rules, but recommends min 8 *with* breach-list lookup, or min 15 without). Without a breach-list check, this is a weak password policy for an encryption KDF used in a wallet. — **Remediation**: Document the policy in `EncryptWallet`'s GoDoc, and either raise the minimum to 12 characters or integrate a breach-list check (e.g., `pwned-passwords`). Validate: `go test ./wallet/...`.
-
-- [x] **L-14 — `MaxMessageSize` overflow in `readDataBody`** — `mail/smtp.go:628` — bug class: Logic / Arithmetic — **Consequence**: `int64(len(body) + len(line))` first sums two `int`s and converts to `int64`. On 32-bit platforms, the addition could overflow `int` (max ~2 GB) before the conversion, producing a negative `int64` and bypassing the size cap. On 64-bit (the only production target for nmcd today) this is not exploitable. — **Remediation**: Rewrite as `int64(len(body)) + int64(len(line)) > maxSize`. Validate: `GOARCH=386 go test ./mail/...`.
-
-- [x] **L-15 — `Server.Stop()` discards listener `Close` error if `s.server.Close()` succeeded** — `rpc/server.go:313-323` — bug class: Error handling — **Consequence**: If `s.server.Close()` returns nil but `s.listener.Close()` returns non-nil, the listener error is recorded. If *both* return errors, only the server error is returned and the listener error is silently dropped. — **Remediation**: Use `errors.Join(serverErr, listenerErr)` (Go 1.20+) to surface both. Validate: `go test -race ./rpc/...`.
-
-- [ ] **L-16 — `internal/server` and `cmd/nmcd` import the `wallet` package even when `--no-wallet` is set, performing initialization work that is then discarded** — `internal/server/server.go` — bug class: Init order / Performance — **Consequence**: Minor startup-time overhead; no correctness issue. — **Remediation**: Gate wallet construction behind the same flag the daemon already uses (`server.Config.EnableWallet`) and avoid calling `wallet.Open` when disabled. Validate: `go test -race ./internal/server/...`.
-
-- [x] **L-17 — `loadtest.RPCLoadTest` does not use the per-worker rate-limit `default:` select branch after the rate-limit ticker fires, so workers may issue requests faster than the configured `RateLimit` when one ticker is consumed before another goroutine swap** — `loadtest/runner.go:202-213` — bug class: Performance / API contract — **Consequence**: Off-by-one drift in actual RPS vs configured RPS; observable only at low concurrencies. — **Remediation**: Document the behavior or use a global `golang.org/x/time/rate.Limiter` shared across workers. Validate: `go test ./loadtest/...`.
-
-- [x] **L-18 — `chain.ProcessBlock` length 60+ does not document its mutation contract for the supplied `*wire.MsgBlock` argument** — `chain/blockchain.go` — bug class: API / Documentation — **Consequence**: Callers cannot tell whether the block argument may be reused after `ProcessBlock` returns. — **Remediation**: Add a GoDoc note stating that the block is treated as read-only and the caller retains ownership. Validate: `go vet ./chain/...`.
-
-- [x] **L-19 — `namedb` UTXO address index requires fixed-length addresses (acknowledged in comment)** — `namedb/utxo.go:99-104,187,210` — bug class: API contract / Documented limitation — **Consequence**: The address-prefix index relies on a fixed-length address key. Code comments acknowledge this. Not a bug per the codebase contract but worth flagging for SegWit / multi-format extension. — **Remediation**: Add a length-byte prefix when extending to variable-length address forms. Validate: `go test -race ./namedb/...`.
-
-- [x] **L-20 — `Wallet.Unlock` zeroes `pw` only on error paths and then stores the *same* `pw` slice on success** — `wallet/wallet.go:442-477` — bug class: Memory hygiene / API — **Consequence**: On success, `w.unlockPassword = pw` retains the password bytes; `Lock()` later zeroes them — correct. On failure paths `zeroSlice(pw)` is called explicitly. No bug, but the success path relies on the caller never holding another reference to the underlying `[]byte(password)` allocation, which it does not. Defensive copying would make this explicit. — **Remediation**: Defensive: `pw := append([]byte(nil), password...)` and store the copy. Validate: `go test -race ./wallet/...`.
-
-- [x] **L-21 — `rpc/server.go` `getInfo` hardcodes `"version": "0.1.0"`** — `rpc/server.go:569` — bug class: API / Documentation drift — **Consequence**: Reported daemon version will diverge from `go.mod`/`CHANGELOG.md` as releases are tagged. — **Remediation**: Define `const Version = "0.1.0"` in a single place (e.g. `internal/version` package) and import it from both `cmd/nmcd` and `rpc/server.go`. Validate: `go test ./rpc/...`.
-
-- [ ] **L-22 — `SyncManager.HandleHeaders` calls `blockchain.BlockByHash` for every header inside the per-header loop** — `network/sync.go:215` — bug class: Performance / Hot path — **Consequence**: Each call performs a bbolt read. For a `MaxBlockHeadersPerMsg` batch of 2000, this is 2000 sequential reads on the IBD hot path, slowing header processing. — **Remediation**: Batch the lookups using `db.View(func(tx) { ... })` once per batch, or maintain an in-memory "have block" bloom filter. Validate: `go test -race ./network/...`; benchmark with `loadtest`.
-
-- [ ] **L-23 — `metrics.PrometheusCollector` constructor is 243 lines (longest in the project) — high maintenance risk** — `metrics/prometheus.go` (function `NewPrometheusCollector`) — bug class: Structural / Maintainability — **Consequence**: A single-statement-per-metric registration block; not a bug, but a maintainability red flag flagged by go-stats-generator. — **Remediation**: Split into helpers by metric family (peer, block, RPC, namedb). Validate: `go test ./metrics/...`.
-
-- [ ] **L-24 — `bridge` package has cohesion 0.4, indicating the package contains weakly-related types** — `bridge/*.go` — bug class: Structural — **Consequence**: Maintainability only. — **Remediation**: Consider splitting bridge-mode adapters from bridge-core types in a future refactor. Validate: `go-stats-generator analyze ./bridge`.
-
-- [x] **L-25 — `config` package doc coverage 0.6 — exported `chaincfg`-style constants lack GoDoc on individual entries** — `config/namecoin_params.go` — bug class: Documentation — **Consequence**: Users hand-tuning consensus parameters lack inline context. — **Remediation**: Add per-constant GoDoc comments. Validate: `go vet ./config/...`.
-
-- [x] **L-26 — `Server.checkAuth` does not normalize Unicode in the username** — `rpc/server.go:338-349` — bug class: Security / Robustness — **Consequence**: Username "café" supplied as NFC vs NFD will hash to different HMAC outputs even if the operator-configured username looks identical. Operationally irrelevant for ASCII usernames; documented here for completeness. — **Remediation**: Either restrict usernames to ASCII or apply `golang.org/x/text/unicode/norm.NFC.String(...)`. Validate: `go test ./rpc/...`.
-
-- [ ] **L-27 — `chain/auxpow_cache.go` LRU cache has no negative-result caching** — `chain/auxpow_cache.go` — bug class: Performance — **Consequence**: AuxPoW validation failures are re-computed on every retry. — **Remediation**: Add a small "rejected" cache keyed by block hash. Validate: benchmark.
-
-- [x] **L-28 — `cmd/nmcd` config-file parsing does not validate file mode (could be world-readable when containing RPC password)** — `cmd/nmcd/*.go` / `config/configfile.go` — bug class: Security / File hygiene — **Consequence**: A user-supplied config file with the RPC password set could have mode `0644`, exposing the password to other users on a shared host. — **Remediation**: When `RPCPassword != ""`, `os.Stat` the config file and warn (or refuse to load) if mode bits other-readable are set. Validate: `go test ./config/...`.
-
-- [x] **L-29 — `internal/logging` uses `log.SetFlags(log.LstdFlags)` at package init, which can clobber the application's logger configuration** — `internal/logging/*.go` — bug class: Init order / Side effects — **Consequence**: Importing the logger as a side-effect mutates the global `log` package configuration. — **Remediation**: Avoid `log.SetFlags` at init time; only configure when `logging.Init(...)` is called by `main`. Validate: `go test ./internal/logging/...`.
-
-- [x] **L-30 — `permamail` SMTP relay does not enforce a maximum number of concurrent connections** — `mail/smtp.go:200-218` — bug class: Resource / DoS — **Consequence**: Accept loop spawns a goroutine per connection with no semaphore. Combined with M-04, an attacker can hold thousands of goroutines open for the entire `ReadTimeout` window. — **Remediation**: Add a buffered channel as semaphore: `connSem := make(chan struct{}, maxConcurrent)` and acquire/release around `go r.handleConnection(conn)`. Validate: `go test -race ./mail/...`.
-
----
+- [ ] **L-7 — RPC has no `IdleTimeout`-style accounting for per-connection request count** — `rpc/server.go:283` — performance/security minor — Beyond M-1, there is no per-IP connection cap. Token-bucket `rateLimiter` already throttles request rate.
+  **Remediation:** Optional — add `MaxHeaderBytes` and consider a connection limiter for non-loopback deployments. Validate: `go test -race ./rpc/...`.
 
 ## Metrics Snapshot
 
 | Metric | Value |
-|--------|-------|
-| Total functions | 239 |
-| Total methods | 464 |
-| Functions above cyclomatic complexity 15 | 4 (RestoreExpiredNamesForBlock 24.1, RestoreSpentUTXOsForBlock 18.4, ValidateAuxPow 17.6, CleanupOldExpiredNames 17.6) |
-| Functions above cyclomatic complexity 10 | 9 |
-| Average cyclomatic complexity | 1.97 |
-| Functions > 50 lines | 49 |
-| Longest function | NewPrometheusCollector (243 lines) |
-| Doc coverage (primary packages) | ~64% |
-| Duplication ratio | 0.47% |
-| Circular dependencies | 0 |
-| `go vet ./...` warnings | 0 |
-| `go test -race ./...` pass rate | 100% (all packages PASS) |
+|---|---|
+| Total functions | 706 |
+| Functions above cyclomatic complexity 15 | 1 (`namedb.RestoreExpiredNamesForBlock`, complexity 17) |
+| Avg cyclomatic complexity | 3.49 |
+| Doc coverage (per-package, from go-stats-generator) | not emitted by tool in this run (all reported `null`); spot-checks show public APIs are documented in `client/`, `namedb/`, `wallet/`, partial in `rpc/` |
+| Duplication ratio | low; 7 clone groups, all in `examples/*` or trivial helpers |
+| Test pass rate | 100% (`ok` for every non-example package under `go test -race ./...`) |
+| `go vet` warnings | 0 |
+| Production LOC | 21,245 (vs. README claim of "~18,000") |
 
 ## False Positives Considered and Rejected
 
 | Candidate | Reason Rejected |
-|-----------|----------------|
-| `BroadcastTx` adding to local mempool before relay (`network/peermgr.go:629-637`) could double-mempool on RPC error path | Re-checked: `Mempool.AddTx` is idempotent for identical TxHash; second submission is a no-op. Documented behavior. |
-| `namedb.CacheLRU` returning shared name records to callers | Re-checked: `cache.Get` calls `record.Copy()` (deep copy) at return; aliasing safe. |
-| `chain/blockchain.go:597` and `:1555` consensus expiration boundary `>=` looks off-by-one against repo memory "expired only when ExpiresAt < currentHeight" | Re-checked: `>=` for "active" and `<` for "expired" are complementary; both correct, just different sides of the same predicate. |
-| `wallet/wallet.go:411` `kp.PrivateKey.Serialize()` zeroing on a copy | Acknowledged in source comment as a known limitation; included as L-12 for visibility but not a security bug under the codebase's threat model (process boundary). |
-| `os.Open` / `os.Create` without `defer Close()` anywhere in the codebase | Checked all 12 usages; every one has a matching `defer` or explicit Close on every branch. |
-| `http.Response.Body` not closed in `loadtest/runner.go:90` | `defer resp.Body.Close()` is present at line 90; not a leak. |
-| `Wallet.save` race against concurrent reads | All wallet mutations take `w.mu.Lock()`; reads take `w.mu.RLock()`. Verified across `wallet/wallet.go` and `wallet/tx.go`. |
-| `SyncManager.requestedBlocks` unbounded growth | `cleanupOldRequestsLocked` removes entries > 2 min old on every `syncTick` (every 10s). Bounded. |
-| Goroutines in `network.PeerManager.BroadcastTx` lacking shutdown signal | Verified: `BroadcastTx` is synchronous; no goroutines launched. |
-| `smtp.Client` connection reuse across messages | `forwardMessage` creates and closes one client per recipient; no reuse issue. |
-| `chain.ValidateAuxPow` cyclomatic 17.6 | Read fully; complexity is decision-table style and each branch returns a distinct error. Restructuring would not reduce bug surface. Not a finding. |
-| `namedb.RestoreExpiredNamesForBlock` cyclomatic 24.1 | Read fully; each branch corresponds to a distinct reorg state. Refactor would require structural change. Not a bug, flagged in L-23 family for future work. |
+|---|---|
+| `chain.ProcessBlock` is 105 lines / complexity 11 | Reviewed; cleanly factored into validation → indexing → notification steps; no buggy paths found. |
+| `client.NewClient` may race with daemon coming up between probe and use | Probe failure → embedded mode is the documented fallback; the auto-detect contract does not promise daemon use is monotonic. |
+| `mail/smtp.go` returns `502 Command not implemented` | This is the SMTP-protocol response for an unsupported verb, not a stub TODO. |
+| `examples/mail_router/main.go` "not implemented in mock" returns | These are documented mock implementations for the example, not production stubs. |
+| Loop-variable capture in goroutines (pre-Go 1.22) | `go.mod` requires Go 1.24.11; the language-level fix is in effect for the whole codebase. |
+| `math/rand` misuse | No production usage found; all secret-bearing paths use `crypto/rand` (verified in `rpc/server.go:257`, wallet, etc.). |
+| `InsecureSkipVerify` in TLS | Not present anywhere outside test fixtures. |
+| `panic` in non-init paths | All production `panic` sites are either documented "should never happen" invariants or are caught by `withPanicRecovery` in the RPC server. |
+| Mempool tx broadcast race | `PeerManager.BroadcastTx` (`network/peermgr.go:629-637`) intentionally adds the tx to the local mempool first so validation runs before relay; verified consistent with stored repository fact and tests. |
+| Expiration off-by-one (`ExpiresAt < currentHeight` vs `≤`) | Verified strict `<` is the project's definition (`namedb/namedb.go:316-318`); not a bug. |
+| `metrics.NewPrometheusCollector` 243 lines | Pure metric registration; reviewed line-by-line, no double-registration or shared-state hazard. |
+| `cmd/permamail` `serve` 70 lines | Standard server setup with proper `defer ln.Close()` and signal handling; only M-7 noted. |
 
-## Remaining Scope
-
-This audit completed a single full pass across all 15 production packages. A second pass produced no new confirmed findings above LOW. The end-to-end coverage requirement is satisfied.
+## Remaining Scope (session-end status)
 
 | Package | Status | Notes |
-|---------|--------|-------|
-| All production packages | Complete | No package left unaudited. |
-| `examples/*` | Spot-checked for security patterns | Not part of the daemon; not in shipped binaries. |
-| `loadtest/cmd` | Spot-checked | Trivial wrapper around `loadtest.RPCLoadTest`. |
+|---|---|---|
+| (none) | All 16 production packages were audited to completion. | Findings are stable across two full passes; no new findings above LOW emerged in the second pass. |
 
----
-
-## Session Completion Summary (2026-05-28)
-
-### Audit Task Execution Results
-
-**Session Status**: ✅ ALL HIGH AND MEDIUM PRIORITY FINDINGS VERIFIED COMPLETE
-
-**Audit Findings Resolution**:
-- **HIGH Priority**: 1/1 completed (H-01: Divide-by-zero validation)
-- **MEDIUM Priority**: 4/4 completed (M-01 through M-04)
-- **LOW Priority**: 21/30 checked; 9/30 unchecked
-
-**Completed Tasks Summary**:
-
-1. **H-01**: Divide-by-zero panic (loadtest)
-   - ✅ Validation in place at `loadtest/runner.go:133-138`
-   - ✅ Tests present: `TestRPCLoadTestZeroConcurrency`, `TestRPCLoadTestZeroDuration`
-
-2. **M-01**: Expiration boundary inconsistency
-   - ✅ Both `rpc/name_handlers.go:354` and `client/embedded.go:481` use `ExpiresAt >= bestHeight`
-   - ✅ Boundary test in `chain/blockchain_test.go::TestValidateNameFirstUpdateRejectsActiveNameAtExpirationBoundary`
-
-3. **M-02**: Stale expiration-index entry
-   - ✅ Error propagation at `namedb/namedb.go:274` via `fmt.Errorf`
-
-4. **M-03**: loadtest shutdown delayed by HTTP call
-   - ✅ Context cancellation implemented: `workerCtx` (line 160), `workerCancel()` (line 171)
-
-5. **M-04**: SMTP ReadDeadline DoS
-   - ✅ Semaphore-based connection limiting: `r.connSem` (lines 227-234)
-   - ✅ Per-read deadline refresh: `s.setReadDeadline()` (line 631)
-
-**Verified Already-Fixed LOW Items** (sample):
-- L-01: Dead merkle-walk removed
-- L-02: Custom helpers replaced with `bytes.Contains`/`bytes.Equal`
-- L-05: HMAC fields length-prefixed via `writeHMACField`
-- L-28: Config file mode validated (lines 73-78)
-- L-29: Logging migrated to `slog`; `cmd/nmcd/main.go` retains a `log.SetFlags` call in `init` to configure the legacy logger used alongside `slog`
-
-**Unchecked LOW Items Remaining** (9 items):
-- L-03, L-04: AuxPoW direct-commitment weaknesses (security/robustness, low impact)
-- L-08: Headers-first IBD parallelization (performance, README gap)
-- L-11: Lock order deadlock risk (concurrency fragility)
-- L-16: Wallet package init optimization (startup perf)
-- L-22: BlockByHash in loop (IBD hot-path perf)
-- L-23: PrometheusCollector size reduction (maintainability, 243→split into helpers)
-- L-24: Bridge package cohesion (structural, 0.4 score)
-- L-27: AuxPoW cache negative-result caching (perf)
-
-**Rationale for Unchecked Items**:
-- L-03, L-04, L-08, L-11: Security/performance/concurrency issues requiring significant refactoring with testing
-- L-16: Requires config struct changes and CLI flag plumbing
-- L-22, L-23, L-24, L-27: Performance/maintainability items with lower priority vs HIGH/MEDIUM fixes
-
-### Session Validation Results
-
-✅ **Test Suite**: `go test -race ./...` — ALL PASS (all packages)
-✅ **Linting**: `go vet ./...` — PASS (zero warnings)
-✅ **Metrics**: Baseline vs Post-exec — STABLE (Quality Score 100.0/100)
-✅ **Compliance**: All HIGH and MEDIUM audit findings verified fixed
-✅ **No Regressions**: Code metrics unchanged from baseline
-
-### Session Metrics
-
-- **Execution Time**: ~6 minutes
-- **Findings Verified**: 26 out of 35 audit items
-- **High/Medium Completion**: 5/5 (100%)
-- **Test Pass Rate**: 100% (race detector enabled)
-- **Regression Risk**: Zero (metrics stable)
-
-### Stopping Condition
-
-**Context Boundary Reached**: The 9 unchecked LOW items involve distinct subsystems (auxpow, network sync, SMTP, wallet, metrics, bridge) with low to medium impact. Further execution would require either:
-1. Isolated deep-dives per subsystem
-2. Significant structural changes (L-16 requires config plumbing, L-08 requires network layer refactoring)
-3. Additional test infrastructure (L-11 requires deadlock testing, L-23 requires metrics split)
-
-**Recommendation for Next Session**: 
-- Execute L-08 (headers-first IBD) if performance bottleneck identified in loadtest
-- Execute L-23 (PrometheusCollector split) as maintainability improvement
-- Execute L-16 (wallet flag) as part of larger config refactoring
-- Execute L-03/L-04/L-11 only if security audit demands stricter AuxPoW validation
-
+If a follow-up session is opened, the recommended next pass is **fuzz-style targeting of the `chain/` AuxPow and `chain/name_script.go` parsers** with `go test -fuzz=Fuzz...` (no fuzz tests exist today), and **property-based testing of `namedb/batch.go` commit semantics** under simulated bbolt I/O failures — these are areas the bug-class checklist cannot fully cover by static reading.
