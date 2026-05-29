@@ -32,11 +32,12 @@ type Wallet struct {
 	mu          sync.RWMutex
 
 	// Encryption state
-	encrypted      bool   // Whether the wallet is encrypted
-	locked         bool   // Whether the wallet is currently locked
-	passwordHash   []byte // Hash of the password for verification (not the password itself)
-	passwordSalt   []byte // Random salt for password hashing (unique per wallet)
-	unlockPassword []byte // Cached password when unlocked (zeroed on lock)
+	encrypted           bool   // Whether the wallet is encrypted
+	locked              bool   // Whether the wallet is currently locked
+	passwordHash        []byte // Hash of the password for verification (not the password itself)
+	passwordSalt        []byte // Random salt for password hashing (unique per wallet)
+	passwordHashVersion int    // Version of the password hash parameters stored on disk
+	unlockPassword      []byte // Cached password when unlocked (zeroed on lock)
 }
 
 // KeyPair represents a private/public key pair.
@@ -50,11 +51,12 @@ type KeyPair struct {
 // Version 1: Unencrypted keys (legacy format)
 // Version 2: Encrypted keys with password protection
 type walletData struct {
-	Version      int       `json:"version"`                 // Wallet format version (1 or 2)
-	Encrypted    bool      `json:"encrypted"`               // Whether keys are encrypted
-	PasswordHash string    `json:"password_hash,omitempty"` // Hash of password (version 2 only)
-	PasswordSalt string    `json:"password_salt,omitempty"` // Salt for password hashing (version 2 only)
-	Keys         []keyData `json:"keys"`                    // Key pairs (encrypted or unencrypted)
+	Version             int       `json:"version"`                         // Wallet format version (1 or 2)
+	Encrypted           bool      `json:"encrypted"`                       // Whether keys are encrypted
+	PasswordHash        string    `json:"password_hash,omitempty"`         // Hash of password (version 2 only)
+	PasswordSalt        string    `json:"password_salt,omitempty"`         // Salt for password hashing (version 2 only)
+	PasswordHashVersion int       `json:"password_hash_version,omitempty"` // Password hash parameter version (version 2 only)
+	Keys                []keyData `json:"keys"`                            // Key pairs (encrypted or unencrypted)
 }
 
 // keyData represents a serializable key pair.
@@ -130,6 +132,10 @@ func (w *Wallet) applyEncryptionState(wd *walletData) error {
 	}
 
 	w.locked = true
+	w.passwordHashVersion = wd.PasswordHashVersion
+	if w.passwordHashVersion == 0 {
+		w.passwordHashVersion = legacyPasswordHashVersion
+	}
 	var err error
 	w.passwordHash, err = hex.DecodeString(wd.PasswordHash)
 	if err != nil {
@@ -214,6 +220,7 @@ func (w *Wallet) save() error {
 	if w.encrypted {
 		wd.PasswordHash = hex.EncodeToString(w.passwordHash)
 		wd.PasswordSalt = hex.EncodeToString(w.passwordSalt)
+		wd.PasswordHashVersion = w.passwordHashVersion
 	}
 
 	for addr, kp := range w.keys {
@@ -368,6 +375,7 @@ func (w *Wallet) EncryptWallet(password string) error {
 	w.locked = false // Starts unlocked after encryption
 	w.unlockPassword = pw
 	w.passwordSalt = salt
+	w.passwordHashVersion = currentPasswordHashVersion
 	w.passwordHash = hashPassword(pw, salt)
 
 	// Save wallet with encryption
@@ -456,7 +464,11 @@ func (w *Wallet) Unlock(password string) error {
 	pw := []byte(password)
 
 	// Verify password using constant-time comparison to prevent timing attacks
-	passwordHash := hashPassword(pw, w.passwordSalt)
+	passwordHash, err := hashPasswordWithVersion(pw, w.passwordSalt, w.passwordHashVersion)
+	if err != nil {
+		zeroSlice(pw)
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
 	if len(passwordHash) != len(w.passwordHash) || subtle.ConstantTimeCompare(passwordHash, w.passwordHash) != 1 {
 		zeroSlice(pw)
 		return fmt.Errorf("incorrect password")
