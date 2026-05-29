@@ -104,16 +104,10 @@ func encrypt(plaintext []byte, password []byte) (*encryptedData, error) {
 		return nil, err
 	}
 
-	// Create AES cipher
-	block, err := aes.NewCipher(key)
+	// Create AES-GCM cipher
+	gcm, err := buildCipherGCM(key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
-	}
-
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
+		return nil, err
 	}
 
 	// Generate random nonce
@@ -145,16 +139,10 @@ func decrypt(data *encryptedData, password []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	// Create AES cipher
-	block, err := aes.NewCipher(key)
+	// Create AES-GCM cipher
+	gcm, err := buildCipherGCM(key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
-	}
-
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
+		return nil, err
 	}
 
 	// Verify nonce size

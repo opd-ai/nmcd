@@ -667,14 +667,7 @@ func (pm *PeerManager) BroadcastTx(tx *wire.MsgTx) error {
 	inv := wire.NewMsgInv()
 	inv.AddInvVect(wire.NewInvVect(wire.InvTypeTx, &txHash))
 
-	pm.mu.RLock()
-	targets := make([]*peer.Peer, 0, len(pm.peers))
-	for _, p := range pm.peers {
-		if p.Connected() {
-			targets = append(targets, p)
-		}
-	}
-	pm.mu.RUnlock()
+	targets := pm.collectConnectedPeers(nil)
 
 	if len(targets) == 0 {
 		pm.logger.Warn("no peers connected, transaction not relayed",
@@ -739,14 +732,7 @@ func (pm *PeerManager) SyncBlocks() {
 	getHeadersMsg := wire.NewMsgGetHeaders()
 	getHeadersMsg.AddBlockLocatorHash(&bestHash)
 
-	pm.mu.RLock()
-	targets := make([]*peer.Peer, 0, len(pm.peers))
-	for _, p := range pm.peers {
-		if p.Connected() {
-			targets = append(targets, p)
-		}
-	}
-	pm.mu.RUnlock()
+	targets := pm.collectConnectedPeers(nil)
 
 	for _, p := range targets {
 		p.QueueMessage(getHeadersMsg, nil)
