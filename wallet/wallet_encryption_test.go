@@ -1,6 +1,8 @@
 package wallet
 
 import (
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -243,6 +245,104 @@ func TestEncryptedWalletPersistence(t *testing.T) {
 	}
 	if kp.Address.EncodeAddress() != addr {
 		t.Error("loaded key address doesn't match")
+	}
+}
+
+func TestEncryptWalletStoresPasswordHashVersion(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	w, err := NewWallet(tmpDir, &chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("failed to create wallet: %v", err)
+	}
+
+	if _, err := w.GenerateKey(); err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	password := "TestPassword123"
+	if err := w.EncryptWallet(password); err != nil {
+		t.Fatalf("failed to encrypt wallet: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "wallet.json"))
+	if err != nil {
+		t.Fatalf("failed to read wallet file: %v", err)
+	}
+
+	var wd walletData
+	if err := json.Unmarshal(data, &wd); err != nil {
+		t.Fatalf("failed to parse wallet file: %v", err)
+	}
+
+	if wd.PasswordHashVersion != currentPasswordHashVersion {
+		t.Fatalf("password hash version = %d, want %d", wd.PasswordHashVersion, currentPasswordHashVersion)
+	}
+}
+
+func TestUnlockLegacyPasswordHashVersion(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	w, err := NewWallet(tmpDir, &chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("failed to create wallet: %v", err)
+	}
+
+	addr, err := w.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	password := "TestPassword123"
+	if err := w.EncryptWallet(password); err != nil {
+		t.Fatalf("failed to encrypt wallet: %v", err)
+	}
+	if err := w.Lock(); err != nil {
+		t.Fatalf("failed to lock wallet: %v", err)
+	}
+
+	walletPath := filepath.Join(tmpDir, "wallet.json")
+	data, err := os.ReadFile(walletPath)
+	if err != nil {
+		t.Fatalf("failed to read wallet file: %v", err)
+	}
+
+	var wd walletData
+	if err := json.Unmarshal(data, &wd); err != nil {
+		t.Fatalf("failed to parse wallet file: %v", err)
+	}
+
+	salt, err := hex.DecodeString(wd.PasswordSalt)
+	if err != nil {
+		t.Fatalf("failed to decode password salt: %v", err)
+	}
+
+	legacyHash, err := hashPasswordWithVersion([]byte(password), salt, legacyPasswordHashVersion)
+	if err != nil {
+		t.Fatalf("failed to compute legacy password hash: %v", err)
+	}
+
+	wd.PasswordHash = hex.EncodeToString(legacyHash)
+	wd.PasswordHashVersion = 0
+
+	data, err = json.MarshalIndent(wd, "", "  ")
+	if err != nil {
+		t.Fatalf("failed to serialize wallet file: %v", err)
+	}
+	if err := os.WriteFile(walletPath, data, 0o600); err != nil {
+		t.Fatalf("failed to rewrite wallet file: %v", err)
+	}
+
+	w2, err := NewWallet(tmpDir, &chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("failed to reload wallet: %v", err)
+	}
+
+	if err := w2.Unlock(password); err != nil {
+		t.Fatalf("failed to unlock legacy wallet: %v", err)
+	}
+	if !w2.HasKey(addr) {
+		t.Fatalf("expected key %s after unlock", addr)
 	}
 }
 

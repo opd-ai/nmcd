@@ -34,6 +34,20 @@ const (
 
 	// nonceLen is the length of the GCM nonce in bytes
 	nonceLen = 12
+
+	// legacyPasswordHashVersion identifies wallet password hashes created with the
+	// original scrypt work factor before password hash versioning was introduced.
+	legacyPasswordHashVersion = 1
+
+	// currentPasswordHashVersion identifies wallet password hashes created with
+	// the current default scrypt work factor.
+	currentPasswordHashVersion = 2
+
+	// legacyPasswordHashN is the original wallet password-hash scrypt work factor.
+	legacyPasswordHashN = 16384
+
+	// currentPasswordHashN is the current wallet password-hash scrypt work factor.
+	currentPasswordHashN = 65536
 )
 
 // encryptedData represents an encrypted blob with its salt and nonce.
@@ -193,13 +207,37 @@ func validatePassword(password string) error {
 	return nil
 }
 
+func passwordHashScryptN(version int) (int, error) {
+	switch version {
+	case 0, legacyPasswordHashVersion:
+		return legacyPasswordHashN, nil
+	case currentPasswordHashVersion:
+		return currentPasswordHashN, nil
+	default:
+		return 0, fmt.Errorf("unsupported password hash version: %d", version)
+	}
+}
+
+// hashPasswordWithVersion creates a non-reversible password hash for verification
+// using the scrypt work factor associated with the stored password hash version.
+func hashPasswordWithVersion(password []byte, salt []byte, version int) ([]byte, error) {
+	n, err := passwordHashScryptN(version)
+	if err != nil {
+		return nil, err
+	}
+
+	hash, err := scrypt.Key(password, salt, n, 8, 1, 32)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash password: %w", err)
+	}
+	return hash, nil
+}
+
 // hashPassword creates a non-reversible hash of a password for verification.
 // Uses scrypt with a random per-wallet salt to prevent rainbow table attacks.
 // The salt must be stored alongside the hash in the wallet file.
 func hashPassword(password []byte, salt []byte) []byte {
-	// Use lighter scrypt parameters for verification (faster unlock)
-	// N=16384 is strong enough to resist brute-force when combined with a unique salt
-	hash, err := scrypt.Key(password, salt, 16384, 8, 1, 32)
+	hash, err := hashPasswordWithVersion(password, salt, currentPasswordHashVersion)
 	if err != nil {
 		panic(fmt.Sprintf("scrypt password hashing failed with fixed parameters: %v", err))
 	}
