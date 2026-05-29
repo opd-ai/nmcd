@@ -580,19 +580,19 @@ func BuildNameUpdateScript(name, value string, pubKeyHash []byte) ([]byte, error
 
 	script := make([]byte, 0, 128)
 	script = append(script, opNameUpdate)
-	
+
 	nameBytes, err := pushData([]byte(name))
 	if err != nil {
 		return nil, fmt.Errorf("failed to push name: %w", err)
 	}
 	script = append(script, nameBytes...)
-	
+
 	valueBytes, err := pushData([]byte(value))
 	if err != nil {
 		return nil, fmt.Errorf("failed to push value: %w", err)
 	}
 	script = append(script, valueBytes...)
-	
+
 	script = append(script, op2Drop, opDrop)
 	script = appendP2PKHScript(script, pubKeyHash)
 
@@ -617,13 +617,13 @@ func BuildNameNewScript(hash, pubKeyHash []byte) ([]byte, error) {
 
 	script := make([]byte, 0, 64)
 	script = append(script, opNameNew)
-	
+
 	hashBytes, err := pushData(hash)
 	if err != nil {
 		return nil, fmt.Errorf("failed to push hash: %w", err)
 	}
 	script = append(script, hashBytes...)
-	
+
 	script = append(script, op2Drop)
 	script = appendP2PKHScript(script, pubKeyHash)
 
@@ -658,25 +658,25 @@ func BuildNameFirstUpdateScript(name, randHex, value string, pubKeyHash []byte) 
 
 	script := make([]byte, 0, 256)
 	script = append(script, opNameFirstUpdate)
-	
+
 	nameBytes, err := pushData([]byte(name))
 	if err != nil {
 		return nil, fmt.Errorf("failed to push name: %w", err)
 	}
 	script = append(script, nameBytes...)
-	
+
 	randBytes2, err := pushData(randBytes) // Push decoded bytes, not hex string
 	if err != nil {
 		return nil, fmt.Errorf("failed to push rand: %w", err)
 	}
 	script = append(script, randBytes2...)
-	
+
 	valueBytes, err := pushData([]byte(value))
 	if err != nil {
 		return nil, fmt.Errorf("failed to push value: %w", err)
 	}
 	script = append(script, valueBytes...)
-	
+
 	script = append(script, op2Drop, op2Drop)
 	script = appendP2PKHScript(script, pubKeyHash)
 

@@ -545,7 +545,7 @@ func TestReadPushData(t *testing.T) {
 		data := []byte("test")
 		script := []byte{0x4e, 0x04, 0x00, 0x00, 0x00}
 		script = append(script, data...)
-		
+
 		result, offset, err := readPushData(script, 0)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
