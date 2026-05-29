@@ -186,8 +186,8 @@ func (bc *BlockChain) SetBlockAuxPowFromBytes(blockHash *chainhash.Hash, seriali
 	}
 
 	// Extract version from header (bytes 0-3, little-endian)
-	version := int32(serializedBlock[0]) | int32(serializedBlock[1])<<8 |
-		int32(serializedBlock[2])<<16 | int32(serializedBlock[3])<<24
+	version := uint32(serializedBlock[0]) | uint32(serializedBlock[1])<<8 |
+		uint32(serializedBlock[2])<<16 | uint32(serializedBlock[3])<<24
 
 	hasAuxPowBit := (version & config.AuxPowVersionBit) != 0
 	if !hasAuxPowBit {
@@ -755,8 +755,10 @@ func (bc *BlockChain) validateNameOutputs(msgTx *wire.MsgTx, height int32, ctx *
 			return err
 		}
 
+		// Consensus validation: only enforce consensus constraints, not local policies
+		// This allows nmcd to accept valid mainnet blocks with non-JSON, non-UTF8, or non-namespace values
 		if op != namedb.NameNew {
-			if err := validateNameFormat(name, value); err != nil {
+			if err := validateConsensusNameFormat(name, value); err != nil {
 				return fmt.Errorf("%w (name: '%s', tx: %s)", err, name, txHash)
 			}
 		}
@@ -1528,10 +1530,11 @@ func (bc *BlockChain) validateNameOperationsInTx(tx *wire.MsgTx, currentHeight i
 }
 
 // validateNameOperation validates a specific name operation type.
-// The consensus value-size limit (1023 bytes) is enforced by validateNameFormat()
-// during consensus validation (applies to both blocks and mempool).
-// The UI limit (520 bytes) is enforced by RPC/wallet/client APIs, not by mempool policy,
-// matching upstream Namecoin Core's behavior.
+// Uses consensus-critical validation only (name/value length checks).
+// Strict format validation (namespace prefixes, JSON encoding, UTF-8) is applied
+// only during local name creation (wallet/RPC), not during consensus validation,
+// allowing nmcd to accept valid mainnet blocks that contain arbitrary namespace prefixes
+// and non-JSON/non-UTF8 values.
 func (bc *BlockChain) validateNameOperation(op namedb.NameOperation, name, value string, extra []byte, tx *wire.MsgTx, currentHeight int32) error {
 	switch op {
 	case namedb.NameNew:
@@ -1552,7 +1555,9 @@ func (bc *BlockChain) validateNameNew(commitHash []byte) error {
 	return nil
 }
 
-// validateNameFirstUpdate validates NAME_FIRSTUPDATE operations.
+// validateNameFirstUpdate validates NAME_FIRSTUPDATE operations in the mempool.
+// Uses consensus validation constraints only, allowing non-JSON and non-UTF8 values
+// to pass through the mempool, consistent with mainnet Namecoin behavior.
 func (bc *BlockChain) validateNameFirstUpdate(name, value string, extra []byte, currentHeight int32) error {
 	if existingRecord, err := bc.nameDB.GetName(name); err == nil {
 		if existingRecord.ExpiresAt >= currentHeight {
@@ -1585,14 +1590,17 @@ func (bc *BlockChain) validateNameFirstUpdate(name, value string, extra []byte, 
 			config.MaxBlocksBeforeFirstUpdate, blocksSinceNameNew)
 	}
 
-	if err := validateNameFormat(name, value); err != nil {
+	// Use consensus validation: accept blocks with non-JSON/non-UTF8 values
+	if err := validateConsensusNameFormat(name, value); err != nil {
 		return fmt.Errorf("invalid name format: %w", err)
 	}
 
 	return nil
 }
 
-// validateNameUpdate validates NAME_UPDATE operations.
+// validateNameUpdate validates NAME_UPDATE operations in the mempool.
+// Uses consensus validation constraints only, allowing non-JSON and non-UTF8 values
+// to pass through the mempool, consistent with mainnet Namecoin behavior.
 func (bc *BlockChain) validateNameUpdate(name, value string, tx *wire.MsgTx, currentHeight int32) error {
 	record, err := bc.nameDB.GetName(name)
 	if err != nil {
@@ -1624,7 +1632,8 @@ func (bc *BlockChain) validateNameUpdate(name, value string, tx *wire.MsgTx, cur
 		return fmt.Errorf("name_update does not spend current name UTXO: name theft attempt for %s", name)
 	}
 
-	if err := validateNameFormat(name, value); err != nil {
+	// Use consensus validation: accept blocks with non-JSON/non-UTF8 values
+	if err := validateConsensusNameFormat(name, value); err != nil {
 		return fmt.Errorf("invalid name format: %w", err)
 	}
 

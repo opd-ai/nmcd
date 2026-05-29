@@ -137,6 +137,7 @@ func (s *Server) walletPassphrase(req *Request) *Response {
 }
 
 // parsePassphraseTimeout extracts the optional timeout parameter (default 60 seconds).
+// The timeout is validated to be within a reasonable range to prevent Duration overflow.
 func parsePassphraseTimeout(params []interface{}, reqID interface{}) (int, *Response) {
 	if len(params) <= 1 {
 		return 60, nil
@@ -148,6 +149,13 @@ func parsePassphraseTimeout(params []interface{}, reqID interface{}) (int, *Resp
 	timeout := int(timeoutFloat)
 	if timeout <= 0 {
 		return 0, errorResponse(reqID, -32602, "Invalid timeout: must be positive")
+	}
+	// Prevent Duration overflow: reject timeouts > 1 year (365*86400 = 31536000 seconds)
+	// time.Duration is int64 nanoseconds, max value 9223372036854775807
+	// 1 year in seconds fits safely: 31536000 * 1e9 = 3.15e16 < 9.22e18
+	const maxTimeout = 31536000 // 365 days in seconds
+	if timeout > maxTimeout {
+		return 0, errorResponse(reqID, -32602, "Invalid timeout: must be <= 1 year")
 	}
 	return timeout, nil
 }

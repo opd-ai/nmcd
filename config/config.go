@@ -23,8 +23,10 @@ const (
 	// MaxNameLength is the maximum length of a name in bytes
 	MaxNameLength = 255
 
-	// MaxValueLength is the maximum length of a value in bytes
-	MaxValueLength = 1023
+	// MaxValueLength is the maximum length of a value in bytes.
+	// Matches Namecoin consensus limit (MAX_VALUE_LENGTH = 520 bytes).
+	// See: https://github.com/namecoin/namecoin-core/blob/master/src/script/standard.h
+	MaxValueLength = 520
 
 	// DustLimit is the minimum output value for name operations (in satoshis).
 	// This follows Bitcoin's standard dust limit for P2PKH outputs (546 satoshis).
@@ -72,11 +74,8 @@ const (
 	NamecoinProtocolVersion = 70015
 
 	// MaxValueLengthUI is the maximum value size for user-facing operations (UI limit).
-	// Matches Namecoin Core's MAX_VALUE_LENGTH_UI constant (520 bytes).
-	// This limit is enforced in wallet, RPC, and client APIs to prevent users from
-	// creating transactions with values that exceed the recommended size.
-	// Note: The consensus limit (MaxValueLength) is 1023 bytes, which is more permissive.
-	// Values between 520-1023 bytes are valid on-chain but discouraged by the UI.
+	// Note: The consensus limit (MaxValueLength) is 520 bytes.
+	// Values larger than MaxValueLength are not valid on the network.
 	MaxValueLengthUI = 520
 )
 

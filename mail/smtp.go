@@ -21,6 +21,9 @@ var errMessageSizeExceeded = errors.New("message exceeds maximum size")
 // This prevents slow-loris attacks where a client sends data very slowly.
 const perReadTimeout = 30 * time.Second
 
+// upstreamDialTimeout is the timeout for connecting to the upstream SMTP server.
+const upstreamDialTimeout = 15 * time.Second
+
 type messageSizeExceededError struct {
 	maxSize int64
 }
@@ -387,6 +390,12 @@ func (s *smtpSession) handleMailFrom(cmd string) error {
 		return s.writeLine("501 Syntax error in MAIL FROM")
 	}
 
+	// Validate format: must contain @ for consistency with RCPT TO
+	atIndex := strings.LastIndex(addr, "@")
+	if atIndex == -1 {
+		return s.writeLine("501 Invalid email address format")
+	}
+
 	// Store the address in lowercase for consistency
 	s.from = strings.ToLower(addr)
 	return s.writeLine("250 OK")
@@ -463,8 +472,9 @@ func (s *smtpSession) handleData() error {
 	if failCount == 0 {
 		return s.writeLine("250 OK: Message accepted for delivery")
 	} else if successCount == 0 {
-		// All recipients failed
-		return s.writeLine(fmt.Sprintf("554 Transaction failed: %v", lastErr))
+		// All recipients failed - log details server-side but return generic message to client
+		s.relay.logger.Printf("Failed to forward message to any recipient: %v", lastErr)
+		return s.writeLine("554 Transaction failed")
 	} else {
 		// Partial success
 		return s.writeLine(fmt.Sprintf("250 OK: Delivered to %d of %d recipients", successCount, successCount+failCount))
@@ -494,6 +504,7 @@ func (s *smtpSession) forwardMessage(ctx context.Context, from, to string, body 
 }
 
 // connectUpstream connects to the upstream SMTP server, optionally upgrading to TLS and authenticating.
+// All connection and I/O operations are bounded by a timeout to prevent indefinite hangs on dead upstreams.
 func (s *smtpSession) connectUpstream() (*smtp.Client, error) {
 	addr := fmt.Sprintf("%s:%d", s.relay.config.UpstreamHost, s.relay.config.UpstreamPort)
 
@@ -513,7 +524,8 @@ func (s *smtpSession) connectUpstream() (*smtp.Client, error) {
 		tlsConfig := &tls.Config{
 			ServerName: s.relay.config.UpstreamHost,
 		}
-		conn, err := tls.Dial("tcp", addr, tlsConfig)
+		dialer := &net.Dialer{Timeout: upstreamDialTimeout}
+		conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
 		if err != nil {
 			return nil, fmt.Errorf("failed to connect to upstream SMTP with implicit TLS: %w", err)
 		}
@@ -525,7 +537,7 @@ func (s *smtpSession) connectUpstream() (*smtp.Client, error) {
 
 	case TLSModeSTARTTLS:
 		// Connect in cleartext then upgrade with STARTTLS
-		client, err = smtp.Dial(addr)
+		client, err = dialSMTPWithTimeout(addr, upstreamDialTimeout)
 		if err != nil {
 			return nil, fmt.Errorf("failed to connect to upstream SMTP: %w", err)
 		}
@@ -539,7 +551,7 @@ func (s *smtpSession) connectUpstream() (*smtp.Client, error) {
 
 	case TLSModeDisabled:
 		// Connect without TLS (insecure)
-		client, err = smtp.Dial(addr)
+		client, err = dialSMTPWithTimeout(addr, upstreamDialTimeout)
 		if err != nil {
 			return nil, fmt.Errorf("failed to connect to upstream SMTP: %w", err)
 		}
@@ -562,6 +574,18 @@ func (s *smtpSession) connectUpstream() (*smtp.Client, error) {
 	}
 
 	return client, nil
+}
+
+// dialSMTPWithTimeout connects to an SMTP server with a timeout.
+// This is a wrapper around smtp.Dial that adds a timeout to prevent indefinite hangs.
+func dialSMTPWithTimeout(addr string, timeout time.Duration) (*smtp.Client, error) {
+	dialer := &net.Dialer{Timeout: timeout}
+	conn, err := dialer.Dial("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	host, _, _ := net.SplitHostPort(addr)
+	return smtp.NewClient(conn, host)
 }
 
 // sendEnvelope sends the SMTP envelope (MAIL FROM and RCPT TO).

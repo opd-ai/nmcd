@@ -337,7 +337,14 @@ func (pm *PeerManager) onInv(p *peer.Peer, msg *wire.MsgInv) {
 			}
 			// For blocks, the blockchain will handle duplicates during ProcessBlock
 			// Add to getdata request
-			gdmsg.AddInvVect(inv)
+			if err := gdmsg.AddInvVect(inv); err != nil {
+				pm.logger.Debug("failed to add inventory vector",
+					"error", err,
+					"type", inv.Type,
+					"hash", inv.Hash.String(),
+					"peer_id", p.Addr())
+				break
+			}
 		default:
 			// Ignore other inventory types
 			pm.logger.Debug("ignoring inventory type",
