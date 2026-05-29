@@ -4837,3 +4837,90 @@ func TestGetAuxPowActivationHeight(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateConsensusNameFormat verifies that consensus validation accepts
+// non-JSON and arbitrary namespace values, matching mainnet Namecoin behavior.
+// This is critical for IBD: mainnet blocks contain d/ names with non-JSON values.
+func TestValidateConsensusNameFormat(t *testing.T) {
+	testCases := []struct {
+		name      string
+		inputName string
+		value     string
+		wantErr   bool
+		desc      string
+	}{
+		{
+			name:      "JSON d/ value",
+			inputName: "d/example",
+			value:     `{"ip":"1.2.3.4"}`,
+			wantErr:   false,
+			desc:      "consensus allows JSON d/ values",
+		},
+		{
+			name:      "Non-JSON d/ value",
+			inputName: "d/example",
+			value:     `not json at all`,
+			wantErr:   false,
+			desc:      "consensus allows non-JSON d/ values (mainnet compatibility)",
+		},
+		{
+			name:      "Non-namespace name",
+			inputName: "arbitrary/name",
+			value:     `{"data":"test"}`,
+			wantErr:   false,
+			desc:      "consensus allows arbitrary namespace prefixes",
+		},
+		{
+			name:      "No namespace prefix",
+			inputName: "justname",
+			value:     `value`,
+			wantErr:   false,
+			desc:      "consensus allows names without namespace prefix",
+		},
+		{
+			name:      "Non-UTF8 value",
+			inputName: "d/example",
+			value:     string([]byte{0xFF, 0xFE}),
+			wantErr:   false,
+			desc:      "consensus allows non-UTF8 values",
+		},
+		{
+			name:      "Valid max-length name",
+			inputName: "d/" + strings.Repeat("x", 253),
+			value:     `value`,
+			wantErr:   false,
+			desc:      "name at exactly 255 bytes (max)",
+		},
+		{
+			name:      "Valid max-length value",
+			inputName: "d/name",
+			value:     strings.Repeat("x", 1023),
+			wantErr:   false,
+			desc:      "value at exactly 1023 bytes (consensus max)",
+		},
+		{
+			name:      "Name too long (>255)",
+			inputName: "d/" + strings.Repeat("x", 254),
+			value:     `value`,
+			wantErr:   true,
+			desc:      "name exceeding 255-byte consensus limit",
+		},
+		{
+			name:      "Value too long (>1023)",
+			inputName: "d/name",
+			value:     strings.Repeat("x", 1024),
+			wantErr:   true,
+			desc:      "value exceeding 1023-byte consensus limit",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateConsensusNameFormat(tc.inputName, tc.value)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("validateConsensusNameFormat(%q, %q) = %v, want error=%v (%s)",
+					tc.inputName, tc.value, err, tc.wantErr, tc.desc)
+			}
+		})
+	}
+}

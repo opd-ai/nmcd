@@ -377,13 +377,41 @@ func readPushData(script []byte, offset int) ([]byte, int, error) {
 	return data, offset + dataLen, nil
 }
 
-// validateNameFormat validates name and value format
+// validateConsensusNameFormat validates only the consensus-critical constraints for a name operation.
+// This function enforces only what Namecoin Core consensus enforces:
+// - Name length must be ≤ 255 bytes
+// - Value length must be ≤ MaxValueLength (1023 bytes for compatibility)
+// It does NOT enforce namespace prefixes, JSON encoding, or UTF-8 validation,
+// as these are local policies, not part of the consensus protocol.
+// Mainnet blocks may contain names without d/, id/, p/ prefixes and values
+// that are not UTF-8 or valid JSON; accepting these is required for IBD.
+func validateConsensusNameFormat(name, value string) error {
+	// Validate name length (consensus-critical)
+	if len(name) == 0 || len(name) > config.MaxNameLength {
+		return fmt.Errorf("invalid name length: %d (max: %d)", len(name), config.MaxNameLength)
+	}
+
+	// Validate value length (consensus-critical)
+	if len(value) > config.MaxValueLength {
+		return fmt.Errorf("value too large: %d bytes (max: %d)", len(value), config.MaxValueLength)
+	}
+
+	return nil
+}
+
+// validateNameFormat validates name and value format for local operations (wallet/RPC).
+// This enforces stricter policies than consensus:
+// - Namespace prefix validation (d/, id/, p/)
+// - JSON encoding requirement for d/ and id/ namespaces
+// - UTF-8 encoding requirement for all values
+// These constraints are applied to locally-created transactions but NOT enforced
+// during consensus validation, allowing nmcd to accept valid mainnet blocks.
 func validateNameFormat(name, value string) error {
 	if len(name) == 0 || len(name) > config.MaxNameLength {
 		return fmt.Errorf("invalid name length: %d (max: %d)", len(name), config.MaxNameLength)
 	}
 
-	// Validate namespace prefix
+	// Validate namespace prefix (local policy, not consensus)
 	if !config.IsValidNamespace(name) {
 		return fmt.Errorf("invalid namespace: name must start with a valid namespace prefix (d/, id/, p/)")
 	}
@@ -407,8 +435,7 @@ func validateNameFormat(name, value string) error {
 		return fmt.Errorf("value too large: %d bytes (max: %d)", len(value), config.MaxValueLength)
 	}
 
-	// Validate value encoding based on namespace
-	// Per Namecoin protocol, different namespaces have different encoding requirements
+	// Validate value encoding based on namespace (local policy, not consensus)
 	if err := validateValueEncoding(name, value); err != nil {
 		return err
 	}
