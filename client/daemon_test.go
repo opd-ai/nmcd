@@ -436,6 +436,7 @@ func TestDaemonClient_ListNames(t *testing.T) {
 					"txid":       "tx1",
 					"height":     100,
 					"expires_in": 5000,
+					"expired":    false,
 					"address":    "N1a",
 				},
 				{
@@ -444,6 +445,7 @@ func TestDaemonClient_ListNames(t *testing.T) {
 					"txid":       "tx2",
 					"height":     200,
 					"expires_in": 4000,
+					"expired":    false,
 					"address":    "N1b",
 				},
 				{
@@ -452,6 +454,7 @@ func TestDaemonClient_ListNames(t *testing.T) {
 					"txid":       "tx3",
 					"height":     300,
 					"expires_in": 3000,
+					"expired":    false,
 					"address":    "N1a",
 				},
 				{
@@ -460,6 +463,7 @@ func TestDaemonClient_ListNames(t *testing.T) {
 					"txid":       "tx4",
 					"height":     50,
 					"expires_in": -100, // expired
+					"expired":    true,
 					"address":    "N1c",
 				},
 			}, nil
