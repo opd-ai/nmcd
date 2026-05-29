@@ -627,11 +627,11 @@ func TestFormatNameRecordsDirectly(t *testing.T) {
 		t.Error("Active name should not be expired")
 	}
 
-	// Expired name: expiresAt=10 <= currentHeight=50, so expires_in should be clamped to 0
+	// Expired name: expiresAt=10 < currentHeight=50, so expires_in should be negative (-40)
 	expiredEntry := result[1]
 	if expiresIn, ok := expiredEntry["expires_in"].(int32); ok {
-		if expiresIn != 0 {
-			t.Errorf("Expired name: expected expires_in=0, got %d", expiresIn)
+		if expiresIn != -40 {
+			t.Errorf("Expired name: expected expires_in=-40, got %d", expiresIn)
 		}
 	}
 	if expired, ok := expiredEntry["expired"].(bool); !ok || !expired {

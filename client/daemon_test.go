@@ -436,6 +436,7 @@ func TestDaemonClient_ListNames(t *testing.T) {
 					"txid":       "tx1",
 					"height":     100,
 					"expires_in": 5000,
+					"expired":    false,
 					"address":    "N1a",
 				},
 				{
@@ -444,6 +445,7 @@ func TestDaemonClient_ListNames(t *testing.T) {
 					"txid":       "tx2",
 					"height":     200,
 					"expires_in": 4000,
+					"expired":    false,
 					"address":    "N1b",
 				},
 				{
@@ -452,6 +454,7 @@ func TestDaemonClient_ListNames(t *testing.T) {
 					"txid":       "tx3",
 					"height":     300,
 					"expires_in": 3000,
+					"expired":    false,
 					"address":    "N1a",
 				},
 				{
@@ -460,10 +463,12 @@ func TestDaemonClient_ListNames(t *testing.T) {
 					"txid":       "tx4",
 					"height":     50,
 					"expires_in": -100, // expired
+					"expired":    true,
 					"address":    "N1c",
 				},
 			}, nil
 		}
+
 		return nil, &rpcError{Code: -32601, Message: "Method not found"}
 	}
 
@@ -550,6 +555,19 @@ func TestDaemonClient_ListNames(t *testing.T) {
 				t.Errorf("ListNames() first name = %v, want %v", records[0].Name, tt.wantFirst)
 			}
 		})
+	}
+}
+
+func TestNormalizeListFilter_DefaultsNegativeLimitWithoutMutation(t *testing.T) {
+	filter := &ListFilter{Limit: -1}
+
+	normalized := normalizeListFilter(filter)
+
+	if normalized.Limit != 100 {
+		t.Fatalf("normalizeListFilter() limit = %d, want 100", normalized.Limit)
+	}
+	if filter.Limit != -1 {
+		t.Fatalf("normalizeListFilter() mutated caller limit to %d", filter.Limit)
 	}
 }
 

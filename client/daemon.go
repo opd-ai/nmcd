@@ -571,6 +571,7 @@ func (c *DaemonClient) ListNames(ctx context.Context, filter *ListFilter) ([]*Na
 		TxID      string `json:"txid"`
 		Height    int32  `json:"height"`
 		ExpiresIn int32  `json:"expires_in"`
+		Expired   bool   `json:"expired"`
 		Address   string `json:"address"`
 	}
 
@@ -582,7 +583,7 @@ func (c *DaemonClient) ListNames(ctx context.Context, filter *ListFilter) ([]*Na
 
 	var records []*NameRecord
 	for _, item := range resp {
-		if !matchesListFilter(item.Name, item.Address, item.ExpiresIn, filter) {
+		if !matchesListFilter(item.Name, item.Address, item.Expired, filter) {
 			continue
 		}
 		records = append(records, &NameRecord{
@@ -603,18 +604,20 @@ func normalizeListFilter(filter *ListFilter) *ListFilter {
 	if filter == nil {
 		return &ListFilter{Limit: 100}
 	}
-	if filter.Limit == 0 {
-		filter.Limit = 100
+	// Create a copy to avoid mutating the caller-provided filter
+	normalized := *filter
+	if normalized.Limit <= 0 {
+		normalized.Limit = 100
 	}
-	if filter.Limit > 10000 {
-		filter.Limit = 10000
+	if normalized.Limit > 10000 {
+		normalized.Limit = 10000
 	}
-	return filter
+	return &normalized
 }
 
 // matchesListFilter checks whether a name record passes the filter criteria.
-func matchesListFilter(name, address string, expiresIn int32, filter *ListFilter) bool {
-	if !filter.IncludeExpired && expiresIn < 0 {
+func matchesListFilter(name, address string, expired bool, filter *ListFilter) bool {
+	if !filter.IncludeExpired && expired {
 		return false
 	}
 	if filter.Namespace != "" && !strings.HasPrefix(name, filter.Namespace) {

@@ -577,10 +577,12 @@ func TestEmbeddedClient_ListNames(t *testing.T) {
 		DataDir: tmpDir,
 		Network: "regtest",
 	}
+
 	client, err := NewEmbeddedClient(cfg)
 	if err != nil {
 		t.Fatalf("NewEmbeddedClient() error: %v", err)
 	}
+
 	defer client.Close()
 
 	// Insert test names
@@ -768,6 +770,20 @@ func TestEmbeddedClient_ListNames(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestEmbeddedClientNormalizeListFilter_DefaultsNegativeLimitWithoutMutation(t *testing.T) {
+	client := &EmbeddedClient{}
+	filter := &ListFilter{Limit: -1}
+
+	normalized := client.normalizeListFilter(filter)
+
+	if normalized.Limit != 100 {
+		t.Fatalf("normalizeListFilter() limit = %d, want 100", normalized.Limit)
+	}
+	if filter.Limit != -1 {
+		t.Fatalf("normalizeListFilter() mutated caller limit to %d", filter.Limit)
 	}
 }
 

@@ -868,15 +868,17 @@ func (c *EmbeddedClient) checkListNamesState(ctx context.Context) error {
 // normalizeListFilter applies defaults and caps to the filter.
 func (c *EmbeddedClient) normalizeListFilter(filter *ListFilter) *ListFilter {
 	if filter == nil {
-		filter = &ListFilter{Limit: 100}
+		return &ListFilter{Limit: 100}
 	}
-	if filter.Limit == 0 {
-		filter.Limit = 100
+	// Create a copy to avoid mutating the caller-provided filter
+	normalized := *filter
+	if normalized.Limit <= 0 {
+		normalized.Limit = 100
 	}
-	if filter.Limit > 10000 {
-		filter.Limit = 10000
+	if normalized.Limit > 10000 {
+		normalized.Limit = 10000
 	}
-	return filter
+	return &normalized
 }
 
 // filterAndConvertRecords applies filters and converts database records to client format.

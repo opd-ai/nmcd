@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -487,9 +488,6 @@ func (s *Server) nameList(req *Request) *Response {
 	for i, record := range names {
 		expiresIn := record.ExpiresAt - bestHeight
 		expired := expiresIn < 0
-		if expiresIn < 0 {
-			expiresIn = 0
-		}
 		result[i] = map[string]interface{}{
 			"name":       record.Name,
 			"value":      record.Value,
@@ -606,10 +604,14 @@ func parseNameScanParams(rawParams json.RawMessage, reqID interface{}) (string, 
 		if !ok {
 			return "", 0, errorResponse(reqID, -32602, "count must be a number")
 		}
-		count = int(countFloat)
-		if count <= 0 || count > 10000 {
+		// Reject non-integer values (e.g., 1.9 should be rejected, not silently truncated to 1)
+		if countFloat != math.Trunc(countFloat) {
+			return "", 0, errorResponse(reqID, -32602, "count must be an integer")
+		}
+		if countFloat < 1 || countFloat > 10000 {
 			return "", 0, errorResponse(reqID, -32602, "count must be between 1 and 10000")
 		}
+		count = int(countFloat)
 	}
 
 	return start, count, nil
@@ -621,9 +623,6 @@ func formatNameRecords(names []*namedb.NameRecord, currentHeight int32) []map[st
 	for i, record := range names {
 		expiresIn := record.ExpiresAt - currentHeight
 		expired := expiresIn < 0
-		if expiresIn < 0 {
-			expiresIn = 0
-		}
 		result[i] = map[string]interface{}{
 			"name":       record.Name,
 			"value":      record.Value,
