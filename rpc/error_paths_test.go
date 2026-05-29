@@ -273,6 +273,12 @@ func TestNameScanParamValidation(t *testing.T) {
 			expectError:    true,
 			expectErrorMsg: "count must be between 1 and 10000",
 		},
+		{
+			name:           "count too large before int conversion",
+			params:         []interface{}{"d/", 1e20},
+			expectError:    true,
+			expectErrorMsg: "count must be between 1 and 10000",
+		},
 	}
 
 	for _, tc := range tests {

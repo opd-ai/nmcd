@@ -608,10 +608,10 @@ func parseNameScanParams(rawParams json.RawMessage, reqID interface{}) (string, 
 		if countFloat != math.Trunc(countFloat) {
 			return "", 0, errorResponse(reqID, -32602, "count must be an integer")
 		}
-		count = int(countFloat)
-		if count <= 0 || count > 10000 {
+		if countFloat < 1 || countFloat > 10000 {
 			return "", 0, errorResponse(reqID, -32602, "count must be between 1 and 10000")
 		}
+		count = int(countFloat)
 	}
 
 	return start, count, nil

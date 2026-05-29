@@ -606,7 +606,7 @@ func normalizeListFilter(filter *ListFilter) *ListFilter {
 	}
 	// Create a copy to avoid mutating the caller-provided filter
 	normalized := *filter
-	if normalized.Limit == 0 {
+	if normalized.Limit <= 0 {
 		normalized.Limit = 100
 	}
 	if normalized.Limit > 10000 {

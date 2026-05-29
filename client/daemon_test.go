@@ -468,6 +468,7 @@ func TestDaemonClient_ListNames(t *testing.T) {
 				},
 			}, nil
 		}
+
 		return nil, &rpcError{Code: -32601, Message: "Method not found"}
 	}
 
@@ -554,6 +555,19 @@ func TestDaemonClient_ListNames(t *testing.T) {
 				t.Errorf("ListNames() first name = %v, want %v", records[0].Name, tt.wantFirst)
 			}
 		})
+	}
+}
+
+func TestNormalizeListFilter_DefaultsNegativeLimitWithoutMutation(t *testing.T) {
+	filter := &ListFilter{Limit: -1}
+
+	normalized := normalizeListFilter(filter)
+
+	if normalized.Limit != 100 {
+		t.Fatalf("normalizeListFilter() limit = %d, want 100", normalized.Limit)
+	}
+	if filter.Limit != -1 {
+		t.Fatalf("normalizeListFilter() mutated caller limit to %d", filter.Limit)
 	}
 }
 
