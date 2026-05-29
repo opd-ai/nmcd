@@ -225,39 +225,11 @@ func NewServer(cfg *Config) (*Server, error) {
 		return nil, fmt.Errorf("failed to listen on %s: %w", cfg.ListenAddr, err)
 	}
 
-	// Warn when both credentials are empty and the listen address is not loopback.
-	// An unprotected RPC server on a non-loopback address exposes wallet and name
-	// operations to anyone with network access.
-	if cfg.RPCUser == "" && cfg.RPCPassword == "" {
-		if host, _, splitErr := net.SplitHostPort(cfg.ListenAddr); splitErr == nil {
-			ip := net.ParseIP(host)
-			if !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
-				log.Printf("WARNING: RPC server listening on %s with no credentials configured — "+
-					"all RPC methods are accessible without authentication", cfg.ListenAddr)
-			}
-		}
-	}
-
-	// Set default rate limit if not configured
-	rateLimit := cfg.RateLimit
-	if rateLimit == 0 {
-		rateLimit = defaultRateLimit
-	}
-
-	// Set default max request size if not configured
-	maxRequestSize := cfg.MaxRequestSize
-	if maxRequestSize == 0 {
-		maxRequestSize = defaultMaxRequestSize
-	}
-
-	// Initialize logger for RPC server
-	logger := logging.GetDefault().WithComponent("rpc")
-
-	// Generate a per-process HMAC key for constant-time credential comparison.
-	authKey := make([]byte, 32)
-	if _, err := rand.Read(authKey); err != nil {
+	warnIfUnprotectedRPC(cfg)
+	authKey, err := generateAuthKey()
+	if err != nil {
 		listener.Close()
-		return nil, fmt.Errorf("failed to generate auth key: %w", err)
+		return nil, err
 	}
 
 	s := &Server{
@@ -268,15 +240,11 @@ func NewServer(cfg *Config) (*Server, error) {
 		rpcUser:        cfg.RPCUser,
 		rpcPassword:    cfg.RPCPassword,
 		authKey:        authKey,
-		rateLimiter:    newRateLimiter(rateLimit),
-		maxRequestSize: maxRequestSize,
-		logger:         logger,
+		rateLimiter:    newRateLimiter(resolveRateLimit(cfg.RateLimit)),
+		maxRequestSize: resolveMaxRequestSize(cfg.MaxRequestSize),
+		logger:         logging.GetDefault().WithComponent("rpc"),
 	}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", s.withPanicRecovery(s.handleRequest))
-	mux.HandleFunc("/health", s.withPanicRecovery(s.handleHealth))
-	mux.HandleFunc("/ready", s.withPanicRecovery(s.handleReady))
+	mux := newRPCMux(s)
 
 	s.server = &http.Server{
 		Handler:           mux,
@@ -287,6 +255,48 @@ func NewServer(cfg *Config) (*Server, error) {
 	}
 
 	return s, nil
+}
+
+func warnIfUnprotectedRPC(cfg *Config) {
+	if cfg.RPCUser != "" || cfg.RPCPassword != "" {
+		return
+	}
+	if host, _, splitErr := net.SplitHostPort(cfg.ListenAddr); splitErr == nil {
+		ip := net.ParseIP(host)
+		if !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
+			log.Printf("WARNING: RPC server listening on %s with no credentials configured — all RPC methods are accessible without authentication", cfg.ListenAddr)
+		}
+	}
+}
+
+func generateAuthKey() ([]byte, error) {
+	authKey := make([]byte, 32)
+	if _, err := rand.Read(authKey); err != nil {
+		return nil, fmt.Errorf("failed to generate auth key: %w", err)
+	}
+	return authKey, nil
+}
+
+func resolveRateLimit(rateLimit int) int {
+	if rateLimit == 0 {
+		return defaultRateLimit
+	}
+	return rateLimit
+}
+
+func resolveMaxRequestSize(maxRequestSize int64) int64 {
+	if maxRequestSize == 0 {
+		return defaultMaxRequestSize
+	}
+	return maxRequestSize
+}
+
+func newRPCMux(s *Server) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", s.withPanicRecovery(s.handleRequest))
+	mux.HandleFunc("/health", s.withPanicRecovery(s.handleHealth))
+	mux.HandleFunc("/ready", s.withPanicRecovery(s.handleReady))
+	return mux
 }
 
 // Start starts the RPC server and returns an error channel
@@ -529,66 +539,107 @@ func (s *Server) writeJSONResponse(w http.ResponseWriter, resp *Response, method
 // are set once during NewServer() and never modified. This allows parallel processing
 // of concurrent RPC requests, improving throughput significantly.
 func (s *Server) processRequest(req *Request) *Response {
-	switch req.Method {
+	if handler := s.lookupInfoHandler(req.Method); handler != nil {
+		return handler(req)
+	}
+	if handler := s.lookupNameHandler(req.Method); handler != nil {
+		return handler(req)
+	}
+	if handler := s.lookupWalletHandler(req.Method); handler != nil {
+		return handler(req)
+	}
+	if handler := s.lookupBlockHandler(req.Method); handler != nil {
+		return handler(req)
+	}
+	return methodNotFoundResponse(req.ID)
+}
+
+func (s *Server) lookupInfoHandler(method string) func(*Request) *Response {
+	switch method {
 	case "getinfo":
-		return s.getInfo(req)
+		return s.getInfo
 	case "getblockcount":
-		return s.getBlockCount(req)
+		return s.getBlockCount
 	case "getbestblockhash":
-		return s.getBestBlockHash(req)
+		return s.getBestBlockHash
 	case "getconnectioncount":
-		return s.getConnectionCount(req)
+		return s.getConnectionCount
 	case "getpeerinfo":
-		return s.getPeerInfo(req)
+		return s.getPeerInfo
 	case "getmetrics":
-		return s.getMetrics(req)
-	case "name_show":
-		return s.nameShow(req)
-	case "name_new":
-		return s.nameNew(req)
-	case "name_firstupdate":
-		return s.nameFirstUpdate(req)
-	case "name_update":
-		return s.nameUpdate(req)
-	case "name_list":
-		return s.nameList(req)
-	case "name_history":
-		return s.nameHistory(req)
-	case "name_scan":
-		return s.nameScan(req)
-	case "name_pending":
-		return s.namePending(req)
-	case "getnewaddress":
-		return s.getNewAddress(req)
-	case "listaddresses":
-		return s.listAddresses(req)
-	case "walletpassphrase":
-		return s.walletPassphrase(req)
-	case "walletlock":
-		return s.walletLock(req)
-	case "encryptwallet":
-		return s.encryptWallet(req)
-	case "getbalance":
-		return s.getBalance(req)
-	case "listunspent":
-		return s.listUnspent(req)
-	case "getblock":
-		return s.getBlock(req)
-	case "getblockhash":
-		return s.getBlockHash(req)
-	case "getrawtransaction":
-		return s.getRawTransaction(req)
-	case "sendrawtransaction":
-		return s.sendRawTransaction(req)
+		return s.getMetrics
 	default:
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32601,
-				Message: "Method not found",
-			},
-			ID: req.ID,
-		}
+		return nil
+	}
+}
+
+func (s *Server) lookupNameHandler(method string) func(*Request) *Response {
+	switch method {
+	case "name_show":
+		return s.nameShow
+	case "name_new":
+		return s.nameNew
+	case "name_firstupdate":
+		return s.nameFirstUpdate
+	case "name_update":
+		return s.nameUpdate
+	case "name_list":
+		return s.nameList
+	case "name_history":
+		return s.nameHistory
+	case "name_scan":
+		return s.nameScan
+	case "name_pending":
+		return s.namePending
+	default:
+		return nil
+	}
+}
+
+func (s *Server) lookupWalletHandler(method string) func(*Request) *Response {
+	switch method {
+	case "getnewaddress":
+		return s.getNewAddress
+	case "listaddresses":
+		return s.listAddresses
+	case "walletpassphrase":
+		return s.walletPassphrase
+	case "walletlock":
+		return s.walletLock
+	case "encryptwallet":
+		return s.encryptWallet
+	case "getbalance":
+		return s.getBalance
+	case "listunspent":
+		return s.listUnspent
+	default:
+		return nil
+	}
+}
+
+func (s *Server) lookupBlockHandler(method string) func(*Request) *Response {
+	switch method {
+	case "getblock":
+		return s.getBlock
+	case "getblockhash":
+		return s.getBlockHash
+	case "getrawtransaction":
+		return s.getRawTransaction
+	case "sendrawtransaction":
+		return s.sendRawTransaction
+	default:
+		return nil
+	}
+}
+
+func methodNotFoundResponse(reqID interface{}) *Response {
+	return &Response{
+		Jsonrpc: "2.0",
+		Error: &Error{
+			Code:    -32601,
+			Message: "Method not found",
+		},
+		ID: reqID,
 	}
 }
 
@@ -805,60 +856,49 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // Returns 200 OK if sync is complete, 503 Service Unavailable if still syncing
 // This endpoint is suitable for Kubernetes readiness probes
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
-	// Only allow GET requests
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// No lock needed - blockchain, peerMgr are immutable after initialization
-
-	// Set Content-Type header before any writes
 	w.Header().Set("Content-Type", "application/json")
+	statusCode, resp := s.readyStatus()
+	writeHealthResponse(w, statusCode, resp, "ready")
+}
 
-	// Check if blockchain is initialized
+func (s *Server) readyStatus() (int, HealthResponse) {
 	if s.blockchain == nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		if err := json.NewEncoder(w).Encode(HealthResponse{
-			Status:  "initializing",
-			Syncing: true,
-		}); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to encode ready response: %v\n", err)
-		}
-		return
+		return http.StatusServiceUnavailable, HealthResponse{Status: "initializing", Syncing: true}
 	}
 
-	// Get current state
 	best := s.blockchain.BestSnapshot()
-	peers := 0
-	syncing := false
-	if s.peerMgr != nil {
-		peers = s.peerMgr.GetConnectedPeers()
-		syncing = s.peerMgr.IsSyncing()
-	}
-
-	// If syncing, return 503 Service Unavailable
+	peers, syncing := s.readyPeerState()
 	if syncing {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		if err := json.NewEncoder(w).Encode(HealthResponse{
+		return http.StatusServiceUnavailable, HealthResponse{
 			Status:      "syncing",
 			BlockHeight: best.Height,
 			Peers:       peers,
 			Syncing:     true,
-		}); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to encode ready response: %v\n", err)
 		}
-		return
 	}
-
-	// Ready - sync is complete
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(HealthResponse{
+	return http.StatusOK, HealthResponse{
 		Status:      "ready",
 		BlockHeight: best.Height,
 		Peers:       peers,
 		Syncing:     false,
-	}); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to encode ready response: %v\n", err)
+	}
+}
+
+func (s *Server) readyPeerState() (int, bool) {
+	if s.peerMgr == nil {
+		return 0, false
+	}
+	return s.peerMgr.GetConnectedPeers(), s.peerMgr.IsSyncing()
+}
+
+func writeHealthResponse(w http.ResponseWriter, statusCode int, resp HealthResponse, endpoint string) {
+	w.WriteHeader(statusCode)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to encode %s response: %v\n", endpoint, err)
 	}
 }

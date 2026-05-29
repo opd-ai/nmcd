@@ -270,116 +270,83 @@ func (mb *MerkleBranch) SerializeMerkleBranch(w io.Writer) error {
 //   - nil if validation succeeds
 //   - error describing validation failure
 func (ap *AuxPow) ValidateAuxPow(blockHash, targetDifficulty *chainhash.Hash) error {
-	// Step 1: Verify parent block meets proof-of-work difficulty target
-	// The parent block's hash must be less than or equal to the target difficulty
-	// Convert both hash and target to big.Int for comparison
+	if err := ap.validateParentDifficulty(targetDifficulty); err != nil {
+		return err
+	}
+	if err := ap.validateCoinbaseBranch(); err != nil {
+		return err
+	}
+	return ap.validateChainCommitment(blockHash)
+}
+
+func (ap *AuxPow) validateParentDifficulty(targetDifficulty *chainhash.Hash) error {
 	parentHash := ap.ParentBlock.BlockHash()
 	parentHashBig := blockchain.HashToBig(&parentHash)
 	targetBig := blockchain.HashToBig(targetDifficulty)
-
 	if parentHashBig.Cmp(targetBig) > 0 {
 		return fmt.Errorf("parent block hash %s does not meet difficulty target %s",
 			parentHash.String(), targetDifficulty.String())
 	}
+	return nil
+}
 
-	// Step 3: Verify coinbase merkle branch
-	// This proves the coinbase transaction is included in the parent block
+func (ap *AuxPow) validateCoinbaseBranch() error {
 	coinbaseTxHash := ap.CoinbaseTx.TxHash()
 	if !CheckMerkleBranch(&coinbaseTxHash, &ap.CoinbaseBranch, &ap.ParentBlock.MerkleRoot) {
 		return fmt.Errorf("coinbase merkle branch verification failed: coinbase tx not in parent block")
 	}
+	return nil
+}
 
-	// Step 4: Build the merkle root for the chain merkle tree
-	// This is the commitment to the aux block hash in the coinbase transaction.
-	// Per Namecoin spec, the aux block hash is committed in the coinbase outputs.
-	// We need to verify the chain merkle branch connects the aux block hash to
-	// this commitment root in the coinbase.
-
-	// The chain merkle root is computed from the coinbase transaction's outputs.
-	// For Namecoin, this is typically in a specific output that commits to the
-	// merkle root of all merge-mined chains.
-	//
-	// However, the exact format varies. A common approach is to use the coinbase
-	// transaction hash itself as the root (since the aux block hash must appear
-	// somewhere in the coinbase to be committed).
-	//
-	// For a simplified but correct implementation that matches most merged mining:
-	// We verify that the aux block hash, when walked up the chain merkle branch,
-	// produces a hash that appears in the coinbase transaction.
-
-	// The computed root should appear in the coinbase transaction's outputs
-	// Check if it matches any output script or the coinbase itself
-	// For simplicity and compatibility with various merge-mining formats,
-	// we verify that the merkle root computed appears in the coinbase transaction data.
-	//
-	// A stricter check would parse the specific output format, but this approach
-	// is more robust across different mining pool implementations.
-	coinbaseTxHash2 := ap.CoinbaseTx.TxHash()
-
-	// The chain merkle root should connect to the coinbase transaction
-	// In the standard format, the computed root from the chain merkle branch
-	// should match a specific commitment in the coinbase.
-	//
-	// For most merged mining implementations, we verify:
-	// CheckMerkleBranch(blockHash, ChainMerkleBranch, <root committed in coinbase>)
-	//
-	// The root is typically the coinbase tx hash itself or a specific output.
-	// For robustness, we accept if the chain merkle branch is empty (direct commitment)
-	// or if it properly connects to the coinbase.
-
+func (ap *AuxPow) validateChainCommitment(blockHash *chainhash.Hash) error {
 	if len(ap.ChainMerkleBranch.Branch) == 0 {
-		// Direct commitment: verify block hash appears in coinbase
-		coinbaseData := serializeCoinbaseForSearch(&ap.CoinbaseTx)
-		blockHashBytes := (*blockHash)[:]
-		reversedBlockHash := reverseHashBytes(*blockHash)
-		if !bytes.Contains(coinbaseData, blockHashBytes) && !bytes.Contains(coinbaseData, reversedBlockHash[:]) {
-			return fmt.Errorf("auxpow: block hash not found in coinbase for direct commitment")
-		}
-	} else {
-		// Verify structural validity first
-		if len(ap.ChainMerkleBranch.Branch) > 32 {
-			return fmt.Errorf("chain merkle branch too deep: %d levels (max 32)",
-				len(ap.ChainMerkleBranch.Branch))
-		}
-
-		// Verify the chain merkle branch connects the aux block hash to the coinbase
-		// For multi-chain merged mining, try to verify against coinbase tx hash first
-		if !CheckMerkleBranch(blockHash, &ap.ChainMerkleBranch, &coinbaseTxHash2) {
-			// For multi-chain merged mining, the chain merkle root is embedded in the
-			// coinbase scriptSig with specific magic bytes and formatting.
-			// Full validation requires parsing the merged mining header format.
-			//
-			// As a pragmatic validation step, we verify the computed root appears
-			// in the coinbase data. This provides reasonable security while supporting
-			// diverse mining pool implementations.
-			computedRoot := *blockHash
-			for i, sibling := range ap.ChainMerkleBranch.Branch {
-				sideBit := (ap.ChainMerkleBranch.SideMask >> uint(i)) & 1
-				var combined [64]byte
-				if sideBit == 0 {
-					copy(combined[:32], computedRoot[:])
-					copy(combined[32:], sibling[:])
-				} else {
-					copy(combined[:32], sibling[:])
-					copy(combined[32:], computedRoot[:])
-				}
-				computedRoot = chainhash.DoubleHashH(combined[:])
-			}
-
-			// Check if the computed root appears in the coinbase using the proper
-			// Namecoin merged-mining commitment format (magic + root + size + nonce).
-			// This is stricter than a raw byte-substring search and prevents an
-			// attacker from constructing a coinbase that contains the root bytes
-			// without the required structural commitment.
-			coinbaseData := serializeCoinbaseForSearch(&ap.CoinbaseTx)
-			if err := checkMergeMiningCommitment(coinbaseData, computedRoot, len(ap.ChainMerkleBranch.Branch)); err != nil {
-				return fmt.Errorf("chain merkle root not committed in coinbase: %w", err)
-			}
-		}
+		return ap.validateDirectChainCommitment(blockHash)
+	}
+	if len(ap.ChainMerkleBranch.Branch) > 32 {
+		return fmt.Errorf("chain merkle branch too deep: %d levels (max 32)", len(ap.ChainMerkleBranch.Branch))
 	}
 
-	// Step 5: All validations passed
+	coinbaseTxHash := ap.CoinbaseTx.TxHash()
+	if CheckMerkleBranch(blockHash, &ap.ChainMerkleBranch, &coinbaseTxHash) {
+		return nil
+	}
+	return ap.validateMergedMiningCommitment(blockHash)
+}
+
+func (ap *AuxPow) validateDirectChainCommitment(blockHash *chainhash.Hash) error {
+	coinbaseData := serializeCoinbaseForSearch(&ap.CoinbaseTx)
+	blockHashBytes := (*blockHash)[:]
+	reversedBlockHash := reverseHashBytes(*blockHash)
+	if !bytes.Contains(coinbaseData, blockHashBytes) && !bytes.Contains(coinbaseData, reversedBlockHash[:]) {
+		return fmt.Errorf("auxpow: block hash not found in coinbase for direct commitment")
+	}
 	return nil
+}
+
+func (ap *AuxPow) validateMergedMiningCommitment(blockHash *chainhash.Hash) error {
+	computedRoot := computeChainMerkleRoot(*blockHash, &ap.ChainMerkleBranch)
+	coinbaseData := serializeCoinbaseForSearch(&ap.CoinbaseTx)
+	if err := checkMergeMiningCommitment(coinbaseData, computedRoot, len(ap.ChainMerkleBranch.Branch)); err != nil {
+		return fmt.Errorf("chain merkle root not committed in coinbase: %w", err)
+	}
+	return nil
+}
+
+func computeChainMerkleRoot(root chainhash.Hash, branch *MerkleBranch) chainhash.Hash {
+	computedRoot := root
+	for i, sibling := range branch.Branch {
+		sideBit := (branch.SideMask >> uint(i)) & 1
+		var combined [64]byte
+		if sideBit == 0 {
+			copy(combined[:32], computedRoot[:])
+			copy(combined[32:], sibling[:])
+		} else {
+			copy(combined[:32], sibling[:])
+			copy(combined[32:], computedRoot[:])
+		}
+		computedRoot = chainhash.DoubleHashH(combined[:])
+	}
+	return computedRoot
 }
 
 // ExtractChainIDFromVersion extracts the chain ID from a Namecoin block version.

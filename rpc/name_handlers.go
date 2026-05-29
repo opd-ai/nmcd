@@ -8,8 +8,10 @@ import (
 
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/opd-ai/nmcd/chain"
 	"github.com/opd-ai/nmcd/namedb"
+	"github.com/opd-ai/nmcd/network"
 	"github.com/opd-ai/nmcd/wallet"
 )
 
@@ -19,53 +21,39 @@ func (s *Server) nameShow(req *Request) *Response {
 		return errResp
 	}
 
-	var params []string
-	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32602,
-				Message: "Invalid params",
-			},
-			ID: req.ID,
-		}
+	name, errResp := parseNameParam(req.Params, req.ID, "Invalid params")
+	if errResp != nil {
+		return errResp
 	}
-
-	name := params[0]
 	if errResp := validateNameLength(name, req.ID); errResp != nil {
 		return errResp
 	}
 
 	record, err := s.blockchain.GetName(name)
 	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -5,
-				Message: fmt.Sprintf("Name not found: %s", name),
-			},
-			ID: req.ID,
-		}
+		return errorResponse(req.ID, -5, fmt.Sprintf("Name not found: %s", name))
 	}
+	return successResponse(req.ID, buildNameShowResult(record, s.blockchain.BestSnapshot().Height))
+}
 
-	bestHeight := s.blockchain.BestSnapshot().Height
+func parseNameParam(rawParams json.RawMessage, reqID interface{}, message string) (string, *Response) {
+	var params []string
+	if err := json.Unmarshal(rawParams, &params); err != nil || len(params) == 0 {
+		return "", errorResponse(reqID, -32602, message)
+	}
+	return params[0], nil
+}
+
+func buildNameShowResult(record *namedb.NameRecord, bestHeight int32) map[string]interface{} {
 	expiresIn := record.ExpiresAt - bestHeight
-	expired := expiresIn < 0
-
-	result := map[string]interface{}{
+	return map[string]interface{}{
 		"name":       record.Name,
 		"value":      record.Value,
 		"txid":       record.TxHash.String(),
 		"height":     record.Height,
 		"expires_in": expiresIn,
-		"expired":    expired,
+		"expired":    expiresIn < 0,
 		"address":    record.Address,
-	}
-
-	return &Response{
-		Jsonrpc: "2.0",
-		Result:  result,
-		ID:      req.ID,
 	}
 }
 
@@ -84,41 +72,50 @@ func (s *Server) nameUpdate(req *Request) *Response {
 		return errResp
 	}
 
-	name := params[0]
-	newValue := params[1]
-
+	name, newValue := params[0], params[1]
 	destAddress, errResp := s.parseOptionalDestAddress(params, req.ID)
 	if errResp != nil {
 		return errResp
 	}
-
-	if errResp := validateNameLength(name, req.ID); errResp != nil {
-		return errResp
-	}
-	if errResp := validateValueSize(newValue, req.ID); errResp != nil {
+	if errResp := s.validateNameUpdateRequest(name, newValue, req.ID); errResp != nil {
 		return errResp
 	}
 
-	record, errResp := s.lookupActiveNameRecord(name, req.ID)
+	tx, errResp := s.buildNameUpdateTx(name, newValue, destAddress, req.ID)
 	if errResp != nil {
 		return errResp
 	}
+	return s.broadcastAndRespond(tx, req.ID, buildNameUpdateResult(tx, name, newValue, destAddress))
+}
 
-	if errResp := s.verifyNameOwnership(record, req.ID); errResp != nil {
+func (s *Server) validateNameUpdateRequest(name, newValue string, reqID interface{}) *Response {
+	if errResp := validateNameLength(name, reqID); errResp != nil {
 		return errResp
 	}
+	return validateValueSize(newValue, reqID)
+}
 
-	utxos, nameUtxoIndex, errResp := s.collectNameUpdateUTXOs(name, record, req.ID)
+func (s *Server) buildNameUpdateTx(name, newValue string, destAddress btcutil.Address, reqID interface{}) (*wire.MsgTx, *Response) {
+	record, errResp := s.lookupActiveNameRecord(name, reqID)
 	if errResp != nil {
-		return errResp
+		return nil, errResp
+	}
+	if errResp := s.verifyNameOwnership(record, reqID); errResp != nil {
+		return nil, errResp
+	}
+	utxos, nameUtxoIndex, errResp := s.collectNameUpdateUTXOs(name, record, reqID)
+	if errResp != nil {
+		return nil, errResp
 	}
 
-	feeRate := int64(1)
-	tx, err := s.wallet.CreateNameUpdateTx(name, newValue, utxos, nameUtxoIndex, feeRate, destAddress)
+	tx, err := s.wallet.CreateNameUpdateTx(name, newValue, utxos, nameUtxoIndex, 1, destAddress)
 	if err != nil {
-		return errorResponse(req.ID, -1, fmt.Sprintf("Failed to create transaction: %v", err))
+		return nil, errorResponse(reqID, -1, fmt.Sprintf("Failed to create transaction: %v", err))
 	}
+	return tx, nil
+}
 
+func buildNameUpdateResult(tx *wire.MsgTx, name, newValue string, destAddress btcutil.Address) map[string]interface{} {
 	result := map[string]interface{}{
 		"txid":   tx.TxHash().String(),
 		"name":   name,
@@ -128,8 +125,7 @@ func (s *Server) nameUpdate(req *Request) *Response {
 	if destAddress != nil {
 		result["address"] = destAddress.EncodeAddress()
 	}
-
-	return s.broadcastAndRespond(tx, req.ID, result)
+	return result
 }
 
 // prepareNameWalletRequest ensures wallet and blockchain access, then parses string params.
@@ -230,71 +226,60 @@ func convertAndFindNameUTXO(dbUTXOs []*namedb.UTXO, nameHash *chainhash.Hash, na
 //   - []wallet.UTXO: The converted wallet UTXOs ready for transaction creation
 //   - *Response: Error response if any step fails, nil on success
 func (s *Server) getWalletAddressAndUTXOs(reqID interface{}) (btcutil.Address, []wallet.UTXO, *Response) {
-	// Get a wallet address to own the name
+	ownerAddress, errResp := s.primaryWalletAddress(reqID)
+	if errResp != nil {
+		return nil, nil, errResp
+	}
+	addr, errResp := s.decodeWalletAddress(ownerAddress, reqID)
+	if errResp != nil {
+		return nil, nil, errResp
+	}
+	utxos, errResp := s.loadWalletFundingUTXOs(ownerAddress, reqID)
+	if errResp != nil {
+		return nil, nil, errResp
+	}
+	return addr, utxos, nil
+}
+
+func (s *Server) primaryWalletAddress(reqID interface{}) (string, *Response) {
 	addresses := s.wallet.GetAddresses()
 	if len(addresses) == 0 {
-		return nil, nil, &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: "No addresses in wallet. Create an address first using getnewaddress.",
-			},
-			ID: reqID,
-		}
+		return "", errorResponse(reqID, -1, "No addresses in wallet. Create an address first using getnewaddress.")
 	}
-	ownerAddress := addresses[0] // Use the first address
+	return addresses[0], nil
+}
 
-	// Decode the address
+func (s *Server) decodeWalletAddress(ownerAddress string, reqID interface{}) (btcutil.Address, *Response) {
 	addr, err := btcutil.DecodeAddress(ownerAddress, s.blockchain.ChainParams())
 	if err != nil {
-		return nil, nil, &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -5,
-				Message: fmt.Sprintf("Invalid address: %v", err),
-			},
-			ID: reqID,
-		}
+		return nil, errorResponse(reqID, -5, fmt.Sprintf("Invalid address: %v", err))
 	}
+	return addr, nil
+}
 
-	// Get wallet UTXOs for funding
+func (s *Server) loadWalletFundingUTXOs(ownerAddress string, reqID interface{}) ([]wallet.UTXO, *Response) {
 	walletUTXOs, err := s.blockchain.GetUTXOsForAddress(ownerAddress)
 	if err != nil {
-		return nil, nil, &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: fmt.Sprintf("Failed to get wallet UTXOs: %v", err),
-			},
-			ID: reqID,
-		}
+		return nil, errorResponse(reqID, -1, fmt.Sprintf("Failed to get wallet UTXOs: %v", err))
 	}
-
 	if len(walletUTXOs) == 0 {
-		return nil, nil, &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -6,
-				Message: "Insufficient funds. No UTXOs available in wallet.",
-			},
-			ID: reqID,
-		}
+		return nil, errorResponse(reqID, -6, "Insufficient funds. No UTXOs available in wallet.")
 	}
+	return convertNamedbUTXOs(walletUTXOs), nil
+}
 
-	// Convert namedb UTXOs to wallet UTXOs
-	var utxos []wallet.UTXO
+func convertNamedbUTXOs(walletUTXOs []*namedb.UTXO) []wallet.UTXO {
+	utxos := make([]wallet.UTXO, 0, len(walletUTXOs))
 	for _, dbUTXO := range walletUTXOs {
-		wUtxo := wallet.UTXO{
+		utxos = append(utxos, wallet.UTXO{
 			TxHash:   dbUTXO.TxHash,
 			Vout:     dbUTXO.OutIndex,
 			Value:    dbUTXO.Value,
 			PkScript: dbUTXO.PkScript,
 			Address:  dbUTXO.Address,
-		}
-		utxos = append(utxos, wUtxo)
+		})
 	}
-
-	return addr, utxos, nil
+	return utxos
 }
 
 // nameNew creates a NAME_NEW transaction for pre-registering a name commitment.
@@ -382,19 +367,14 @@ func (s *Server) nameFirstUpdate(req *Request) *Response {
 	}
 
 	name, randHex, value := params[0], params[1], params[2]
-
-	if errResp := validateNameLength(name, req.ID); errResp != nil {
-		return errResp
-	}
-	if errResp := validateValueSize(value, req.ID); errResp != nil {
+	if errResp := s.validateFirstUpdateRequest(name, value, req.ID); errResp != nil {
 		return errResp
 	}
 
-	randBytes, err := hex.DecodeString(randHex)
-	if err != nil {
-		return errorResponse(req.ID, -5, fmt.Sprintf("Invalid rand hex: %v", err))
+	randBytes, errResp := decodeFirstUpdateRand(randHex, req.ID)
+	if errResp != nil {
+		return errResp
 	}
-
 	if errResp := s.validateNameNewCommitment(randBytes, name, req.ID); errResp != nil {
 		return errResp
 	}
@@ -403,25 +383,44 @@ func (s *Server) nameFirstUpdate(req *Request) *Response {
 	if errResp != nil {
 		return errResp
 	}
-
-	nameNewUtxoIndex := findNameNewUTXOIndex(utxos)
-	if nameNewUtxoIndex < 0 {
-		return errorResponse(req.ID, -1, "No NAME_NEW UTXO found in wallet. Did you run name_new first?")
+	nameNewUtxoIndex, errResp := requireNameNewUTXOIndex(utxos, req.ID)
+	if errResp != nil {
+		return errResp
 	}
 
-	feeRate := int64(1)
-	tx, err := s.wallet.CreateNameFirstUpdateTx(name, randHex, value, utxos, nameNewUtxoIndex, feeRate, addr)
+	tx, err := s.wallet.CreateNameFirstUpdateTx(name, randHex, value, utxos, nameNewUtxoIndex, 1, addr)
 	if err != nil {
 		return errorResponse(req.ID, -1, fmt.Sprintf("Failed to create NAME_FIRSTUPDATE transaction: %v", err))
 	}
-
-	result := map[string]interface{}{
+	return s.broadcastAndRespond(tx, req.ID, map[string]interface{}{
 		"txid":   tx.TxHash().String(),
 		"name":   name,
 		"value":  value,
 		"status": "broadcasted",
+	})
+}
+
+func (s *Server) validateFirstUpdateRequest(name, value string, reqID interface{}) *Response {
+	if errResp := validateNameLength(name, reqID); errResp != nil {
+		return errResp
 	}
-	return s.broadcastAndRespond(tx, req.ID, result)
+	return validateValueSize(value, reqID)
+}
+
+func decodeFirstUpdateRand(randHex string, reqID interface{}) ([]byte, *Response) {
+	randBytes, err := hex.DecodeString(randHex)
+	if err != nil {
+		return nil, errorResponse(reqID, -5, fmt.Sprintf("Invalid rand hex: %v", err))
+	}
+	return randBytes, nil
+}
+
+func requireNameNewUTXOIndex(utxos []wallet.UTXO, reqID interface{}) (int, *Response) {
+	nameNewUtxoIndex := findNameNewUTXOIndex(utxos)
+	if nameNewUtxoIndex < 0 {
+		return -1, errorResponse(reqID, -1, "No NAME_NEW UTXO found in wallet. Did you run name_new first?")
+	}
+	return nameNewUtxoIndex, nil
 }
 
 // validateNameNewCommitment validates that a NAME_NEW commitment exists and is within the valid window.
@@ -503,34 +502,19 @@ func (s *Server) nameHistory(req *Request) *Response {
 		return errResp
 	}
 
-	var params []string
-	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32602,
-				Message: "Invalid params: expected ['name']",
-			},
-			ID: req.ID,
-		}
+	name, errResp := parseNameParam(req.Params, req.ID, "Invalid params: expected ['name']")
+	if errResp != nil {
+		return errResp
 	}
 
-	name := params[0]
 	history, err := s.blockchain.GetNameHistory(name)
 	if err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: fmt.Sprintf("Failed to get name history: %v", err),
-			},
-			ID: req.ID,
-		}
+		return errorResponse(req.ID, -1, fmt.Sprintf("Failed to get name history: %v", err))
 	}
+	return successResponse(req.ID, formatNameHistory(history))
+}
 
-	// Format history for response.
-	// Historical records use 'expires_at' (absolute block height) instead of 'expires_in'
-	// because these are past snapshots where calculating blocks remaining would be misleading.
+func formatNameHistory(history []*namedb.NameRecord) []map[string]interface{} {
 	result := make([]map[string]interface{}, len(history))
 	for i, record := range history {
 		result[i] = map[string]interface{}{
@@ -542,12 +526,7 @@ func (s *Server) nameHistory(req *Request) *Response {
 			"address":    record.Address,
 		}
 	}
-
-	return &Response{
-		Jsonrpc: "2.0",
-		Result:  result,
-		ID:      req.ID,
-	}
+	return result
 }
 
 // nameScan scans names with prefix matching and pagination.
@@ -631,67 +610,53 @@ func formatNameRecords(names []*namedb.NameRecord, currentHeight int32) []map[st
 // Parameters: [] or ["name"] where name is an optional filter
 func (s *Server) namePending(req *Request) *Response {
 	result := []map[string]interface{}{}
-
-	// Get mempool from peer manager
-	if s.peerMgr == nil {
-		// No peer manager means no mempool - return empty list
-		return &Response{
-			Jsonrpc: "2.0",
-			Result:  result,
-			ID:      req.ID,
-		}
-	}
-
-	mempool := s.peerMgr.GetMempool()
+	mempool := s.getNamePendingMempool()
 	if mempool == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Result:  result,
-			ID:      req.ID,
-		}
+		return successResponse(req.ID, result)
 	}
 
-	// Parse optional name filter from params
-	var nameFilter string
+	nameFilter := parseNamePendingFilter(req.Params)
+	for _, tx := range mempool.GetAll() {
+		appendPendingNameOps(&result, chain.ParseNameOperationsFromTx(tx), nameFilter)
+	}
+	return successResponse(req.ID, result)
+}
+
+func (s *Server) getNamePendingMempool() *network.Mempool {
+	if s.peerMgr == nil {
+		return nil
+	}
+	return s.peerMgr.GetMempool()
+}
+
+func parseNamePendingFilter(raw json.RawMessage) string {
 	var params []interface{}
-	if err := json.Unmarshal(req.Params, &params); err == nil && len(params) > 0 {
-		if name, ok := params[0].(string); ok {
-			nameFilter = name
+	if err := json.Unmarshal(raw, &params); err != nil || len(params) == 0 {
+		return ""
+	}
+	name, _ := params[0].(string)
+	return name
+}
+
+func appendPendingNameOps(result *[]map[string]interface{}, nameOps []chain.NameOperationInfo, nameFilter string) {
+	for _, op := range nameOps {
+		if nameFilter != "" && op.Name != nameFilter {
+			continue
 		}
+		*result = append(*result, buildPendingNameOpResult(op))
 	}
+}
 
-	// Get all transactions from mempool and parse name operations
-	mempoolTxs := mempool.GetAll()
-	for _, tx := range mempoolTxs {
-		nameOps := chain.ParseNameOperationsFromTx(tx)
-		for _, op := range nameOps {
-			// Apply name filter if specified
-			if nameFilter != "" && op.Name != nameFilter {
-				continue
-			}
-
-			// Build result object matching Namecoin Core format
-			opResult := map[string]interface{}{
-				"name":   op.Name,
-				"txid":   op.TxHash.String(),
-				"vout":   op.OutputIndex,
-				"op":     op.OpType.String(),
-				"ismine": false, // Would require wallet lookup
-			}
-
-			// Add value for NAME_FIRSTUPDATE and NAME_UPDATE
-			// NAME_NEW operations only contain a hash commitment, not a value
-			if op.OpType != namedb.NameNew {
-				opResult["value"] = op.Value
-			}
-
-			result = append(result, opResult)
-		}
+func buildPendingNameOpResult(op chain.NameOperationInfo) map[string]interface{} {
+	result := map[string]interface{}{
+		"name":   op.Name,
+		"txid":   op.TxHash.String(),
+		"vout":   op.OutputIndex,
+		"op":     op.OpType.String(),
+		"ismine": false,
 	}
-
-	return &Response{
-		Jsonrpc: "2.0",
-		Result:  result,
-		ID:      req.ID,
+	if op.OpType != namedb.NameNew {
+		result["value"] = op.Value
 	}
+	return result
 }

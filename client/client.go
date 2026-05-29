@@ -45,59 +45,74 @@ import (
 //	    RPCPassword: "pass",
 //	})
 func NewClient(cfg *Config) (NameClient, error) {
-	if cfg == nil {
-		cfg = defaultConfig()
-	}
+	cfg = resolveClientConfig(cfg)
 
 	switch cfg.Mode {
 	case ModeEmbedded:
 		return NewEmbeddedClient(cfg)
-
 	case ModeDaemon:
 		return NewDaemonClient(cfg)
-
 	case ModeAuto:
-		// Try daemon first
-		daemonClient, err := NewDaemonClient(cfg)
-		if err == nil {
-			// Check if daemon is responsive
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-
-			if err := daemonClient.Ping(ctx); err == nil {
-				// Daemon is available and responsive - detect its network
-				detectedNetwork, err := daemonClient.DetectNetwork(ctx)
-				if err != nil {
-					// If we can't detect network, close daemon and fall back to embedded
-					// (Log the error through standard logging at the caller's discretion)
-					daemonClient.Close()
-				} else {
-					// Validate that detected network matches configured network
-					// If cfg.Network is empty or "mainnet", it defaults to mainnet
-					expectedNetwork := cfg.Network
-					if expectedNetwork == "" {
-						expectedNetwork = "mainnet"
-					}
-
-					if detectedNetwork != expectedNetwork {
-						// Network mismatch - close daemon and return error
-						daemonClient.Close()
-						return nil, fmt.Errorf("network mismatch: daemon is running on %s but client configured for %s (ensure cfg.Network matches daemon's network or use explicit mode)", detectedNetwork, expectedNetwork)
-					}
-
-					// Network matches - use daemon
-					return daemonClient, nil
-				}
-			} else {
-				// Daemon not responsive, close and fall back to embedded
-				daemonClient.Close()
-			}
-		}
-
-		// Fall back to embedded mode
-		return NewEmbeddedClient(cfg)
-
+		return newAutoClient(cfg)
 	default:
 		return nil, fmt.Errorf("invalid client mode: %d", cfg.Mode)
 	}
+}
+
+func resolveClientConfig(cfg *Config) *Config {
+	if cfg == nil {
+		return defaultConfig()
+	}
+	return cfg
+}
+
+func newAutoClient(cfg *Config) (NameClient, error) {
+	daemonClient, err := tryDaemonClient(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if daemonClient != nil {
+		return daemonClient, nil
+	}
+	return NewEmbeddedClient(cfg)
+}
+
+func tryDaemonClient(cfg *Config) (*DaemonClient, error) {
+	daemonClient, err := NewDaemonClient(cfg)
+	if err != nil {
+		return nil, nil
+	}
+
+	ok, err := validateDaemonClient(cfg, daemonClient)
+	if !ok || err != nil {
+		daemonClient.Close()
+		return nil, err
+	}
+	return daemonClient, nil
+}
+
+func validateDaemonClient(cfg *Config, daemonClient *DaemonClient) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := daemonClient.Ping(ctx); err != nil {
+		return false, nil
+	}
+	return validateDaemonNetwork(ctx, cfg, daemonClient)
+}
+
+func validateDaemonNetwork(ctx context.Context, cfg *Config, daemonClient *DaemonClient) (bool, error) {
+	detectedNetwork, err := daemonClient.DetectNetwork(ctx)
+	if err != nil {
+		return false, nil
+	}
+
+	expectedNetwork := cfg.Network
+	if expectedNetwork == "" {
+		expectedNetwork = "mainnet"
+	}
+	if detectedNetwork != expectedNetwork {
+		return false, fmt.Errorf("network mismatch: daemon is running on %s but client configured for %s (ensure cfg.Network matches daemon's network or use explicit mode)", detectedNetwork, expectedNetwork)
+	}
+	return true, nil
 }

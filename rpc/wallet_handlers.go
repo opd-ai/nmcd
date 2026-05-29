@@ -94,46 +94,50 @@ func (s *Server) walletPassphrase(req *Request) *Response {
 	if errResp != nil {
 		return errResp
 	}
-
 	if !s.wallet.IsEncrypted() {
 		return errorResponse(req.ID, -13, "Wallet is not encrypted")
 	}
-
+	if errResp != nil {
+		return errResp
+	}
 	if err := s.wallet.Unlock(password); err != nil {
 		s.logWarn("wallet unlock attempt failed", "error", err)
 		return errorResponse(req.ID, -14, "authentication failed")
 	}
 
-	// Cancel any existing auto-lock timer and create a new one.
-	// Lock ordering: always acquire autoLockMu before the wallet lock to
-	// prevent deadlock between the callback and walletLock.
-	// A generation counter ensures a superseded callback is a no-op even
-	// when Stop() returns false (the callback has already started running).
+	s.scheduleAutoLock(timeout)
+	return successResponse(req.ID, nil)
+}
+
+func (s *Server) scheduleAutoLock(timeout int) {
 	s.autoLockMu.Lock()
+	defer s.autoLockMu.Unlock()
 	if s.autoLockTimer != nil {
 		s.autoLockTimer.Stop()
 		s.autoLockTimer = nil
 	}
-	s.autoLockGen++
-	gen := s.autoLockGen
+	gen := s.nextAutoLockGeneration()
 	s.autoLockTimer = time.AfterFunc(time.Duration(timeout)*time.Second, func() {
-		// Take autoLockMu first (consistent lock order: autoLockMu then wallet).
-		s.autoLockMu.Lock()
-		if s.autoLockGen != gen {
-			// This timer was superseded by a newer walletpassphrase or walletlock call.
-			s.autoLockMu.Unlock()
-			return
-		}
-		s.autoLockTimer = nil
-		s.autoLockMu.Unlock()
-		// Lock the wallet outside autoLockMu to avoid lock-order inversion.
-		if err := s.wallet.Lock(); err != nil {
-			s.logError("auto-lock: failed to lock wallet", "error", err)
-		}
+		s.runAutoLock(gen)
 	})
-	s.autoLockMu.Unlock()
+}
 
-	return successResponse(req.ID, nil)
+func (s *Server) nextAutoLockGeneration() uint64 {
+	s.autoLockGen++
+	return s.autoLockGen
+}
+
+func (s *Server) runAutoLock(gen uint64) {
+	s.autoLockMu.Lock()
+	if s.autoLockGen != gen {
+		s.autoLockMu.Unlock()
+		return
+	}
+	s.autoLockTimer = nil
+	s.autoLockMu.Unlock()
+	if err := s.wallet.Lock(); err != nil {
+		s.logError("auto-lock: failed to lock wallet", "error", err)
+	}
 }
 
 // parsePassphraseTimeout extracts the optional timeout parameter (default 60 seconds).
@@ -167,54 +171,34 @@ func parsePassphraseTimeout(params []interface{}, reqID interface{}) (int, *Resp
 //   - -1: Wallet not initialized
 //   - -13: Wallet is not encrypted
 func (s *Server) walletLock(req *Request) *Response {
+	if errResp := s.validateWalletLockState(req.ID); errResp != nil {
+		return errResp
+	}
+	cancelAutoLockTimer(s)
+	if err := s.wallet.Lock(); err != nil {
+		return errorResponse(req.ID, -1, fmt.Sprintf("Failed to lock wallet: %v", err))
+	}
+	return successResponse(req.ID, nil)
+}
+
+func (s *Server) validateWalletLockState(reqID interface{}) *Response {
 	if s.wallet == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: "Wallet not initialized. Start the node with wallet enabled.",
-			},
-			ID: req.ID,
-		}
+		return errorResponse(reqID, -1, "Wallet not initialized. Start the node with wallet enabled.")
 	}
-
 	if !s.wallet.IsEncrypted() {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -13,
-				Message: "Wallet is not encrypted",
-			},
-			ID: req.ID,
-		}
+		return errorResponse(reqID, -13, "Wallet is not encrypted")
 	}
+	return nil
+}
 
-	// Cancel any active auto-lock timer when manually locking.
-	// Incrementing the generation invalidates any in-flight callback.
+func cancelAutoLockTimer(s *Server) {
 	s.autoLockMu.Lock()
+	defer s.autoLockMu.Unlock()
 	if s.autoLockTimer != nil {
 		s.autoLockTimer.Stop()
 		s.autoLockTimer = nil
 	}
 	s.autoLockGen++
-	s.autoLockMu.Unlock()
-
-	if err := s.wallet.Lock(); err != nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: fmt.Sprintf("Failed to lock wallet: %v", err),
-			},
-			ID: req.ID,
-		}
-	}
-
-	return &Response{
-		Jsonrpc: "2.0",
-		Result:  nil,
-		ID:      req.ID,
-	}
 }
 
 // encryptWallet encrypts the wallet with a password.
@@ -284,39 +268,28 @@ func (s *Server) encryptWallet(req *Request) *Response {
 // Parameters: [] (no parameters required)
 // Returns: balance in NMC as a float
 func (s *Server) getBalance(req *Request) *Response {
-	if s.wallet == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -1,
-				Message: "Wallet not initialized. Start the node with wallet enabled.",
-			},
-			ID: req.ID,
-		}
+	if errResp := s.validateBalanceState(req.ID); errResp != nil {
+		return errResp
 	}
-
-	if s.blockchain == nil {
-		return &Response{
-			Jsonrpc: "2.0",
-			Error: &Error{
-				Code:    -32603,
-				Message: "Blockchain not initialized",
-			},
-			ID: req.ID,
-		}
-	}
-
-	// Get all wallet addresses
 	addresses := s.wallet.GetAddresses()
 	if len(addresses) == 0 {
-		return &Response{
-			Jsonrpc: "2.0",
-			Result:  0.0,
-			ID:      req.ID,
-		}
+		return successResponse(req.ID, 0.0)
 	}
+	balance := satoshisToNMC(s.sumWalletBalances(addresses))
+	return successResponse(req.ID, balance)
+}
 
-	// Sum up UTXOs for all addresses
+func (s *Server) validateBalanceState(reqID interface{}) *Response {
+	if s.wallet == nil {
+		return errorResponse(reqID, -1, "Wallet not initialized. Start the node with wallet enabled.")
+	}
+	if s.blockchain == nil {
+		return errorResponse(reqID, -32603, "Blockchain not initialized")
+	}
+	return nil
+}
+
+func (s *Server) sumWalletBalances(addresses []string) int64 {
 	var totalSatoshis int64
 	var errorCount int
 	for _, addr := range addresses {
@@ -324,25 +297,20 @@ func (s *Server) getBalance(req *Request) *Response {
 		if err != nil {
 			errorCount++
 			s.logWarn("failed to get UTXOs for address", "address", addr, "error", err)
-			continue // Skip addresses with errors
+			continue
 		}
 		for _, utxo := range utxos {
 			totalSatoshis += utxo.Value
 		}
 	}
-
 	if errorCount > 0 {
 		s.logWarn("getbalance returned incomplete results", "skipped_addresses", errorCount)
 	}
+	return totalSatoshis
+}
 
-	// Convert satoshis to NMC (1 NMC = 100,000,000 satoshis)
-	balance := float64(totalSatoshis) / 1e8
-
-	return &Response{
-		Jsonrpc: "2.0",
-		Result:  balance,
-		ID:      req.ID,
-	}
+func satoshisToNMC(totalSatoshis int64) float64 {
+	return float64(totalSatoshis) / 1e8
 }
 
 // listUnspent returns all unspent transaction outputs for wallet addresses.

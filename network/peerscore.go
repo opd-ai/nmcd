@@ -7,6 +7,12 @@ import (
 	"github.com/btcsuite/btcd/peer"
 )
 
+// peerWithScore associates a peer with its score during selection.
+type peerWithScore struct {
+	peer  *peer.Peer
+	score float64
+}
+
 // PeerScore tracks performance metrics for a peer to enable smart peer selection.
 // Higher scores indicate more reliable, faster peers that should be preferred for requests.
 type PeerScore struct {
@@ -156,23 +162,28 @@ func (psm *PeerScoreManager) GetBestPeers(peers []*peer.Peer, n int) []*peer.Pee
 		return nil
 	}
 
-	type peerWithScore struct {
-		peer  *peer.Peer
-		score float64
-	}
+	scored := psm.scorePeers(peers)
+	n = limitPeerCount(n, len(scored))
+	selectTopPeers(scored, n)
+	return extractTopPeers(scored, n)
+}
 
-	// Calculate scores for all peers
+func (psm *PeerScoreManager) scorePeers(peers []*peer.Peer) []peerWithScore {
 	scored := make([]peerWithScore, 0, len(peers))
 	for _, p := range peers {
-		score := psm.GetScore(p.Addr())
-		scored = append(scored, peerWithScore{peer: p, score: score})
+		scored = append(scored, peerWithScore{peer: p, score: psm.GetScore(p.Addr())})
 	}
+	return scored
+}
 
-	// Simple selection sort to find top n (sufficient for small peer counts)
-	if n > len(scored) {
-		n = len(scored)
+func limitPeerCount(n, max int) int {
+	if n > max {
+		return max
 	}
+	return n
+}
 
+func selectTopPeers(scored []peerWithScore, n int) {
 	for i := 0; i < n; i++ {
 		maxIdx := i
 		for j := i + 1; j < len(scored); j++ {
@@ -184,13 +195,13 @@ func (psm *PeerScoreManager) GetBestPeers(peers []*peer.Peer, n int) []*peer.Pee
 			scored[i], scored[maxIdx] = scored[maxIdx], scored[i]
 		}
 	}
+}
 
-	// Extract top n peers
+func extractTopPeers(scored []peerWithScore, n int) []*peer.Peer {
 	result := make([]*peer.Peer, n)
 	for i := 0; i < n; i++ {
 		result[i] = scored[i].peer
 	}
-
 	return result
 }
 

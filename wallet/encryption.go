@@ -174,14 +174,30 @@ func decrypt(data *encryptedData, password []byte) ([]byte, error) {
 // validatePassword checks if a password meets minimum security requirements.
 // Returns an error describing any issues, or nil if the password is acceptable.
 func validatePassword(password string) error {
+	if err := validatePasswordLength(password); err != nil {
+		return err
+	}
+	typeCount, err := countPasswordCharacterTypes(password)
+	if err != nil {
+		return err
+	}
+	if typeCount < 2 {
+		return fmt.Errorf("password must contain at least 2 of: lowercase, uppercase, digits, or special characters")
+	}
+	return nil
+}
+
+func validatePasswordLength(password string) error {
 	if len(password) < 8 {
 		return fmt.Errorf("password must be at least 8 characters long")
 	}
 	if len(password) > 256 {
 		return fmt.Errorf("password must be at most 256 characters long")
 	}
+	return nil
+}
 
-	// Check for password strength: require at least 2 character types
+func countPasswordCharacterTypes(password string) (int, error) {
 	var hasLower, hasUpper, hasDigit, hasSpecial bool
 	for _, ch := range password {
 		switch {
@@ -192,33 +208,22 @@ func validatePassword(password string) error {
 		case ch >= '0' && ch <= '9':
 			hasDigit = true
 		case ch < ' ' || ch > '~':
-			// Control or non-ASCII characters not allowed for better compatibility
-			return fmt.Errorf("password contains invalid characters")
+			return 0, fmt.Errorf("password contains invalid characters")
 		default:
 			hasSpecial = true
 		}
 	}
+	return boolCount(hasLower, hasUpper, hasDigit, hasSpecial), nil
+}
 
-	// Count character types present
-	typeCount := 0
-	if hasLower {
-		typeCount++
+func boolCount(values ...bool) int {
+	count := 0
+	for _, value := range values {
+		if value {
+			count++
+		}
 	}
-	if hasUpper {
-		typeCount++
-	}
-	if hasDigit {
-		typeCount++
-	}
-	if hasSpecial {
-		typeCount++
-	}
-
-	if typeCount < 2 {
-		return fmt.Errorf("password must contain at least 2 of: lowercase, uppercase, digits, or special characters")
-	}
-
-	return nil
+	return count
 }
 
 func passwordHashScryptN(version int) (int, error) {

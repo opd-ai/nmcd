@@ -167,46 +167,51 @@ func initPrometheus(cfg *config.Config) (*http.Server, *prometheus.Registry) {
 // It connects to initial peers and starts the RPC server.
 // Returns a channel that will receive the first error from the RPC server, or nil on clean shutdown.
 func (s *Server) Start() (<-chan error, error) {
-	// Connect to initial peers (from -addpeer flag or DNS seeds)
-	peersToConnect := s.config.AddPeers
-	if len(peersToConnect) == 0 {
-		// No peers specified, try DNS seed discovery
-		seeds := config.DNSSeeds(s.config.Network)
-		if len(seeds) > 0 {
-			log.Printf("No peers specified, resolving DNS seeds for %s...", s.config.Network)
-			seedAddrs := network.ResolveSeedNodes(seeds, config.DefaultPort(s.config.Network))
-			if len(seedAddrs) > 0 {
-				log.Printf("Discovered %d peer addresses from DNS seeds", len(seedAddrs))
-				peersToConnect = seedAddrs
-			} else {
-				log.Printf("Warning: No peers discovered from DNS seeds")
-			}
-		}
-	}
-
-	for _, addr := range peersToConnect {
-		if err := s.peerMgr.ConnectPeer(addr); err != nil {
-			log.Printf("Failed to connect to %s: %v", addr, err)
-		} else {
-			log.Printf("Connected to peer %s", addr)
-		}
-	}
-
-	// Start RPC server
+	connectPeers(s.peerMgr, s.discoverInitialPeers())
 	rpcErrCh := s.rpcServer.Start()
 	log.Printf("RPC server listening on %s", s.config.RPCAddr)
-
-	// Start Prometheus HTTP server if configured
-	if s.prometheusHTTP != nil {
-		go func() {
-			log.Printf("Starting Prometheus metrics server on %s", s.config.PrometheusAddr)
-			if err := s.prometheusHTTP.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				log.Printf("Prometheus HTTP server error: %v", err)
-			}
-		}()
-	}
-
+	startPrometheusServer(s.prometheusHTTP, s.config.PrometheusAddr)
 	return rpcErrCh, nil
+}
+
+func (s *Server) discoverInitialPeers() []string {
+	if len(s.config.AddPeers) > 0 {
+		return s.config.AddPeers
+	}
+	seeds := config.DNSSeeds(s.config.Network)
+	if len(seeds) == 0 {
+		return nil
+	}
+	log.Printf("No peers specified, resolving DNS seeds for %s...", s.config.Network)
+	seedAddrs := network.ResolveSeedNodes(seeds, config.DefaultPort(s.config.Network))
+	if len(seedAddrs) == 0 {
+		log.Printf("Warning: No peers discovered from DNS seeds")
+		return nil
+	}
+	log.Printf("Discovered %d peer addresses from DNS seeds", len(seedAddrs))
+	return seedAddrs
+}
+
+func connectPeers(peerMgr *network.PeerManager, peers []string) {
+	for _, addr := range peers {
+		if err := peerMgr.ConnectPeer(addr); err != nil {
+			log.Printf("Failed to connect to %s: %v", addr, err)
+			continue
+		}
+		log.Printf("Connected to peer %s", addr)
+	}
+}
+
+func startPrometheusServer(prometheusHTTP *http.Server, addr string) {
+	if prometheusHTTP == nil {
+		return
+	}
+	go func() {
+		log.Printf("Starting Prometheus metrics server on %s", addr)
+		if err := prometheusHTTP.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("Prometheus HTTP server error: %v", err)
+		}
+	}()
 }
 
 // Stop gracefully shuts down the server and all its components.

@@ -95,69 +95,66 @@ func (e *rpcError) Error() string {
 //   - *DaemonClient: Initialized client ready for use
 //   - error: Initialization error, or nil on success
 func NewDaemonClient(cfg *Config) (*DaemonClient, error) {
-	if cfg == nil {
-		cfg = &Config{
-			RPCAddr: "http://localhost:8336",
-		}
-	}
-
-	// Set default RPC address if not specified
-	if cfg.RPCAddr == "" {
-		cfg.RPCAddr = "http://localhost:8336"
-	}
-
-	// Create HTTP client with optimized connection pooling for production use.
-	// Connection pooling reduces latency and resource usage by reusing TCP connections.
-	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			// MaxIdleConns: Total idle connections across all hosts (100 for high-throughput)
-			MaxIdleConns: 100,
-			// IdleConnTimeout: How long idle connections stay open (90s balances reuse vs resources)
-			IdleConnTimeout: 90 * time.Second,
-			// DisableCompression: Disabled for RPC (JSON is already compact, compression adds CPU overhead)
-			DisableCompression: true,
-			// MaxIdleConnsPerHost: Idle connections per daemon (10 for concurrent requests, was 2)
-			MaxIdleConnsPerHost: 10,
-			// MaxConnsPerHost: Total connections per daemon (20 to prevent resource exhaustion)
-			MaxConnsPerHost: 20,
-			// WriteBufferSize/ReadBufferSize: We intentionally rely on the default 4KB values
-			// provided by net/http for JSON-RPC payload sizes, so these fields are left unset.
-		},
+	cfg = resolveDaemonConfig(cfg)
+	if err := validateDaemonAuthConfig(cfg); err != nil {
+		return nil, err
 	}
 
 	client := &DaemonClient{
-		httpClient:  httpClient,
+		httpClient:  newDaemonHTTPClient(),
 		baseURL:     cfg.RPCAddr,
 		retryConfig: defaultRetryConfig(),
 		closed:      false,
+		logger:      daemonLogger(cfg),
 	}
+	applyDaemonAuth(client, cfg)
+	return client, nil
+}
 
-	// Validate authentication configuration: either both credentials must be provided, or neither
+func resolveDaemonConfig(cfg *Config) *Config {
+	if cfg == nil {
+		return &Config{RPCAddr: "http://localhost:8336"}
+	}
+	if cfg.RPCAddr == "" {
+		cfg.RPCAddr = "http://localhost:8336"
+	}
+	return cfg
+}
+
+func newDaemonHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:        100,
+			IdleConnTimeout:     90 * time.Second,
+			DisableCompression:  true,
+			MaxIdleConnsPerHost: 10,
+			MaxConnsPerHost:     20,
+		},
+	}
+}
+
+func validateDaemonAuthConfig(cfg *Config) error {
 	hasUser := cfg.RPCUser != ""
 	hasPassword := cfg.RPCPassword != ""
 	if hasUser != hasPassword {
-		return nil, fmt.Errorf("incomplete RPC authentication: both RPCUser and RPCPassword must be provided together, or neither")
+		return fmt.Errorf("incomplete RPC authentication: both RPCUser and RPCPassword must be provided together, or neither")
 	}
+	return nil
+}
 
-	// Set authentication if both credentials are provided
-	if hasUser && hasPassword {
-		client.auth = &basicAuth{
-			username: cfg.RPCUser,
-			password: cfg.RPCPassword,
-		}
+func applyDaemonAuth(client *DaemonClient, cfg *Config) {
+	if cfg.RPCUser == "" {
+		return
 	}
+	client.auth = &basicAuth{username: cfg.RPCUser, password: cfg.RPCPassword}
+}
 
-	// Initialize logger (use provided or default)
-	var logger *logging.Logger
+func daemonLogger(cfg *Config) *logging.Logger {
 	if cfg.Logger != nil {
-		logger = cfg.Logger
-	} else {
-		logger = logging.GetDefault()
+		return cfg.Logger.WithComponent("daemon-client")
 	}
-	client.logger = logger.WithComponent("daemon-client")
-
-	return client, nil
+	return logging.GetDefault().WithComponent("daemon-client")
 }
 
 // Ping checks if the daemon is available and responding.
@@ -216,31 +213,39 @@ func (c *DaemonClient) executeWithRetry(ctx context.Context, body []byte, retryC
 	delay := retryCfg.InitialDelay
 
 	for attempt := 0; attempt < retryCfg.MaxAttempts; attempt++ {
-		select {
-		case <-ctx.Done():
-			return nil, ErrContextCanceled
-		default:
+		if err := checkRPCCallContext(ctx); err != nil {
+			return nil, err
 		}
 
 		result, err := c.doRPCCall(ctx, body)
 		if err == nil {
 			return result, nil
 		}
-
-		lastErr = err
-		if !isTransientError(err) {
+		if !shouldRetryRPC(attempt, retryCfg, err) {
 			return nil, err
 		}
 
-		if attempt < retryCfg.MaxAttempts-1 {
-			delay = c.waitAndBackoff(ctx, delay, retryCfg)
-			if delay < 0 {
-				return nil, ErrContextCanceled
-			}
+		lastErr = err
+		delay = c.waitAndBackoff(ctx, delay, retryCfg)
+		if delay < 0 {
+			return nil, ErrContextCanceled
 		}
 	}
 
 	return nil, fmt.Errorf("RPC call failed after %d attempts: %w", retryCfg.MaxAttempts, lastErr)
+}
+
+func checkRPCCallContext(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ErrContextCanceled
+	default:
+		return nil
+	}
+}
+
+func shouldRetryRPC(attempt int, retryCfg RetryConfig, err error) bool {
+	return isTransientError(err) && attempt < retryCfg.MaxAttempts-1
 }
 
 // waitAndBackoff waits for the backoff delay and returns the next delay.
@@ -260,47 +265,58 @@ func (c *DaemonClient) waitAndBackoff(ctx context.Context, delay time.Duration, 
 
 // doRPCCall performs a single RPC call without retry
 func (c *DaemonClient) doRPCCall(ctx context.Context, body []byte) (json.RawMessage, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, bytes.NewReader(body))
+	httpReq, err := c.newRPCRequest(ctx, body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	// Add authentication if configured
-	if c.auth != nil {
-		httpReq.SetBasicAuth(c.auth.username, c.auth.password)
+		return nil, err
 	}
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
-	defer func() {
-		// Drain and close the body to enable connection reuse
-		_, _ = io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-	}()
+	defer closeRPCResponseBody(resp)
 
-	// Check HTTP status
+	if err := validateRPCStatus(resp); err != nil {
+		return nil, err
+	}
+	return decodeRPCResponse(resp)
+}
+
+func (c *DaemonClient) newRPCRequest(ctx context.Context, body []byte) (*http.Request, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if c.auth != nil {
+		httpReq.SetBasicAuth(c.auth.username, c.auth.password)
+	}
+	return httpReq, nil
+}
+
+func closeRPCResponseBody(resp *http.Response) {
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+}
+
+func validateRPCStatus(resp *http.Response) error {
 	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, fmt.Errorf("authentication failed: check RPC credentials")
+		return fmt.Errorf("authentication failed: check RPC credentials")
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP error: %s", resp.Status)
+		return fmt.Errorf("HTTP error: %s", resp.Status)
 	}
+	return nil
+}
 
-	// Parse response
+func decodeRPCResponse(resp *http.Response) (json.RawMessage, error) {
 	var rpcResp rpcResponse
 	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
-
-	// Check for RPC error
 	if rpcResp.Error != nil {
 		return nil, rpcResp.Error
 	}
-
 	return rpcResp.Result, nil
 }
 
@@ -336,23 +352,27 @@ func isTransientError(err error) bool {
 // ResolveName retrieves the current value and metadata for a name.
 // Returns ErrNameNotFound if the name doesn't exist or has expired.
 func (c *DaemonClient) ResolveName(ctx context.Context, name string) (*NameRecord, error) {
-	// Validate input
 	if name == "" {
 		return nil, ErrInvalidName
 	}
 
 	result, err := c.rpcCall(ctx, "name_show", []string{name})
 	if err != nil {
-		// Check for "name not found" RPC error
-		if rpcErr, ok := err.(*rpcError); ok {
-			if rpcErr.Code == -5 || strings.Contains(rpcErr.Message, "not found") {
-				return nil, ErrNameNotFound
-			}
-		}
-		return nil, fmt.Errorf("failed to resolve name: %w", err)
+		return nil, wrapResolveNameError(err)
 	}
+	return parseResolvedName(result)
+}
 
-	// Parse response
+func wrapResolveNameError(err error) error {
+	if rpcErr, ok := err.(*rpcError); ok {
+		if rpcErr.Code == -5 || strings.Contains(rpcErr.Message, "not found") {
+			return ErrNameNotFound
+		}
+	}
+	return fmt.Errorf("failed to resolve name: %w", err)
+}
+
+func parseResolvedName(result json.RawMessage) (*NameRecord, error) {
 	var resp struct {
 		Name      string `json:"name"`
 		Value     string `json:"value"`
@@ -361,28 +381,20 @@ func (c *DaemonClient) ResolveName(ctx context.Context, name string) (*NameRecor
 		ExpiresIn int32  `json:"expires_in"`
 		Address   string `json:"address"`
 	}
-
 	if err := json.Unmarshal(result, &resp); err != nil {
 		return nil, fmt.Errorf("failed to parse name_show response: %w", err)
 	}
-
-	// Check if expired (negative expires_in means already expired)
-	// ExpiresIn of 0 means expires at current block, which is still valid
 	if resp.ExpiresIn < 0 {
 		return nil, ErrNameExpired
 	}
-
-	record := &NameRecord{
+	return &NameRecord{
 		Name:      resp.Name,
 		Value:     resp.Value,
 		TxHash:    resp.TxID,
 		Height:    resp.Height,
 		ExpiresIn: resp.ExpiresIn,
-		// ExpiresAt is not directly available from name_show, calculate if needed
-		Address: resp.Address,
-	}
-
-	return record, nil
+		Address:   resp.Address,
+	}, nil
 }
 
 // RegisterName creates a new name registration with the given value.
