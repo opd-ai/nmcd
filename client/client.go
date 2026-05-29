@@ -69,6 +69,7 @@ func NewClient(cfg *Config) (NameClient, error) {
 				detectedNetwork, err := daemonClient.DetectNetwork(ctx)
 				if err != nil {
 					// If we can't detect network, close daemon and fall back to embedded
+					// (Log the error through standard logging at the caller's discretion)
 					daemonClient.Close()
 				} else {
 					// Validate that detected network matches configured network

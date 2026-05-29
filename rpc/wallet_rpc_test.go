@@ -426,3 +426,41 @@ func TestWalletPassphraseInvalidTimeout(t *testing.T) {
 		t.Errorf("expected error code -32602, got %d", resp.Error.Code)
 	}
 }
+
+func TestWalletPassphraseTimeoutOverflow(t *testing.T) {
+	server, cleanup := setupTestServerWithWallet(t)
+	defer cleanup()
+
+	// Encrypt wallet
+	resp := makeRPCRequest(t, server, "encryptwallet", []string{"TestPassword123"})
+	if resp.Error != nil {
+		t.Fatalf("encryptwallet failed: %v", resp.Error.Message)
+	}
+
+	// Lock wallet
+	if err := server.wallet.Lock(); err != nil {
+		t.Fatalf("failed to lock wallet: %v", err)
+	}
+
+	// Try with timeout exceeding 1 year (MED-2 fix: prevent Duration overflow)
+	tests := []struct {
+		name    string
+		timeout float64
+	}{
+		{"1e18 seconds", 1e18},
+		{"max int64", float64(9223372036854775807)},
+		{"31536001 seconds (>1 year)", 31536001},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := makeRPCRequest(t, server, "walletpassphrase", []interface{}{"TestPassword123", tc.timeout})
+			if resp.Error == nil {
+				t.Errorf("walletpassphrase should fail with timeout %v", tc.timeout)
+			}
+			if resp.Error.Code != -32602 {
+				t.Errorf("expected error code -32602, got %d", resp.Error.Code)
+			}
+		})
+	}
+}

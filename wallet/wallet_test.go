@@ -325,36 +325,69 @@ func TestPushData(t *testing.T) {
 		data      []byte
 		wantLen   int
 		firstByte byte
+		wantErr   bool
 	}{
 		{
 			name:      "empty data",
 			data:      []byte{},
 			wantLen:   1,
 			firstByte: 0x00,
+			wantErr:   false,
 		},
 		{
 			name:      "short data (1 byte)",
 			data:      []byte{0x42},
 			wantLen:   2,
 			firstByte: 0x01,
+			wantErr:   false,
 		},
 		{
 			name:      "75 bytes",
 			data:      make([]byte, 75),
 			wantLen:   76,
 			firstByte: 0x4b, // 75
+			wantErr:   false,
 		},
 		{
 			name:      "76 bytes (OP_PUSHDATA1)",
 			data:      make([]byte, 76),
 			wantLen:   78, // 1 + 1 + 76
 			firstByte: 0x4c,
+			wantErr:   false,
+		},
+		{
+			name:      "256 bytes (OP_PUSHDATA2)",
+			data:      make([]byte, 256),
+			wantLen:   259, // 1 + 2 + 256
+			firstByte: 0x4d,
+			wantErr:   false,
+		},
+		{
+			name:      "65535 bytes (max OP_PUSHDATA2)",
+			data:      make([]byte, 65535),
+			wantLen:   65538, // 1 + 2 + 65535
+			firstByte: 0x4d,
+			wantErr:   false,
+		},
+		{
+			name:      "65536 bytes (OP_PUSHDATA4)",
+			data:      make([]byte, 65536),
+			wantLen:   65541, // 1 + 4 + 65536
+			firstByte: 0x4e,
+			wantErr:   false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := pushData(tt.data)
+			result, err := pushData(tt.data)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("pushData error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr {
+				return
+			}
 			if len(result) != tt.wantLen {
 				t.Errorf("expected length %d, got %d", tt.wantLen, len(result))
 			}

@@ -355,13 +355,20 @@ func readPushData(script []byte, offset int) ([]byte, int, error) {
 
 	case opcode == opPushData4:
 		// OP_PUSHDATA4: next 4 bytes are length (little-endian)
+		// Parse as uint32 to avoid sign-extension issues on 32-bit platforms
 		if offset+3 >= len(script) {
 			return nil, offset, fmt.Errorf("missing length bytes for OP_PUSHDATA4")
 		}
-		dataLen = int(script[offset]) |
-			(int(script[offset+1]) << 8) |
-			(int(script[offset+2]) << 16) |
-			(int(script[offset+3]) << 24)
+		lenU32 := uint32(script[offset]) |
+			(uint32(script[offset+1]) << 8) |
+			(uint32(script[offset+2]) << 16) |
+			(uint32(script[offset+3]) << 24)
+		// Convert to int with overflow check (int is at least 32 bits, max value 2^31-1)
+		// Scripts are never this large in practice, so reject absurdly large values
+		if lenU32 > 0x7FFFFFFF { // int32 max
+			return nil, offset, fmt.Errorf("OP_PUSHDATA4 length %d exceeds maximum", lenU32)
+		}
+		dataLen = int(lenU32)
 		offset += 4
 
 	default:
@@ -380,7 +387,7 @@ func readPushData(script []byte, offset int) ([]byte, int, error) {
 // validateConsensusNameFormat validates only the consensus-critical constraints for a name operation.
 // This function enforces only what Namecoin Core consensus enforces:
 // - Name length must be ≤ 255 bytes
-// - Value length must be ≤ MaxValueLength (1023 bytes for compatibility)
+// - Value length must be ≤ MaxValueLength (520 bytes, matching Namecoin Core)
 // It does NOT enforce namespace prefixes, JSON encoding, or UTF-8 validation,
 // as these are local policies, not part of the consensus protocol.
 // Mainnet blocks may contain names without d/, id/, p/ prefixes and values

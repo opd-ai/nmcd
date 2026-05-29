@@ -65,9 +65,9 @@ func TestNamecoinProtocolConstants(t *testing.T) {
 		t.Errorf("Expected MaxNameLength 255, got %d", MaxNameLength)
 	}
 
-	// Maximum value length: 1023 bytes
-	if MaxValueLength != 1023 {
-		t.Errorf("Expected MaxValueLength 1023, got %d", MaxValueLength)
+	// Maximum value length: 520 bytes (matching Namecoin Core consensus)
+	if MaxValueLength != 520 {
+		t.Errorf("Expected MaxValueLength 520, got %d", MaxValueLength)
 	}
 }
 

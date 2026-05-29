@@ -186,8 +186,8 @@ func (bc *BlockChain) SetBlockAuxPowFromBytes(blockHash *chainhash.Hash, seriali
 	}
 
 	// Extract version from header (bytes 0-3, little-endian)
-	version := int32(serializedBlock[0]) | int32(serializedBlock[1])<<8 |
-		int32(serializedBlock[2])<<16 | int32(serializedBlock[3])<<24
+	version := uint32(serializedBlock[0]) | uint32(serializedBlock[1])<<8 |
+		uint32(serializedBlock[2])<<16 | uint32(serializedBlock[3])<<24
 
 	hasAuxPowBit := (version & config.AuxPowVersionBit) != 0
 	if !hasAuxPowBit {

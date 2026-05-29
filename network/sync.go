@@ -17,6 +17,10 @@ import (
 // 2. Process received headers to learn about the chain
 // 3. Request full blocks for headers we don't have
 // 4. Transition from IBD to normal operation when caught up
+//
+// LOCK ORDERING: sm.mu (SyncManager.mu) must be acquired before pm.mu (PeerManager.mu).
+// This ordering is enforced in findReplacementPeer, which is called with sm.mu held.
+// Code must not acquire locks in the reverse order to prevent deadlock.
 type SyncManager struct {
 	pm         *PeerManager
 	blockchain *chain.BlockChain

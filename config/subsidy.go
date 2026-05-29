@@ -35,6 +35,11 @@ const (
 // Note: This matches Bitcoin's subsidy schedule, which Namecoin inherited.
 // There is no special "smooth start" in Namecoin - the first block reward is 50 NMC.
 func CalcBlockSubsidy(height int32, chainParams *chaincfg.Params) int64 {
+	// Heights should never be negative in real consensus paths
+	if height < 0 {
+		return 0
+	}
+
 	// Calculate the number of halvings that have occurred
 	halvings := int32(height) / chainParams.SubsidyReductionInterval
 

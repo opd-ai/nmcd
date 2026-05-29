@@ -518,6 +518,45 @@ func TestReadPushData(t *testing.T) {
 			t.Error("expected error for truncated data")
 		}
 	})
+
+	t.Run("OP_PUSHDATA4 with high byte (sign-extension guard)", func(t *testing.T) {
+		// MED-1 fix: OP_PUSHDATA4 with bytes that would sign-extend on 32-bit systems
+		// Length bytes: 0x80, 0x00, 0x00, 0x00 = 0x80000000 in little-endian
+		// On 32-bit signed int, this would become negative (-2147483648)
+		script := []byte{0x4e, 0x80, 0x00, 0x00, 0x00}
+		_, _, err := readPushData(script, 0)
+		if err == nil {
+			t.Error("expected error for oversized PUSHDATA4 length (0x80000000)")
+		}
+	})
+
+	t.Run("OP_PUSHDATA4 with maximum length", func(t *testing.T) {
+		// All bytes set: 0xFFFFFFFF = 4294967295 in little-endian
+		// Should be rejected as exceeding int32 max
+		script := []byte{0x4e, 0xFF, 0xFF, 0xFF, 0xFF}
+		_, _, err := readPushData(script, 0)
+		if err == nil {
+			t.Error("expected error for oversized PUSHDATA4 length (0xFFFFFFFF)")
+		}
+	})
+
+	t.Run("OP_PUSHDATA4 with valid data", func(t *testing.T) {
+		// Valid OP_PUSHDATA4 with small length
+		data := []byte("test")
+		script := []byte{0x4e, 0x04, 0x00, 0x00, 0x00}
+		script = append(script, data...)
+		
+		result, offset, err := readPushData(script, 0)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if string(result) != string(data) {
+			t.Errorf("expected %q, got %q", string(data), string(result))
+		}
+		if offset != len(script) {
+			t.Errorf("expected offset %d, got %d", len(script), offset)
+		}
+	})
 }
 
 func TestValidateNameFormat(t *testing.T) {
@@ -560,7 +599,7 @@ func TestValidateNameFormat(t *testing.T) {
 		{
 			name:      "max valid value length",
 			inputName: "d/test",
-			value:     `{"data":"` + strings.Repeat("x", 1000) + `"}`, // Valid JSON close to max length
+			value:     `{"data":"` + strings.Repeat("x", 500) + `"}`, // Valid JSON at ~520 bytes max
 			wantErr:   false,
 		},
 		{
@@ -2768,7 +2807,7 @@ func TestValidateNameFormat_WithValueEncoding(t *testing.T) {
 		{
 			name:        "max length value",
 			nameInput:   "d/example",
-			value:       `{"data":"` + strings.Repeat("x", 1000) + `"}`, // construct JSON that's exactly at limit
+			value:       `{"data":"` + strings.Repeat("x", 500) + `"}`, // construct JSON at ~520 byte consensus limit
 			expectError: false,
 		},
 	}
@@ -4894,9 +4933,9 @@ func TestValidateConsensusNameFormat(t *testing.T) {
 		{
 			name:      "Valid max-length value",
 			inputName: "d/name",
-			value:     strings.Repeat("x", 1023),
+			value:     strings.Repeat("x", 520),
 			wantErr:   false,
-			desc:      "value at exactly 1023 bytes (consensus max)",
+			desc:      "value at exactly 520 bytes (consensus max)",
 		},
 		{
 			name:      "Name too long (>255)",
@@ -4906,11 +4945,11 @@ func TestValidateConsensusNameFormat(t *testing.T) {
 			desc:      "name exceeding 255-byte consensus limit",
 		},
 		{
-			name:      "Value too long (>1023)",
+			name:      "Value too long (>520)",
 			inputName: "d/name",
-			value:     strings.Repeat("x", 1024),
+			value:     strings.Repeat("x", 521),
 			wantErr:   true,
-			desc:      "value exceeding 1023-byte consensus limit",
+			desc:      "value exceeding 520-byte consensus limit",
 		},
 	}
 

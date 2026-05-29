@@ -580,8 +580,19 @@ func BuildNameUpdateScript(name, value string, pubKeyHash []byte) ([]byte, error
 
 	script := make([]byte, 0, 128)
 	script = append(script, opNameUpdate)
-	script = append(script, pushData([]byte(name))...)
-	script = append(script, pushData([]byte(value))...)
+	
+	nameBytes, err := pushData([]byte(name))
+	if err != nil {
+		return nil, fmt.Errorf("failed to push name: %w", err)
+	}
+	script = append(script, nameBytes...)
+	
+	valueBytes, err := pushData([]byte(value))
+	if err != nil {
+		return nil, fmt.Errorf("failed to push value: %w", err)
+	}
+	script = append(script, valueBytes...)
+	
 	script = append(script, op2Drop, opDrop)
 	script = appendP2PKHScript(script, pubKeyHash)
 
@@ -606,7 +617,13 @@ func BuildNameNewScript(hash, pubKeyHash []byte) ([]byte, error) {
 
 	script := make([]byte, 0, 64)
 	script = append(script, opNameNew)
-	script = append(script, pushData(hash)...)
+	
+	hashBytes, err := pushData(hash)
+	if err != nil {
+		return nil, fmt.Errorf("failed to push hash: %w", err)
+	}
+	script = append(script, hashBytes...)
+	
 	script = append(script, op2Drop)
 	script = appendP2PKHScript(script, pubKeyHash)
 
@@ -641,9 +658,25 @@ func BuildNameFirstUpdateScript(name, randHex, value string, pubKeyHash []byte) 
 
 	script := make([]byte, 0, 256)
 	script = append(script, opNameFirstUpdate)
-	script = append(script, pushData([]byte(name))...)
-	script = append(script, pushData(randBytes)...) // Push decoded bytes, not hex string
-	script = append(script, pushData([]byte(value))...)
+	
+	nameBytes, err := pushData([]byte(name))
+	if err != nil {
+		return nil, fmt.Errorf("failed to push name: %w", err)
+	}
+	script = append(script, nameBytes...)
+	
+	randBytes2, err := pushData(randBytes) // Push decoded bytes, not hex string
+	if err != nil {
+		return nil, fmt.Errorf("failed to push rand: %w", err)
+	}
+	script = append(script, randBytes2...)
+	
+	valueBytes, err := pushData([]byte(value))
+	if err != nil {
+		return nil, fmt.Errorf("failed to push value: %w", err)
+	}
+	script = append(script, valueBytes...)
+	
 	script = append(script, op2Drop, op2Drop)
 	script = appendP2PKHScript(script, pubKeyHash)
 
@@ -651,19 +684,26 @@ func BuildNameFirstUpdateScript(name, randHex, value string, pubKeyHash []byte) 
 }
 
 // pushData returns the script bytes to push data.
-func pushData(data []byte) []byte {
+func pushData(data []byte) ([]byte, error) {
 	l := len(data)
 	if l == 0 {
-		return []byte{0x00} // OP_0
+		return []byte{0x00}, nil // OP_0
 	}
 	if l <= 75 {
-		return append([]byte{byte(l)}, data...)
+		return append([]byte{byte(l)}, data...), nil
 	}
 	if l <= 255 {
-		return append([]byte{0x4c, byte(l)}, data...) // OP_PUSHDATA1
+		return append([]byte{0x4c, byte(l)}, data...), nil // OP_PUSHDATA1
 	}
-	// OP_PUSHDATA2 for larger data
-	return append([]byte{0x4d, byte(l), byte(l >> 8)}, data...)
+	if l <= 65535 {
+		// OP_PUSHDATA2 for 256-65535 bytes
+		return append([]byte{0x4d, byte(l), byte(l >> 8)}, data...), nil
+	}
+	if l <= 0xFFFFFFFF {
+		// OP_PUSHDATA4 for 65536 to 4GB (defensive for future use, even though data is currently ≤520)
+		return append([]byte{0x4e, byte(l), byte(l >> 8), byte(l >> 16), byte(l >> 24)}, data...), nil
+	}
+	return nil, fmt.Errorf("data exceeds maximum size: %d bytes", l)
 }
 
 // UTXO represents an unspent transaction output.
