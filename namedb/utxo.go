@@ -17,6 +17,107 @@ func makeUTXOKey(txHash *chainhash.Hash, outIndex uint32) []byte {
 	return key
 }
 
+// makeUTXOAddressKey creates the address index key for a UTXO.
+func makeUTXOAddressKey(address string, txHash *chainhash.Hash, outIndex uint32) []byte {
+	key := make([]byte, len(address)+txHashSize+4)
+	copy(key, address)
+	copy(key[len(address):], txHash[:])
+	binary.BigEndian.PutUint32(key[len(address)+txHashSize:], outIndex)
+	return key
+}
+
+// makeSpentUTXOHeightKey creates the height index key for a spent UTXO.
+func makeSpentUTXOHeightKey(height int32, txHash *chainhash.Hash, outIndex uint32) []byte {
+	key := make([]byte, 4+txHashSize+4)
+	binary.BigEndian.PutUint32(key[:4], uint32(height))
+	copy(key[4:4+txHashSize], txHash[:])
+	binary.BigEndian.PutUint32(key[4+txHashSize:], outIndex)
+	return key
+}
+
+// parseSpentUTXOHeightKey decodes a spent-UTXO height index key.
+func parseSpentUTXOHeightKey(key []byte) (chainhash.Hash, uint32, bool) {
+	if len(key) < 4+txHashSize+4 {
+		return chainhash.Hash{}, 0, false
+	}
+	var txHash chainhash.Hash
+	copy(txHash[:], key[4:4+txHashSize])
+	return txHash, binary.BigEndian.Uint32(key[4+txHashSize:]), true
+}
+
+// collectSpentUTXOKeysForHeight gathers spent-UTXO index keys for a single block height.
+func collectSpentUTXOKeysForHeight(idxBkt *bbolt.Bucket, height int32) [][]byte {
+	heightPrefix := make([]byte, 4)
+	binary.BigEndian.PutUint32(heightPrefix, uint32(height))
+
+	var keys [][]byte
+	c := idxBkt.Cursor()
+	for k, _ := c.Seek(heightPrefix); k != nil && bytes.HasPrefix(k, heightPrefix); k, _ = c.Next() {
+		keys = append(keys, copyBytes(k))
+	}
+	return keys
+}
+
+// collectSpentUTXOKeysBeforeHeight gathers spent-UTXO index keys older than keepFromHeight.
+func collectSpentUTXOKeysBeforeHeight(idxBkt *bbolt.Bucket, keepFromHeight int32) [][]byte {
+	var keys [][]byte
+	c := idxBkt.Cursor()
+	for k, _ := c.First(); k != nil; k, _ = c.Next() {
+		if len(k) < 4 || int32(binary.BigEndian.Uint32(k[:4])) >= keepFromHeight {
+			continue
+		}
+		keys = append(keys, copyBytes(k))
+	}
+	return keys
+}
+
+// restoreSpentUTXOEntry restores one spent UTXO back into the active UTXO buckets.
+func restoreSpentUTXOEntry(indexKey []byte, spentBkt, utxoBkt, addrBkt *bbolt.Bucket) error {
+	txHash, outIndex, ok := parseSpentUTXOHeightKey(indexKey)
+	if !ok {
+		return nil
+	}
+	utxoKey := makeUTXOKey(&txHash, outIndex)
+	data := spentBkt.Get(utxoKey)
+	if data == nil {
+		return nil
+	}
+	utxo, err := decodeUTXO(&txHash, outIndex, data)
+	if err != nil {
+		return nil
+	}
+	return putRestoredUTXO(utxoKey, utxo, utxoBkt, addrBkt)
+}
+
+// putRestoredUTXO writes a restored UTXO back to the active set and address index.
+func putRestoredUTXO(utxoKey []byte, utxo *UTXO, utxoBkt, addrBkt *bbolt.Bucket) error {
+	utxoData, err := encodeUTXO(utxo)
+	if err != nil {
+		return nil
+	}
+	if err := utxoBkt.Put(utxoKey, utxoData); err != nil {
+		return fmt.Errorf("failed to restore UTXO %s:%d: %w", utxo.TxHash, utxo.OutIndex, err)
+	}
+	if err := addrBkt.Put(makeUTXOAddressKey(utxo.Address, &utxo.TxHash, utxo.OutIndex), []byte{1}); err != nil {
+		return fmt.Errorf("failed to restore UTXO address index: %w", err)
+	}
+	return nil
+}
+
+// deleteSpentUTXOBackup removes spent-UTXO backup data and index state for one entry.
+func deleteSpentUTXOBackup(indexKey []byte, spentBkt, idxBkt *bbolt.Bucket, message string) error {
+	txHash, outIndex, ok := parseSpentUTXOHeightKey(indexKey)
+	if ok {
+		if err := spentBkt.Delete(makeUTXOKey(&txHash, outIndex)); err != nil {
+			return fmt.Errorf(message, txHash, outIndex, err)
+		}
+	}
+	if err := idxBkt.Delete(indexKey); err != nil {
+		return fmt.Errorf("failed to delete spent UTXO index entry: %w", err)
+	}
+	return nil
+}
+
 // encodeUTXO encodes a UTXO for storage
 func encodeUTXO(utxo *UTXO) ([]byte, error) {
 	// Format: value(8) + height(4) + address_len(1) + address + script_len(2) + script
@@ -94,14 +195,8 @@ func (ndb *NameDatabase) AddUTXO(utxo *UTXO) error {
 				return err
 			}
 
-			// Add to address index
-			// Key: address + txhash + outindex
-			addrKey := make([]byte, len(utxo.Address)+txHashSize+4)
-			copy(addrKey, []byte(utxo.Address))
-			copy(addrKey[len(utxo.Address):], utxo.TxHash[:])
-			binary.BigEndian.PutUint32(addrKey[len(utxo.Address)+txHashSize:], utxo.OutIndex)
-
-			return addrBkt.Put(addrKey, []byte{1}) // Value doesn't matter, just presence
+			// Add to address index.
+			return addrBkt.Put(makeUTXOAddressKey(utxo.Address, &utxo.TxHash, utxo.OutIndex), []byte{1})
 		})
 	})
 }
@@ -134,11 +229,7 @@ func (ndb *NameDatabase) RemoveUTXO(txHash *chainhash.Hash, outIndex uint32) err
 			}
 
 			// Remove from address index
-			addrKey := make([]byte, len(utxo.Address)+txHashSize+4)
-			copy(addrKey, []byte(utxo.Address))
-			copy(addrKey[len(utxo.Address):], txHash[:])
-			binary.BigEndian.PutUint32(addrKey[len(utxo.Address)+txHashSize:], outIndex)
-			if err := addrBkt.Delete(addrKey); err != nil {
+			if err := addrBkt.Delete(makeUTXOAddressKey(utxo.Address, txHash, outIndex)); err != nil {
 				return err
 			}
 
@@ -203,42 +294,41 @@ func (ndb *NameDatabase) GetUTXOsForAddress(address string) ([]*UTXO, error) {
 			return err
 		}
 		utxoBkt, addrBkt := bkts[0], bkts[1]
-
-		// Seek to the address prefix
 		prefix := []byte(address)
 		c := addrBkt.Cursor()
-
 		for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
-			// Verify key is exactly address + txhash + outindex (no partial matches)
-			expectedKeyLen := len(address) + txHashSize + 4
-			if len(k) != expectedKeyLen {
-				continue
+			utxo, ok := loadAddressIndexedUTXO(address, k, utxoBkt)
+			if ok {
+				utxos = append(utxos, utxo)
 			}
-
-			// Extract txhash and outindex from the key
-			var txHash chainhash.Hash
-			copy(txHash[:], k[len(address):len(address)+txHashSize])
-			outIndex := binary.BigEndian.Uint32(k[len(address)+txHashSize:])
-
-			// Get the full UTXO data
-			utxoKey := makeUTXOKey(&txHash, outIndex)
-			data := utxoBkt.Get(utxoKey)
-			if data == nil {
-				continue // Inconsistency - skip
-			}
-
-			utxo, err := decodeUTXO(&txHash, outIndex, data)
-			if err != nil {
-				continue // Skip corrupted entries
-			}
-
-			utxos = append(utxos, utxo)
 		}
-
 		return nil
 	})
-
 	return utxos, err
+}
+
+// loadAddressIndexedUTXO loads a UTXO referenced by an address index key.
+func loadAddressIndexedUTXO(address string, indexKey []byte, utxoBkt *bbolt.Bucket) (*UTXO, bool) {
+	txHash, outIndex, ok := parseAddressIndexKey(address, indexKey)
+	if !ok {
+		return nil, false
+	}
+	data := utxoBkt.Get(makeUTXOKey(&txHash, outIndex))
+	if data == nil {
+		return nil, false
+	}
+	utxo, err := decodeUTXO(&txHash, outIndex, data)
+	return utxo, err == nil
+}
+
+// parseAddressIndexKey extracts the tx hash and output index from an address index key.
+func parseAddressIndexKey(address string, key []byte) (chainhash.Hash, uint32, bool) {
+	if len(key) != len(address)+txHashSize+4 {
+		return chainhash.Hash{}, 0, false
+	}
+	var txHash chainhash.Hash
+	copy(txHash[:], key[len(address):len(address)+txHashSize])
+	return txHash, binary.BigEndian.Uint32(key[len(address)+txHashSize:]), true
 }
 
 // GetNameUTXO retrieves the UTXO that holds a specific name
@@ -291,14 +381,8 @@ func (ndb *NameDatabase) StoreSpentUTXO(utxo *UTXO, spentAtHeight int32) error {
 			return err
 		}
 
-		// Add to height index for efficient lookup and cleanup
-		// Key: height(4) + txhash(32) + outindex(4)
-		heightKey := make([]byte, 4+32+4)
-		binary.BigEndian.PutUint32(heightKey[0:4], uint32(spentAtHeight))
-		copy(heightKey[4:36], utxo.TxHash[:])
-		binary.BigEndian.PutUint32(heightKey[36:40], utxo.OutIndex)
-
-		return idxBkt.Put(heightKey, []byte{1}) // Value doesn't matter, just presence
+		// Add to height index for efficient lookup and cleanup.
+		return idxBkt.Put(makeSpentUTXOHeightKey(spentAtHeight, &utxo.TxHash, utxo.OutIndex), []byte{1})
 	})
 }
 
@@ -317,83 +401,14 @@ func (ndb *NameDatabase) RestoreSpentUTXOsForBlock(height int32) error {
 		spentBkt, idxBkt := bkts[0], bkts[1]
 		utxoBkt, addrBkt := bkts[2], bkts[3]
 
-		// Seek to height prefix in index
-		heightPrefix := make([]byte, 4)
-		binary.BigEndian.PutUint32(heightPrefix, uint32(height))
-
-		c := idxBkt.Cursor()
-		var keysToDelete [][]byte
-
-		for k, _ := c.Seek(heightPrefix); k != nil && bytes.HasPrefix(k, heightPrefix); k, _ = c.Next() {
-			// Extract txhash and outindex from the index key
-			if len(k) < 4+32+4 {
-				continue
+		for _, indexKey := range collectSpentUTXOKeysForHeight(idxBkt, height) {
+			if err := restoreSpentUTXOEntry(indexKey, spentBkt, utxoBkt, addrBkt); err != nil {
+				return err
 			}
-
-			var txHash chainhash.Hash
-			copy(txHash[:], k[4:36])
-			outIndex := binary.BigEndian.Uint32(k[36:40])
-
-			// Get the spent UTXO data
-			utxoKey := makeUTXOKey(&txHash, outIndex)
-			data := spentBkt.Get(utxoKey)
-			if data == nil {
-				// Inconsistency - index exists but data doesn't
-				keysToDelete = append(keysToDelete, append([]byte(nil), k...))
-				continue
-			}
-
-			// Decode UTXO
-			utxo, err := decodeUTXO(&txHash, outIndex, data)
-			if err != nil {
-				// Skip corrupted entries
-				keysToDelete = append(keysToDelete, append([]byte(nil), k...))
-				continue
-			}
-
-			// Restore to active UTXO set
-			utxoData, err := encodeUTXO(utxo)
-			if err != nil {
-				// Skip entries that cannot be re-encoded and mark them for cleanup
-				keysToDelete = append(keysToDelete, append([]byte(nil), k...))
-				continue
-			}
-
-			// Add back to main UTXO bucket
-			if err := utxoBkt.Put(utxoKey, utxoData); err != nil {
-				return fmt.Errorf("failed to restore UTXO %s:%d: %w", txHash, outIndex, err)
-			}
-
-			// Add back to address index
-			addrKey := make([]byte, len(utxo.Address)+txHashSize+4)
-			copy(addrKey, []byte(utxo.Address))
-			copy(addrKey[len(utxo.Address):], utxo.TxHash[:])
-			binary.BigEndian.PutUint32(addrKey[len(utxo.Address)+txHashSize:], utxo.OutIndex)
-			if err := addrBkt.Put(addrKey, []byte{1}); err != nil {
-				return fmt.Errorf("failed to restore UTXO address index: %w", err)
-			}
-
-			// Mark for deletion from spent bucket
-			keysToDelete = append(keysToDelete, append([]byte(nil), k...))
-		}
-
-		// Clean up spent UTXO records
-		for _, k := range keysToDelete {
-			// Extract txhash and outindex to delete from spent bucket
-			if len(k) >= 4+32+4 {
-				var txHash chainhash.Hash
-				copy(txHash[:], k[4:36])
-				outIndex := binary.BigEndian.Uint32(k[36:40])
-				utxoKey := makeUTXOKey(&txHash, outIndex)
-				if err := spentBkt.Delete(utxoKey); err != nil {
-					return fmt.Errorf("failed to delete spent UTXO %s:%d: %w", txHash, outIndex, err)
-				}
-			}
-			if err := idxBkt.Delete(k); err != nil {
-				return fmt.Errorf("failed to delete spent UTXO index entry: %w", err)
+			if err := deleteSpentUTXOBackup(indexKey, spentBkt, idxBkt, "failed to delete spent UTXO %s:%d: %w"); err != nil {
+				return err
 			}
 		}
-
 		return nil
 	})
 }
@@ -412,41 +427,11 @@ func (ndb *NameDatabase) CleanupOldSpentUTXOs(keepFromHeight int32) error {
 		}
 		spentBkt, idxBkt := bkts[0], bkts[1]
 
-		c := idxBkt.Cursor()
-		var keysToDelete [][]byte
-
-		// Iterate through all entries
-		for k, _ := c.First(); k != nil; k, _ = c.Next() {
-			if len(k) < 4 {
-				continue
-			}
-
-			// Extract height from key
-			height := int32(binary.BigEndian.Uint32(k[0:4]))
-
-			// If height is older than keepFromHeight, mark for deletion
-			if height < keepFromHeight {
-				keysToDelete = append(keysToDelete, append([]byte(nil), k...))
+		for _, indexKey := range collectSpentUTXOKeysBeforeHeight(idxBkt, keepFromHeight) {
+			if err := deleteSpentUTXOBackup(indexKey, spentBkt, idxBkt, "failed to delete old spent UTXO %s:%d: %w"); err != nil {
+				return err
 			}
 		}
-
-		// Delete old entries
-		for _, k := range keysToDelete {
-			// Extract txhash and outindex to delete from spent bucket
-			if len(k) >= 4+32+4 {
-				var txHash chainhash.Hash
-				copy(txHash[:], k[4:36])
-				outIndex := binary.BigEndian.Uint32(k[36:40])
-				utxoKey := makeUTXOKey(&txHash, outIndex)
-				if err := spentBkt.Delete(utxoKey); err != nil {
-					return fmt.Errorf("failed to delete old spent UTXO %s:%d: %w", txHash, outIndex, err)
-				}
-			}
-			if err := idxBkt.Delete(k); err != nil {
-				return fmt.Errorf("failed to delete old spent UTXO index entry: %w", err)
-			}
-		}
-
 		return nil
 	})
 }
