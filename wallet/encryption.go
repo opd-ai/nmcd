@@ -75,6 +75,20 @@ func deriveKey(password []byte, salt []byte) ([]byte, error) {
 	return key, nil
 }
 
+// buildCipherGCM creates an AES-GCM cipher from a derived key.
+func buildCipherGCM(key []byte) (cipher.AEAD, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cipher: %w", err)
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GCM: %w", err)
+	}
+	return gcm, nil
+}
+
 // encrypt encrypts plaintext using AES-256-GCM with a password-derived key.
 // Returns the encrypted data with salt and nonce, or an error.
 func encrypt(plaintext []byte, password []byte) (*encryptedData, error) {

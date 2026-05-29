@@ -227,12 +227,24 @@ func resolveLogger(cfg *Config) *logging.Logger {
 
 // checkContextAndState validates context and client state.
 func (c *EmbeddedClient) checkContextAndState(ctx context.Context) error {
+	if err := checkClientContext(ctx); err != nil {
+		return err
+	}
+	return c.checkOpenState()
+}
+
+// checkClientContext validates that the provided context is still active.
+func checkClientContext(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		return ErrContextCanceled
 	default:
+		return nil
 	}
+}
 
+// checkOpenState verifies that the client has not been closed.
+func (c *EmbeddedClient) checkOpenState() error {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if c.closed {
@@ -455,15 +467,12 @@ func (c *EmbeddedClient) RegisterName(ctx context.Context, name, value string, o
 
 // checkClientState verifies the client is ready to process requests.
 func (c *EmbeddedClient) checkClientState(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return ErrContextCanceled
-	default:
+	if err := checkClientContext(ctx); err != nil {
+		return err
 	}
 
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-
 	if c.closed {
 		return fmt.Errorf("client is closed")
 	}
@@ -833,7 +842,7 @@ func (c *EmbeddedClient) waitForUpdateConfirmation(ctx context.Context, txHash s
 //	    IncludeExpired: false,
 //	})
 func (c *EmbeddedClient) ListNames(ctx context.Context, filter *ListFilter) ([]*NameRecord, error) {
-	if err := c.checkListNamesState(ctx); err != nil {
+	if err := c.checkContextAndState(ctx); err != nil {
 		return nil, err
 	}
 

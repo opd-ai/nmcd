@@ -79,14 +79,7 @@ func (s *Server) nameShow(req *Request) *Response {
 // signing and broadcasting, the wallet must have the private key for the
 // address that owns the name.
 func (s *Server) nameUpdate(req *Request) *Response {
-	if errResp := s.requireWallet(req.ID); errResp != nil {
-		return errResp
-	}
-	if errResp := s.requireBlockchain(req.ID); errResp != nil {
-		return errResp
-	}
-
-	params, errResp := parseStringParams(req.Params, req.ID, 2, "[\"name\", \"value\"] or [\"name\", \"value\", \"address\"]")
+	params, errResp := s.prepareNameWalletRequest(req, 2, "[\"name\", \"value\"] or [\"name\", \"value\", \"address\"]")
 	if errResp != nil {
 		return errResp
 	}
@@ -137,6 +130,17 @@ func (s *Server) nameUpdate(req *Request) *Response {
 	}
 
 	return s.broadcastAndRespond(tx, req.ID, result)
+}
+
+// prepareNameWalletRequest ensures wallet and blockchain access, then parses string params.
+func (s *Server) prepareNameWalletRequest(req *Request, minParams int, usage string) ([]string, *Response) {
+	if errResp := s.requireWallet(req.ID); errResp != nil {
+		return nil, errResp
+	}
+	if errResp := s.requireBlockchain(req.ID); errResp != nil {
+		return nil, errResp
+	}
+	return parseStringParams(req.Params, req.ID, minParams, usage)
 }
 
 // parseOptionalDestAddress parses an optional P2PKH destination address from the third parameter.
@@ -305,14 +309,7 @@ func (s *Server) getWalletAddressAndUTXOs(reqID interface{}) (btcutil.Address, [
 //   - rand: Hex-encoded random salt (MUST be saved for NAME_FIRSTUPDATE)
 //   - status: "broadcasted" indicating transaction is in mempool
 func (s *Server) nameNew(req *Request) *Response {
-	if errResp := s.requireWallet(req.ID); errResp != nil {
-		return errResp
-	}
-	if errResp := s.requireBlockchain(req.ID); errResp != nil {
-		return errResp
-	}
-
-	params, errResp := parseStringParams(req.Params, req.ID, 1, "[\"name\"]")
+	params, errResp := s.prepareNameWalletRequest(req, 1, "[\"name\"]")
 	if errResp != nil {
 		return errResp
 	}
@@ -379,14 +376,7 @@ func (s *Server) checkNameNotActive(name string, reqID interface{}) *Response {
 //   - value: The initial value
 //   - status: "broadcasted" indicating transaction is in mempool
 func (s *Server) nameFirstUpdate(req *Request) *Response {
-	if errResp := s.requireWallet(req.ID); errResp != nil {
-		return errResp
-	}
-	if errResp := s.requireBlockchain(req.ID); errResp != nil {
-		return errResp
-	}
-
-	params, errResp := parseStringParams(req.Params, req.ID, 3, "[\"name\", \"rand\", \"value\"]")
+	params, errResp := s.prepareNameWalletRequest(req, 3, "[\"name\", \"rand\", \"value\"]")
 	if errResp != nil {
 		return errResp
 	}

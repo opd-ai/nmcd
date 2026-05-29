@@ -578,19 +578,23 @@ func (bc *BlockChain) validateNameNewOp(txOut *wire.TxOut, extra []byte, txHash 
 	return nil
 }
 
-// validateNameFirstUpdateOp validates a NAME_FIRSTUPDATE operation.
-func (bc *BlockChain) validateNameFirstUpdateOp(txOut *wire.TxOut, name string, extra []byte, txHash chainhash.Hash, height int32, ctx *nameValidationContext) error {
-	// Validate NAME_FIRSTUPDATE output value meets dust limit
+// validateNamedTxOut checks dust rules and duplicate in-block operations for a name output.
+func validateNamedTxOut(txOut *wire.TxOut, name string, txHash chainhash.Hash, op string, ctx *nameValidationContext) error {
 	if txOut.Value < config.DustLimit {
-		return fmt.Errorf("name_firstupdate output value %d below dust limit %d in tx %s",
-			txOut.Value, config.DustLimit, txHash)
+		return fmt.Errorf("%s output value %d below dust limit %d in tx %s", op, txOut.Value, config.DustLimit, txHash)
 	}
-
-	// Check for duplicate name operation in this block
 	if ctx.seenNames[name] {
 		return fmt.Errorf("duplicate name operation in block for name: %s (tx: %s)", name, txHash)
 	}
 	ctx.seenNames[name] = true
+	return nil
+}
+
+// validateNameFirstUpdateOp validates a NAME_FIRSTUPDATE operation.
+func (bc *BlockChain) validateNameFirstUpdateOp(txOut *wire.TxOut, name string, extra []byte, txHash chainhash.Hash, height int32, ctx *nameValidationContext) error {
+	if err := validateNamedTxOut(txOut, name, txHash, "name_firstupdate", ctx); err != nil {
+		return err
+	}
 
 	// Verify name doesn't already exist (or is expired)
 	existingRecord, err := bc.nameDB.GetName(name)
@@ -636,17 +640,9 @@ func (bc *BlockChain) validateNameFirstUpdateOp(txOut *wire.TxOut, name string, 
 
 // validateNameUpdateOp validates a NAME_UPDATE operation.
 func (bc *BlockChain) validateNameUpdateOp(msgTx *wire.MsgTx, txOut *wire.TxOut, name string, txHash chainhash.Hash, height int32, ctx *nameValidationContext) error {
-	// Validate NAME_UPDATE output value meets dust limit
-	if txOut.Value < config.DustLimit {
-		return fmt.Errorf("name_update output value %d below dust limit %d in tx %s",
-			txOut.Value, config.DustLimit, txHash)
+	if err := validateNamedTxOut(txOut, name, txHash, "name_update", ctx); err != nil {
+		return err
 	}
-
-	// Check for duplicate name operation in this block
-	if ctx.seenNames[name] {
-		return fmt.Errorf("duplicate name operation in block for name: %s (tx: %s)", name, txHash)
-	}
-	ctx.seenNames[name] = true
 
 	// Verify name exists and not expired
 	record, err := bc.nameDB.GetName(name)
