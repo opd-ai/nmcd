@@ -243,108 +243,103 @@ func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.Behavi
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 
-	// Track processing time for metrics
 	startTime := time.Now()
-
-	// Validate proof of work (difficulty) before processing
-	// For pre-AuxPow blocks (< activation height), we validate the block's own hash.
-	// For AuxPow blocks (>= activation height), the proof-of-work is validated via
-	// the parent block in validateAuxPow(), so we skip the child-header PoW check.
-	//
-	// This ensures the block hash meets the difficulty target specified in the block header.
-	// While btcd's ProcessBlock also validates this, we perform an explicit check here for:
-	// 1. Clear visibility that difficulty validation is happening
-	// 2. Early rejection of invalid blocks before expensive processing
-	// 3. Explicit verification that Namecoin's PoW parameters are correctly validated
-	//
-	// Namecoin uses the same difficulty adjustment algorithm as Bitcoin:
-	// - Retargets every 2016 blocks
-	// - Targets 10 minute block time
-	// - Max 4x adjustment per retarget period
 	height := bc.resolveBlockHeight(block)
-	if height >= 0 && height < config.GetAuxPowActivationHeight(bc.chainParams) {
-		// Pre-AuxPow block: validate the block's own hash against difficulty
-		if err := bc.validateProofOfWork(block); err != nil {
-			metrics.Get().RecordBlockRejected()
-			metrics.Get().RecordValidationError("proof_of_work")
-			return false, false, fmt.Errorf("invalid proof of work for block %s at height %d: %w",
-				block.Hash(), block.Height(), err)
-		}
-	}
-	// For AuxPow blocks (height >= activation), skip child-header PoW check.
-	// The parent block's PoW is validated in validateAuxPow() via auxPow.ValidateAuxPow()
-
-	// Validate block version (AuxPow version bit) before processing
-	// This ensures blocks at or after AuxPow activation height have the required version bit set.
-	// This is a consensus-critical check that must match Namecoin Core's validation.
-	// Blocks that fail this check will be rejected to prevent chain forks.
-	if err := bc.validateBlockVersion(block); err != nil {
-		metrics.Get().RecordBlockRejected()
-		metrics.Get().RecordValidationError("version")
-		return false, false, fmt.Errorf("invalid block version for block %s at height %d: %w",
-			block.Hash(), block.Height(), err)
+	if err := bc.validateBlockForProcessing(block, height); err != nil {
+		return false, false, err
 	}
 
-	// Validate AuxPow for blocks at or after activation height
-	// This checks if the block requires AuxPow validation based on height and version bits.
-	// AuxPow blocks (>= 19,200 on mainnet) include merged mining proof that must be validated.
-	if err := bc.validateAuxPow(block); err != nil {
-		metrics.Get().RecordBlockRejected()
-		metrics.Get().RecordValidationError("auxpow")
-		return false, false, fmt.Errorf("invalid AuxPow for block %s at height %d: %w",
-			block.Hash(), block.Height(), err)
-	}
-
-	// Validate block subsidy before processing
-	if err := bc.validateBlockSubsidy(block); err != nil {
-		metrics.Get().RecordBlockRejected()
-		metrics.Get().RecordValidationError("subsidy")
-		return false, false, fmt.Errorf("invalid block subsidy for block %s at height %d: %w",
-			block.Hash(), block.Height(), err)
-	}
-
-	// Validate name operations before processing
-	if err := bc.validateNameOperations(block); err != nil {
-		metrics.Get().RecordBlockRejected()
-		metrics.Get().RecordNameError()
-		return false, false, fmt.Errorf("invalid name operations in block %s at height %d: %w",
-			block.Hash(), block.Height(), err)
-	}
-
-	// Process the block using btcd blockchain
-	// btcd will perform additional validations including:
-	// - Difficulty retargeting logic (every 2016 blocks)
-	// - Timestamp validation
-	// - Merkle root verification
-	// - Transaction validation
-	// - etc.
-	//
-	// For AuxPow-era blocks (height >= activation), suppress btcd's built-in
-	// child-header PoW check since those blocks are proved by the parent
-	// block's hash, which was already validated in validateAuxPow() above.
-	btcdFlags := flags
-	if height >= config.GetAuxPowActivationHeight(bc.chainParams) {
-		btcdFlags |= blockchain.BFNoPoWCheck
-	}
-	isMainChain, isOrphan, err := bc.BlockChain.ProcessBlock(block, btcdFlags)
+	isMainChain, isOrphan, err := bc.processBtcdBlock(block, flags, height)
 	if err != nil {
 		metrics.Get().RecordBlockRejected()
 		return isMainChain, isOrphan, err
 	}
-
-	// Update name database if block is on main chain
-	if isMainChain {
-		if err := bc.updateNameDatabase(block); err != nil {
-			return isMainChain, isOrphan, fmt.Errorf("failed to update name database for block %s at height %d: %w",
-				block.Hash(), block.Height(), err)
-		}
+	if err := bc.updateMainChainNames(block, isMainChain); err != nil {
+		return isMainChain, isOrphan, err
 	}
 
-	// Record successful block processing
 	processingTime := time.Since(startTime)
 	metrics.Get().RecordBlockProcessed(block.Hash().String(), block.Height(), isMainChain, isOrphan, processingTime)
-
 	return isMainChain, isOrphan, nil
+}
+
+func (bc *BlockChain) validateBlockForProcessing(block *btcutil.Block, height int32) error {
+	checks := []struct {
+		metric string
+		format string
+		run    func() error
+	}{
+		{
+			metric: "proof_of_work",
+			format: "invalid proof of work for block %s at height %d: %w",
+			run: func() error {
+				if !bc.requiresChildPoWCheck(height) {
+					return nil
+				}
+				return bc.validateProofOfWork(block)
+			},
+		},
+		{
+			metric: "version",
+			format: "invalid block version for block %s at height %d: %w",
+			run:    func() error { return bc.validateBlockVersion(block) },
+		},
+		{
+			metric: "auxpow",
+			format: "invalid AuxPow for block %s at height %d: %w",
+			run:    func() error { return bc.validateAuxPow(block) },
+		},
+		{
+			metric: "subsidy",
+			format: "invalid block subsidy for block %s at height %d: %w",
+			run:    func() error { return bc.validateBlockSubsidy(block) },
+		},
+		{
+			metric: "name",
+			format: "invalid name operations in block %s at height %d: %w",
+			run:    func() error { return bc.validateNameOperations(block) },
+		},
+	}
+
+	for _, check := range checks {
+		if err := check.run(); err != nil {
+			bc.recordRejectedValidation(check.metric)
+			return fmt.Errorf(check.format, block.Hash(), block.Height(), err)
+		}
+	}
+	return nil
+}
+
+func (bc *BlockChain) requiresChildPoWCheck(height int32) bool {
+	return height >= 0 && height < config.GetAuxPowActivationHeight(bc.chainParams)
+}
+
+func (bc *BlockChain) recordRejectedValidation(metric string) {
+	metrics.Get().RecordBlockRejected()
+	if metric == "name" {
+		metrics.Get().RecordNameError()
+		return
+	}
+	metrics.Get().RecordValidationError(metric)
+}
+
+func (bc *BlockChain) processBtcdBlock(block *btcutil.Block, flags blockchain.BehaviorFlags, height int32) (bool, bool, error) {
+	btcdFlags := flags
+	if height >= config.GetAuxPowActivationHeight(bc.chainParams) {
+		btcdFlags |= blockchain.BFNoPoWCheck
+	}
+	return bc.BlockChain.ProcessBlock(block, btcdFlags)
+}
+
+func (bc *BlockChain) updateMainChainNames(block *btcutil.Block, isMainChain bool) error {
+	if !isMainChain {
+		return nil
+	}
+	if err := bc.updateNameDatabase(block); err != nil {
+		return fmt.Errorf("failed to update name database for block %s at height %d: %w",
+			block.Hash(), block.Height(), err)
+	}
+	return nil
 }
 
 // validateBlockSubsidy validates that the coinbase transaction reward does not exceed
@@ -360,61 +355,44 @@ func (bc *BlockChain) ProcessBlock(block *btcutil.Block, flags blockchain.Behavi
 // When UTXO data is unavailable for historical blocks, fee validation is skipped
 // to avoid false rejections of legitimate blocks.
 func (bc *BlockChain) validateBlockSubsidy(block *btcutil.Block) error {
-	// Get the coinbase transaction (always the first transaction)
-	if len(block.Transactions()) == 0 {
+	txs := block.Transactions()
+	if len(txs) == 0 {
 		return fmt.Errorf("block has no transactions")
 	}
 
-	coinbaseTx := block.Transactions()[0].MsgTx()
-
-	// Calculate total coinbase outputs
-	var totalOutput int64
-	for _, txOut := range coinbaseTx.TxOut {
-		totalOutput += txOut.Value
+	totalOutput, err := sumOutputValues(txs[0].MsgTx())
+	if err != nil {
+		return err
 	}
-
-	// Determine the block height. For network blocks, we derive it from the parent
-	// block's height. For test blocks or when the blockchain index isn't available,
-	// we fall back to block.Height() if it was explicitly set.
-	var height int32 = -1 // -1 indicates height is not yet determined
-	prevHash := block.MsgBlock().Header.PrevBlock
-
-	// Try to determine height from the blockchain index
-	if bc.BlockChain != nil && !prevHash.IsEqual(&chainhash.Hash{}) {
-		parentHeight, err := bc.BlockChain.BlockHeightByHash(&prevHash)
-		if err == nil {
-			height = parentHeight + 1
-		}
-	}
-
-	// Fallback: use block.Height() if it was explicitly set
+	height := bc.resolveSubsidyHeight(block)
 	if height < 0 {
-		height = block.Height()
-		if height < 0 {
-			// Cannot determine height - skip validation
-			return nil
-		}
+		return nil
 	}
 
-	// Compute transaction fees from non-coinbase transactions.
-	// If UTXO data is unavailable (historical blocks), skip the fee-inclusive check
-	// to avoid false rejections of legitimate blocks that include transaction fees.
 	maxSubsidy := config.CalcBlockSubsidy(height, bc.chainParams)
-	txs := block.Transactions()
 	totalFees, skipFeeCheck, err := bc.computeBlockFees(txs[1:], height)
 	if err != nil {
 		return err
 	}
 	if skipFeeCheck {
-		// Cannot compute fees; skip the subsidy check to avoid false positives.
 		return nil
 	}
+	return validateCoinbaseSubsidy(totalOutput, maxSubsidy, totalFees, height)
+}
 
+func (bc *BlockChain) resolveSubsidyHeight(block *btcutil.Block) int32 {
+	height, err := bc.determineBlockHeight(block)
+	if err != nil {
+		return -1
+	}
+	return height
+}
+
+func validateCoinbaseSubsidy(totalOutput, maxSubsidy, totalFees int64, height int32) error {
 	if totalOutput > maxSubsidy+totalFees {
 		return fmt.Errorf("coinbase output %d exceeds maximum block subsidy %d plus fees %d at height %d",
 			totalOutput, maxSubsidy, totalFees, height)
 	}
-
 	return nil
 }
 
@@ -578,49 +556,54 @@ func (bc *BlockChain) validateNameNewOp(txOut *wire.TxOut, extra []byte, txHash 
 	return nil
 }
 
-// validateNameFirstUpdateOp validates a NAME_FIRSTUPDATE operation.
-func (bc *BlockChain) validateNameFirstUpdateOp(txOut *wire.TxOut, name string, extra []byte, txHash chainhash.Hash, height int32, ctx *nameValidationContext) error {
-	// Validate NAME_FIRSTUPDATE output value meets dust limit
+// validateNamedTxOut checks dust rules and duplicate in-block operations for a name output.
+func validateNamedTxOut(txOut *wire.TxOut, name string, txHash chainhash.Hash, op string, ctx *nameValidationContext) error {
 	if txOut.Value < config.DustLimit {
-		return fmt.Errorf("name_firstupdate output value %d below dust limit %d in tx %s",
-			txOut.Value, config.DustLimit, txHash)
+		return fmt.Errorf("%s output value %d below dust limit %d in tx %s", op, txOut.Value, config.DustLimit, txHash)
 	}
-
-	// Check for duplicate name operation in this block
 	if ctx.seenNames[name] {
 		return fmt.Errorf("duplicate name operation in block for name: %s (tx: %s)", name, txHash)
 	}
 	ctx.seenNames[name] = true
+	return nil
+}
 
-	// Verify name doesn't already exist (or is expired)
+// validateNameFirstUpdateOp validates a NAME_FIRSTUPDATE operation.
+func (bc *BlockChain) validateNameFirstUpdateOp(txOut *wire.TxOut, name string, extra []byte, txHash chainhash.Hash, height int32, ctx *nameValidationContext) error {
+	if err := validateNamedTxOut(txOut, name, txHash, "name_firstupdate", ctx); err != nil {
+		return err
+	}
+	if err := bc.ensureNameAvailableForFirstUpdate(name, height, txHash); err != nil {
+		return err
+	}
+	return bc.validateFirstUpdateWindow(name, computeCommitHash(extra, name), height, txHash)
+}
+
+func (bc *BlockChain) ensureNameAvailableForFirstUpdate(name string, height int32, txHash chainhash.Hash) error {
 	existingRecord, err := bc.nameDB.GetName(name)
-	if err == nil {
-		// Name exists - check if it's expired
-		// Per namedb convention: ExpiresAt < currentHeight means expired
-		if existingRecord.ExpiresAt >= height {
-			return fmt.Errorf("name already exists and is not expired: %s (expires at %d, current height %d, tx: %s)",
-				name, existingRecord.ExpiresAt, height, txHash)
-		}
-		// Name exists but is expired - allow re-registration
-	} else if !errors.Is(err, namedb.ErrNameNotFound) {
-		// Unexpected DB error (e.g., corruption); fail closed to avoid masking inconsistencies
+	if errors.Is(err, namedb.ErrNameNotFound) {
+		return nil
+	}
+	if err != nil {
 		return fmt.Errorf("failed to check existing name %s: %w", name, err)
 	}
+	if existingRecord.ExpiresAt >= height {
+		return fmt.Errorf("name already exists and is not expired: %s (expires at %d, current height %d, tx: %s)",
+			name, existingRecord.ExpiresAt, height, txHash)
+	}
+	return nil
+}
 
-	// Compute the commitment hash from rand (extra), name, and chain ID
-	commitHash := computeCommitHash(extra, name)
-
-	// Verify NAME_NEW exists and MinBlocksBeforeFirstUpdate has passed
+func (bc *BlockChain) validateFirstUpdateWindow(name string, commitHash []byte, height int32, txHash chainhash.Hash) error {
 	nameNewRecord, err := bc.nameDB.GetNameNew(commitHash)
 	if err != nil {
 		return fmt.Errorf("no matching name_new found for name: %s (tx: %s)", name, txHash)
 	}
-
-	// Check that enough blocks have passed since NAME_NEW
 	if height < nameNewRecord.Height {
 		return fmt.Errorf("name_firstupdate before name_new: block %d < name_new block %d (name: '%s', tx: %s)",
 			height, nameNewRecord.Height, name, txHash)
 	}
+
 	blocksSinceNew := height - nameNewRecord.Height
 	if blocksSinceNew < config.MinBlocksBeforeFirstUpdate {
 		return fmt.Errorf("name_firstupdate too early: %d blocks since name_new, minimum %d required (name: '%s', tx: %s)",
@@ -630,23 +613,14 @@ func (bc *BlockChain) validateNameFirstUpdateOp(txOut *wire.TxOut, name string, 
 		return fmt.Errorf("name_firstupdate too late: %d blocks since name_new, maximum %d allowed (commitment expired) (name: '%s', tx: %s)",
 			blocksSinceNew, config.MaxBlocksBeforeFirstUpdate, name, txHash)
 	}
-
 	return nil
 }
 
 // validateNameUpdateOp validates a NAME_UPDATE operation.
 func (bc *BlockChain) validateNameUpdateOp(msgTx *wire.MsgTx, txOut *wire.TxOut, name string, txHash chainhash.Hash, height int32, ctx *nameValidationContext) error {
-	// Validate NAME_UPDATE output value meets dust limit
-	if txOut.Value < config.DustLimit {
-		return fmt.Errorf("name_update output value %d below dust limit %d in tx %s",
-			txOut.Value, config.DustLimit, txHash)
+	if err := validateNamedTxOut(txOut, name, txHash, "name_update", ctx); err != nil {
+		return err
 	}
-
-	// Check for duplicate name operation in this block
-	if ctx.seenNames[name] {
-		return fmt.Errorf("duplicate name operation in block for name: %s (tx: %s)", name, txHash)
-	}
-	ctx.seenNames[name] = true
 
 	// Verify name exists and not expired
 	record, err := bc.nameDB.GetName(name)

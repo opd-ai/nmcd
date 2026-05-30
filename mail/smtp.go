@@ -430,55 +430,57 @@ func (s *smtpSession) handleData() error {
 	if s.from == "" || len(s.to) == 0 {
 		return s.writeLine("503 Bad sequence of commands")
 	}
-
-	// Send intermediate response
 	if err := s.writeLine("354 Start mail input; end with <CRLF>.<CRLF>"); err != nil {
 		return err
 	}
 
-	// Read message body until "." on a line by itself
 	body, err := s.readDataBody()
 	if err != nil {
-		// If size limit exceeded during read, send 552 response.
-		// readDataBody drains the DATA payload before returning this error.
-		if errors.Is(err, errMessageSizeExceeded) {
-			s.from = ""
-			s.to = nil
-			return s.writeLine("552 Message exceeds maximum size")
-		}
-		return err
+		return s.handleDataReadError(err)
 	}
 
-	// Forward to each recipient
-	ctx := context.Background()
+	successCount, failCount, lastErr := s.forwardDataBody(context.Background(), body)
+	s.resetEnvelope()
+	return s.writeDataResult(successCount, failCount, lastErr)
+}
+
+func (s *smtpSession) handleDataReadError(err error) error {
+	if errors.Is(err, errMessageSizeExceeded) {
+		s.resetEnvelope()
+		return s.writeLine("552 Message exceeds maximum size")
+	}
+	return err
+}
+
+func (s *smtpSession) forwardDataBody(ctx context.Context, body []byte) (int, int, error) {
 	var successCount, failCount int
 	var lastErr error
-
 	for _, to := range s.to {
 		if err := s.forwardMessage(ctx, s.from, to, body); err != nil {
 			s.logger.Printf("Failed to forward to %s: %v", to, err)
 			failCount++
 			lastErr = err
-		} else {
-			successCount++
+			continue
 		}
+		successCount++
 	}
+	return successCount, failCount, lastErr
+}
 
-	// Reset for next message
+func (s *smtpSession) resetEnvelope() {
 	s.from = ""
 	s.to = nil
+}
 
-	// Return appropriate status based on results
+func (s *smtpSession) writeDataResult(successCount, failCount int, lastErr error) error {
 	if failCount == 0 {
 		return s.writeLine("250 OK: Message accepted for delivery")
-	} else if successCount == 0 {
-		// All recipients failed - log details server-side but return generic message to client
+	}
+	if successCount == 0 {
 		s.relay.logger.Printf("Failed to forward message to any recipient: %v", lastErr)
 		return s.writeLine("554 Transaction failed")
-	} else {
-		// Partial success
-		return s.writeLine(fmt.Sprintf("250 OK: Delivered to %d of %d recipients", successCount, successCount+failCount))
 	}
+	return s.writeLine(fmt.Sprintf("250 OK: Delivered to %d of %d recipients", successCount, successCount+failCount))
 }
 
 // forwardMessage resolves the .bit address and forwards the message to the upstream SMTP server.
@@ -507,73 +509,82 @@ func (s *smtpSession) forwardMessage(ctx context.Context, from, to string, body 
 // All connection and I/O operations are bounded by a timeout to prevent indefinite hangs on dead upstreams.
 func (s *smtpSession) connectUpstream() (*smtp.Client, error) {
 	addr := fmt.Sprintf("%s:%d", s.relay.config.UpstreamHost, s.relay.config.UpstreamPort)
+	tlsMode := s.resolveUpstreamTLSMode()
 
-	// Determine TLS mode (use explicit config or infer from port)
+	client, err := s.dialUpstreamClient(addr, tlsMode)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.authenticateUpstream(client, tlsMode); err != nil {
+		client.Close()
+		return nil, err
+	}
+	return client, nil
+}
+
+func (s *smtpSession) resolveUpstreamTLSMode() TLSMode {
 	tlsMode := s.relay.config.UpstreamTLS
 	if tlsMode == "" {
-		tlsMode = inferUpstreamTLSMode(s.relay.config.UpstreamPort)
+		return inferUpstreamTLSMode(s.relay.config.UpstreamPort)
 	}
+	return tlsMode
+}
 
-	var client *smtp.Client
-	var err error
-
-	// Connect with appropriate TLS mode
+func (s *smtpSession) dialUpstreamClient(addr string, tlsMode TLSMode) (*smtp.Client, error) {
 	switch tlsMode {
 	case TLSModeImplicit:
-		// Use implicit TLS (direct TLS connection)
-		tlsConfig := &tls.Config{
-			ServerName: s.relay.config.UpstreamHost,
-		}
-		dialer := &net.Dialer{Timeout: upstreamDialTimeout}
-		conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
-		if err != nil {
-			return nil, fmt.Errorf("failed to connect to upstream SMTP with implicit TLS: %w", err)
-		}
-		client, err = smtp.NewClient(conn, s.relay.config.UpstreamHost)
-		if err != nil {
-			conn.Close()
-			return nil, fmt.Errorf("failed to create SMTP client: %w", err)
-		}
-
+		return s.dialImplicitTLSClient(addr)
 	case TLSModeSTARTTLS:
-		// Connect in cleartext then upgrade with STARTTLS
-		client, err = dialSMTPWithTimeout(addr, upstreamDialTimeout)
-		if err != nil {
-			return nil, fmt.Errorf("failed to connect to upstream SMTP: %w", err)
-		}
-		tlsConfig := &tls.Config{
-			ServerName: s.relay.config.UpstreamHost,
-		}
-		if err := client.StartTLS(tlsConfig); err != nil {
-			client.Close()
-			return nil, fmt.Errorf("STARTTLS failed: %w", err)
-		}
-
+		return s.dialStartTLSClient(addr)
 	case TLSModeDisabled:
-		// Connect without TLS (insecure)
-		client, err = dialSMTPWithTimeout(addr, upstreamDialTimeout)
+		client, err := dialSMTPWithTimeout(addr, upstreamDialTimeout)
 		if err != nil {
 			return nil, fmt.Errorf("failed to connect to upstream SMTP: %w", err)
 		}
-
+		return client, nil
 	default:
 		return nil, fmt.Errorf("invalid TLS mode: %s", tlsMode)
 	}
+}
 
-	// Authenticate if credentials provided
-	// Refuse to authenticate unless the upstream connection is protected with TLS.
-	if s.relay.config.UpstreamAuth != nil {
-		if tlsMode == TLSModeDisabled {
-			client.Close()
-			return nil, fmt.Errorf("refusing to authenticate over cleartext connection (TLS mode: %s)", tlsMode)
-		}
-		if err := client.Auth(s.relay.config.UpstreamAuth); err != nil {
-			client.Close()
-			return nil, fmt.Errorf("upstream authentication failed: %w", err)
-		}
+func (s *smtpSession) dialImplicitTLSClient(addr string) (*smtp.Client, error) {
+	tlsConfig := &tls.Config{ServerName: s.relay.config.UpstreamHost}
+	dialer := &net.Dialer{Timeout: upstreamDialTimeout}
+	conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to upstream SMTP with implicit TLS: %w", err)
 	}
-
+	client, err := smtp.NewClient(conn, s.relay.config.UpstreamHost)
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to create SMTP client: %w", err)
+	}
 	return client, nil
+}
+
+func (s *smtpSession) dialStartTLSClient(addr string) (*smtp.Client, error) {
+	client, err := dialSMTPWithTimeout(addr, upstreamDialTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to upstream SMTP: %w", err)
+	}
+	if err := client.StartTLS(&tls.Config{ServerName: s.relay.config.UpstreamHost}); err != nil {
+		client.Close()
+		return nil, fmt.Errorf("STARTTLS failed: %w", err)
+	}
+	return client, nil
+}
+
+func (s *smtpSession) authenticateUpstream(client *smtp.Client, tlsMode TLSMode) error {
+	if s.relay.config.UpstreamAuth == nil {
+		return nil
+	}
+	if tlsMode == TLSModeDisabled {
+		return fmt.Errorf("refusing to authenticate over cleartext connection (TLS mode: %s)", tlsMode)
+	}
+	if err := client.Auth(s.relay.config.UpstreamAuth); err != nil {
+		return fmt.Errorf("upstream authentication failed: %w", err)
+	}
+	return nil
 }
 
 // dialSMTPWithTimeout connects to an SMTP server with a timeout.
@@ -651,46 +662,54 @@ func (s *smtpSession) readDataBody() ([]byte, error) {
 	var sizeErr error
 
 	for {
-		// Refresh per-read deadline for each line read
-		s.setReadDeadline()
-		line, err := s.reader.ReadString('\n')
+		line, err := s.readRawLine()
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
 			return nil, err
 		}
-
-		// Check for end-of-data marker (single "." on a line)
-		trimmed := strings.TrimSuffix(line, "\r\n")
-		trimmed = strings.TrimSuffix(trimmed, "\n")
-		if trimmed == "." {
+		if isDataTerminator(line) {
 			if sizeErr != nil {
 				return nil, sizeErr
 			}
 			return body, nil
 		}
-
-		// Continue draining until end marker once size exceeded.
 		if sizeErr != nil {
 			continue
 		}
 
-		// Enforce size limit before appending.
-		if int64(len(body))+int64(len(line)) > maxSize {
-			sizeErr = &messageSizeExceededError{maxSize: maxSize}
-			continue
+		body, err = appendDataLine(body, line, maxSize)
+		if err != nil {
+			sizeErr = err
 		}
-
-		// Add line to body (keep CRLF for proper email format)
-		body = append(body, []byte(line)...)
 	}
 
 	if sizeErr != nil {
 		return nil, sizeErr
 	}
-
 	return body, nil
+}
+
+func (s *smtpSession) readRawLine() (string, error) {
+	s.setReadDeadline()
+	return s.reader.ReadString('\n')
+}
+
+func isDataTerminator(line string) bool {
+	return trimLineEnding(line) == "."
+}
+
+func appendDataLine(body []byte, line string, maxSize int64) ([]byte, error) {
+	if int64(len(body))+int64(len(line)) > maxSize {
+		return body, &messageSizeExceededError{maxSize: maxSize}
+	}
+	return append(body, []byte(line)...), nil
+}
+
+func trimLineEnding(line string) string {
+	line = strings.TrimSuffix(line, "\r\n")
+	return strings.TrimSuffix(line, "\n")
 }
 
 func (s *smtpSession) setReadDeadline() {

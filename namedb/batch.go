@@ -126,34 +126,21 @@ func (bw *BatchWriter) Commit() error {
 	bw.ndb.mu.Lock()
 	defer bw.ndb.mu.Unlock()
 
-	err := bw.ndb.db.Update(func(tx *bbolt.Tx) error {
-		if err := bw.writeNames(tx); err != nil {
-			return err
-		}
-		if err := bw.deleteNames(tx); err != nil {
-			return err
-		}
-		if err := bw.writeHistory(tx); err != nil {
-			return err
-		}
-		if err := bw.writeNameNews(tx); err != nil {
-			return err
-		}
-		if err := bw.writeUTXOs(tx); err != nil {
-			return err
-		}
-		if err := bw.deleteUTXOs(tx); err != nil {
-			return err
-		}
-		return nil
-	})
-	if err != nil {
+	if err := bw.ndb.db.Update(bw.applyWrites); err != nil {
 		return fmt.Errorf("batch commit failed: %w", err)
 	}
-
 	bw.updateCache()
 	bw.clear()
+	return nil
+}
 
+// applyWrites persists all buffered operations in transaction order.
+func (bw *BatchWriter) applyWrites(tx *bbolt.Tx) error {
+	for _, write := range []func(*bbolt.Tx) error{bw.writeNames, bw.deleteNames, bw.writeHistory, bw.writeNameNews, bw.writeUTXOs, bw.deleteUTXOs} {
+		if err := write(tx); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -327,11 +314,7 @@ func (bw *BatchWriter) writeUTXOs(tx *bbolt.Tx) error {
 
 // addUTXOToAddressIndex adds a UTXO to the address index.
 func (bw *BatchWriter) addUTXOToAddressIndex(utxoAddrBucket *bbolt.Bucket, utxo *UTXO) error {
-	addrKey := make([]byte, len(utxo.Address)+32+4)
-	copy(addrKey, []byte(utxo.Address))
-	copy(addrKey[len(utxo.Address):], utxo.TxHash[:])
-	binary.BigEndian.PutUint32(addrKey[len(utxo.Address)+32:], utxo.OutIndex)
-	if err := utxoAddrBucket.Put(addrKey, []byte{1}); err != nil {
+	if err := utxoAddrBucket.Put(makeUTXOAddressKey(utxo.Address, &utxo.TxHash, utxo.OutIndex), []byte{1}); err != nil {
 		return fmt.Errorf("failed to update utxo address index: %w", err)
 	}
 	return nil
@@ -373,10 +356,7 @@ func (bw *BatchWriter) removeUTXOFromAddressIndex(utxoBucket, utxoAddrBucket *bb
 			// Propagate decode error to abort batch and surface corruption
 			return fmt.Errorf("failed to decode UTXO for address index removal: %w", err)
 		}
-		addrKey := make([]byte, len(utxo.Address)+32+4)
-		copy(addrKey, []byte(utxo.Address))
-		copy(addrKey[len(utxo.Address):], uk.txHash[:])
-		binary.BigEndian.PutUint32(addrKey[len(utxo.Address)+32:], uk.outIndex)
+		addrKey := makeUTXOAddressKey(utxo.Address, &uk.txHash, uk.outIndex)
 		if err := utxoAddrBucket.Delete(addrKey); err != nil {
 			return fmt.Errorf("remove UTXO from address index %s:%d: %w",
 				utxo.Address, uk.outIndex, err)

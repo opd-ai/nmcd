@@ -488,22 +488,7 @@ func (pm *PeerManager) relayTransaction(tx *wire.MsgTx, excludePeer *peer.Peer) 
 	inv := wire.NewMsgInv()
 	inv.AddInvVect(wire.NewInvVect(wire.InvTypeTx, &txHash))
 
-	// Snapshot the peer list under the read lock so that QueueMessage is
-	// called outside the lock. QueueMessage can block if a peer's send
-	// channel is full; holding pm.mu while blocking would prevent Stop()
-	// and handleInboundPeer from acquiring the write lock.
-	pm.mu.RLock()
-	targets := make([]*peer.Peer, 0, len(pm.peers))
-	for _, p := range pm.peers {
-		if excludePeer != nil && p == excludePeer {
-			continue
-		}
-		if p.Connected() {
-			targets = append(targets, p)
-		}
-	}
-	pm.mu.RUnlock()
-
+	targets := pm.collectConnectedPeers(excludePeer)
 	for _, targetPeer := range targets {
 		targetPeer.QueueMessage(inv, nil)
 	}
@@ -513,6 +498,21 @@ func (pm *PeerManager) relayTransaction(tx *wire.MsgTx, excludePeer *peer.Peer) 
 			"tx_hash", txHash.String(),
 			"peer_count", len(targets))
 	}
+}
+
+// collectConnectedPeers snapshots connected peers while avoiding lock-held sends.
+func (pm *PeerManager) collectConnectedPeers(excludePeer *peer.Peer) []*peer.Peer {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	targets := make([]*peer.Peer, 0, len(pm.peers))
+	for _, p := range pm.peers {
+		if p == nil || !p.Connected() || (excludePeer != nil && p == excludePeer) {
+			continue
+		}
+		targets = append(targets, p)
+	}
+	return targets
 }
 
 func (pm *PeerManager) onGetData(p *peer.Peer, msg *wire.MsgGetData) {
@@ -642,14 +642,7 @@ func (pm *PeerManager) BroadcastBlock(block *wire.MsgBlock) {
 	blockHash := block.BlockHash()
 	inv.AddInvVect(wire.NewInvVect(wire.InvTypeBlock, &blockHash))
 
-	pm.mu.RLock()
-	targets := make([]*peer.Peer, 0, len(pm.peers))
-	for _, p := range pm.peers {
-		if p != nil && p.Connected() {
-			targets = append(targets, p)
-		}
-	}
-	pm.mu.RUnlock()
+	targets := pm.collectConnectedPeers(nil)
 
 	for _, p := range targets {
 		p.QueueMessage(inv, nil)
@@ -674,14 +667,7 @@ func (pm *PeerManager) BroadcastTx(tx *wire.MsgTx) error {
 	inv := wire.NewMsgInv()
 	inv.AddInvVect(wire.NewInvVect(wire.InvTypeTx, &txHash))
 
-	pm.mu.RLock()
-	targets := make([]*peer.Peer, 0, len(pm.peers))
-	for _, p := range pm.peers {
-		if p.Connected() {
-			targets = append(targets, p)
-		}
-	}
-	pm.mu.RUnlock()
+	targets := pm.collectConnectedPeers(nil)
 
 	if len(targets) == 0 {
 		pm.logger.Warn("no peers connected, transaction not relayed",
@@ -746,14 +732,7 @@ func (pm *PeerManager) SyncBlocks() {
 	getHeadersMsg := wire.NewMsgGetHeaders()
 	getHeadersMsg.AddBlockLocatorHash(&bestHash)
 
-	pm.mu.RLock()
-	targets := make([]*peer.Peer, 0, len(pm.peers))
-	for _, p := range pm.peers {
-		if p.Connected() {
-			targets = append(targets, p)
-		}
-	}
-	pm.mu.RUnlock()
+	targets := pm.collectConnectedPeers(nil)
 
 	for _, p := range targets {
 		p.QueueMessage(getHeadersMsg, nil)

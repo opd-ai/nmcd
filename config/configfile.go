@@ -84,37 +84,32 @@ func LoadConfigFile(path string) (*FileConfig, error) {
 // This should be called after loading the file config but before applying
 // environment variables and command-line flags.
 func (c *Config) ApplyFileConfig(fc *FileConfig) {
-	// Apply RPC settings
-	if fc.RPC.User != "" {
-		c.RPCUser = fc.RPC.User
-	}
-	if fc.RPC.Password != "" {
-		c.RPCPassword = fc.RPC.Password
-	}
-	if fc.RPC.Addr != "" {
-		c.RPCAddr = fc.RPC.Addr
-	}
+	applyString(&c.RPCUser, fc.RPC.User)
+	applyString(&c.RPCPassword, fc.RPC.Password)
+	applyString(&c.RPCAddr, fc.RPC.Addr)
+	applyString(&c.Network, fc.Network.Type)
+	applyStringSlice(&c.ListenAddrs, fc.Network.Listen)
+	applyStringSlice(&c.AddPeers, fc.Network.AddPeer)
+	applyString(&c.DataDir, fc.DataDir)
+	applyString(&c.PrometheusAddr, fc.PrometheusAddr)
+	applyPositiveInt(&c.MaxPeers, fc.MaxPeers)
+}
 
-	// Apply network settings
-	if fc.Network.Type != "" {
-		c.Network = fc.Network.Type
+func applyString(dst *string, value string) {
+	if value != "" {
+		*dst = value
 	}
-	if len(fc.Network.Listen) > 0 {
-		c.ListenAddrs = fc.Network.Listen
-	}
-	if len(fc.Network.AddPeer) > 0 {
-		c.AddPeers = fc.Network.AddPeer
-	}
+}
 
-	// Apply general settings
-	if fc.DataDir != "" {
-		c.DataDir = fc.DataDir
+func applyStringSlice(dst *[]string, value []string) {
+	if len(value) > 0 {
+		*dst = value
 	}
-	if fc.PrometheusAddr != "" {
-		c.PrometheusAddr = fc.PrometheusAddr
-	}
-	if fc.MaxPeers > 0 {
-		c.MaxPeers = fc.MaxPeers
+}
+
+func applyPositiveInt(dst *int, value int) {
+	if value > 0 {
+		*dst = value
 	}
 }
 

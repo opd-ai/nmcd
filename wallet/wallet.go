@@ -578,25 +578,30 @@ func BuildNameUpdateScript(name, value string, pubKeyHash []byte) ([]byte, error
 		return nil, err
 	}
 
-	script := make([]byte, 0, 128)
-	script = append(script, opNameUpdate)
+	return buildNameScript(opNameUpdate, 128, pubKeyHash, []byte{op2Drop, opDrop},
+		scriptPush{label: "name", data: []byte(name)},
+		scriptPush{label: "value", data: []byte(value)},
+	)
+}
 
-	nameBytes, err := pushData([]byte(name))
-	if err != nil {
-		return nil, fmt.Errorf("failed to push name: %w", err)
+type scriptPush struct {
+	label string
+	data  []byte
+}
+
+// buildNameScript assembles a name script with pushed data, drop opcodes, and P2PKH suffix.
+func buildNameScript(op byte, capacity int, pubKeyHash []byte, dropOps []byte, pushes ...scriptPush) ([]byte, error) {
+	script := make([]byte, 0, capacity)
+	script = append(script, op)
+	for _, push := range pushes {
+		encoded, err := pushData(push.data)
+		if err != nil {
+			return nil, fmt.Errorf("failed to push %s: %w", push.label, err)
+		}
+		script = append(script, encoded...)
 	}
-	script = append(script, nameBytes...)
-
-	valueBytes, err := pushData([]byte(value))
-	if err != nil {
-		return nil, fmt.Errorf("failed to push value: %w", err)
-	}
-	script = append(script, valueBytes...)
-
-	script = append(script, op2Drop, opDrop)
-	script = appendP2PKHScript(script, pubKeyHash)
-
-	return script, nil
+	script = append(script, dropOps...)
+	return appendP2PKHScript(script, pubKeyHash), nil
 }
 
 // BuildNameNewScript creates a NAME_NEW output script for name pre-registration.
@@ -615,19 +620,9 @@ func BuildNameNewScript(hash, pubKeyHash []byte) ([]byte, error) {
 		return nil, fmt.Errorf("invalid pubkey hash length: %d", len(pubKeyHash))
 	}
 
-	script := make([]byte, 0, 64)
-	script = append(script, opNameNew)
-
-	hashBytes, err := pushData(hash)
-	if err != nil {
-		return nil, fmt.Errorf("failed to push hash: %w", err)
-	}
-	script = append(script, hashBytes...)
-
-	script = append(script, op2Drop)
-	script = appendP2PKHScript(script, pubKeyHash)
-
-	return script, nil
+	return buildNameScript(opNameNew, 64, pubKeyHash, []byte{op2Drop},
+		scriptPush{label: "hash", data: hash},
+	)
 }
 
 // BuildNameFirstUpdateScript creates a NAME_FIRSTUPDATE output script for completing name registration.
@@ -656,31 +651,11 @@ func BuildNameFirstUpdateScript(name, randHex, value string, pubKeyHash []byte) 
 		return nil, fmt.Errorf("invalid rand hex: %w", err)
 	}
 
-	script := make([]byte, 0, 256)
-	script = append(script, opNameFirstUpdate)
-
-	nameBytes, err := pushData([]byte(name))
-	if err != nil {
-		return nil, fmt.Errorf("failed to push name: %w", err)
-	}
-	script = append(script, nameBytes...)
-
-	randBytes2, err := pushData(randBytes) // Push decoded bytes, not hex string
-	if err != nil {
-		return nil, fmt.Errorf("failed to push rand: %w", err)
-	}
-	script = append(script, randBytes2...)
-
-	valueBytes, err := pushData([]byte(value))
-	if err != nil {
-		return nil, fmt.Errorf("failed to push value: %w", err)
-	}
-	script = append(script, valueBytes...)
-
-	script = append(script, op2Drop, op2Drop)
-	script = appendP2PKHScript(script, pubKeyHash)
-
-	return script, nil
+	return buildNameScript(opNameFirstUpdate, 256, pubKeyHash, []byte{op2Drop, op2Drop},
+		scriptPush{label: "name", data: []byte(name)},
+		scriptPush{label: "rand", data: randBytes},
+		scriptPush{label: "value", data: []byte(value)},
+	)
 }
 
 // pushData returns the script bytes to push data.

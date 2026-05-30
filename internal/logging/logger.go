@@ -86,84 +86,74 @@ func Init(cfg *Config) (*Logger, error) {
 		cfg = DefaultConfig()
 	}
 
-	// Determine the log level
-	var level slog.Level
-	switch cfg.Level {
-	case LevelDebug:
-		level = slog.LevelDebug
-	case LevelInfo:
-		level = slog.LevelInfo
-	case LevelWarn:
-		level = slog.LevelWarn
-	case LevelError:
-		level = slog.LevelError
-	default:
-		level = slog.LevelInfo
+	writer, closer, err := openLogOutput(cfg)
+	if err != nil {
+		return nil, err
 	}
 
-	// Determine the output writer
-	var writer io.Writer
-	var closer io.Closer
+	handler := newComponentHandler(cfg, writer)
+	return &Logger{
+		Logger: slog.New(handler),
+		config: cfg,
+		closer: closer,
+	}, nil
+}
 
+func resolveSlogLevel(level LogLevel) slog.Level {
+	switch level {
+	case LevelDebug:
+		return slog.LevelDebug
+	case LevelWarn:
+		return slog.LevelWarn
+	case LevelError:
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
+func openLogOutput(cfg *Config) (io.Writer, io.Closer, error) {
 	switch cfg.Output {
 	case "stdout":
-		writer = os.Stdout
+		return os.Stdout, nil, nil
 	case "stderr":
-		writer = os.Stderr
+		return os.Stderr, nil, nil
 	default:
-		// File output
-		// Note: Log rotation can be enabled in a future enhancement using external tools
-		// or a third-party library. For now, we use simple file appending.
+		return openLogFile(cfg.Output)
+	}
+}
 
-		// Create log directory if it doesn't exist
-		logDir := filepath.Dir(cfg.Output)
-		if err := os.MkdirAll(logDir, 0o700); err != nil {
-			return nil, fmt.Errorf("failed to create log directory %s: %w", logDir, err)
+func openLogFile(path string) (io.Writer, io.Closer, error) {
+	logDir := filepath.Dir(path)
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		return nil, nil, fmt.Errorf("failed to create log directory %s: %w", logDir, err)
+	}
+	if logDir != "." {
+		if err := os.Chmod(logDir, 0o700); err != nil {
+			return nil, nil, fmt.Errorf("failed to set permissions on log directory %s: %w", logDir, err)
 		}
-		if logDir != "." {
-			if err := os.Chmod(logDir, 0o700); err != nil {
-				return nil, fmt.Errorf("failed to set permissions on log directory %s: %w", logDir, err)
-			}
-		}
-
-		// Open log file
-		f, err := os.OpenFile(cfg.Output, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-		if err != nil {
-			return nil, fmt.Errorf("failed to open log file %s: %w", cfg.Output, err)
-		}
-		if err := f.Chmod(0o600); err != nil {
-			f.Close()
-			return nil, fmt.Errorf("failed to set permissions on log file %s: %w", cfg.Output, err)
-		}
-		writer = f
-		closer = f
 	}
 
-	// Create the handler based on format
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to open log file %s: %w", path, err)
+	}
+	if err := f.Chmod(0o600); err != nil {
+		f.Close()
+		return nil, nil, fmt.Errorf("failed to set permissions on log file %s: %w", path, err)
+	}
+	return f, f, nil
+}
+
+func newComponentHandler(cfg *Config, writer io.Writer) slog.Handler {
+	opts := &slog.HandlerOptions{Level: resolveSlogLevel(cfg.Level)}
 	var handler slog.Handler
-	opts := &slog.HandlerOptions{
-		Level: level,
-	}
-
 	if cfg.Format == "json" {
 		handler = slog.NewJSONHandler(writer, opts)
 	} else {
 		handler = slog.NewTextHandler(writer, opts)
 	}
-
-	// Wrap handler to add component field to all logs
-	handler = &componentHandler{
-		Handler:   handler,
-		component: cfg.Component,
-	}
-
-	logger := &Logger{
-		Logger: slog.New(handler),
-		config: cfg,
-		closer: closer,
-	}
-
-	return logger, nil
+	return &componentHandler{Handler: handler, component: cfg.Component}
 }
 
 // GetDefault returns the default global logger

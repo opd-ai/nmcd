@@ -175,57 +175,76 @@ func (sm *SyncManager) requestHeaders(p *peer.Peer) {
 func (sm *SyncManager) HandleHeaders(p *peer.Peer, msg *wire.MsgHeaders) {
 	headerCount := len(msg.Headers)
 	if headerCount == 0 {
-		if p != nil {
-			log.Printf("Received empty headers message from %s", p.Addr())
-		} else {
-			log.Printf("Received empty headers message")
-		}
+		logEmptyHeaders(p)
 		return
 	}
 
-	sm.mu.RLock()
-	blockchain := sm.blockchain
-	if blockchain == nil || p == nil {
-		sm.mu.RUnlock()
+	blockchain, headers, ok := sm.prepareHeaders(p, msg)
+	if !ok {
 		return
 	}
-	if sm.headersFirstMode {
-		if sm.syncPeer == nil {
-			sm.mu.RUnlock()
-			log.Printf("Ignoring headers from %s: no active sync peer", p.Addr())
-			return
-		}
-		if p.Addr() != sm.syncPeer.Addr() {
-			peerAddr := sm.syncPeer.Addr()
-			sm.mu.RUnlock()
-			log.Printf("Ignoring headers from non-sync peer %s (sync peer is %s)", p.Addr(), peerAddr)
-			return
-		}
-	}
-	headers := append([]*wire.BlockHeader(nil), msg.Headers...)
-	sm.mu.RUnlock()
 
 	log.Printf("Received %d headers from %s", headerCount, p.Addr())
-	for _, header := range headers {
-		blockHash := header.BlockHash()
-
-		sm.mu.RLock()
-		_, exists := sm.requestedBlocks[blockHash]
-		sm.mu.RUnlock()
-		if exists {
-			continue
-		}
-
-		if _, err := blockchain.BlockByHash(&blockHash); err == nil {
-			continue
-		}
-
-		sm.requestBlock(p, &blockHash)
-	}
-
+	sm.requestMissingHeaderBlocks(blockchain, p, headers)
 	if headerCount == wire.MaxBlockHeadersPerMsg {
 		sm.requestHeaders(p)
 	}
+}
+
+func logEmptyHeaders(p *peer.Peer) {
+	if p != nil {
+		log.Printf("Received empty headers message from %s", p.Addr())
+		return
+	}
+	log.Printf("Received empty headers message")
+}
+
+func (sm *SyncManager) prepareHeaders(p *peer.Peer, msg *wire.MsgHeaders) (*chain.BlockChain, []*wire.BlockHeader, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.blockchain == nil || p == nil {
+		return nil, nil, false
+	}
+	if !sm.acceptsHeadersFromPeer(p) {
+		return nil, nil, false
+	}
+	return sm.blockchain, append([]*wire.BlockHeader(nil), msg.Headers...), true
+}
+
+func (sm *SyncManager) acceptsHeadersFromPeer(p *peer.Peer) bool {
+	if !sm.headersFirstMode {
+		return true
+	}
+	if sm.syncPeer == nil {
+		log.Printf("Ignoring headers from %s: no active sync peer", p.Addr())
+		return false
+	}
+	if p.Addr() != sm.syncPeer.Addr() {
+		log.Printf("Ignoring headers from non-sync peer %s (sync peer is %s)", p.Addr(), sm.syncPeer.Addr())
+		return false
+	}
+	return true
+}
+
+func (sm *SyncManager) requestMissingHeaderBlocks(blockchain *chain.BlockChain, p *peer.Peer, headers []*wire.BlockHeader) {
+	for _, header := range headers {
+		blockHash := header.BlockHash()
+		if !sm.shouldRequestBlock(blockchain, &blockHash) {
+			continue
+		}
+		sm.requestBlock(p, &blockHash)
+	}
+}
+
+func (sm *SyncManager) shouldRequestBlock(blockchain *chain.BlockChain, blockHash *chainhash.Hash) bool {
+	sm.mu.RLock()
+	_, exists := sm.requestedBlocks[*blockHash]
+	sm.mu.RUnlock()
+	if exists {
+		return false
+	}
+	_, err := blockchain.BlockByHash(blockHash)
+	return err != nil
 }
 
 // requestBlock requests a full block from a peer.

@@ -264,41 +264,37 @@ func (ndb *NameDatabase) PutName(name string, record *NameRecord) error {
 			return err
 		}
 		namesBkt, expirationBkt := bkts[0], bkts[1]
-
-		// Check if name already exists to update expiration index
-		existingData := namesBkt.Get([]byte(name))
-		if existingData != nil {
-			// Remove old expiration index entry
-			existingRecord, decodeErr := decodeNameRecord(existingData)
-			if decodeErr != nil {
-				return fmt.Errorf("failed to decode existing record for %q: %w", name, decodeErr)
-			}
-			oldExpirationKey := makeExpirationKey(existingRecord.ExpiresAt, name)
-			if err := expirationBkt.Delete(oldExpirationKey); err != nil {
-				return err
-			}
-		}
-
-		// Store name record
-		data := encodeNameRecord(record)
-		if err := namesBkt.Put([]byte(name), data); err != nil {
+		if err := deleteOldExpirationIndex(namesBkt, expirationBkt, name); err != nil {
 			return err
 		}
-
-		// Add new expiration index entry
-		// Key format: height (4 bytes) + name
-		expirationKey := makeExpirationKey(record.ExpiresAt, name)
-		return expirationBkt.Put(expirationKey, []byte{1}) // Value doesn't matter
+		if err := namesBkt.Put([]byte(name), encodeNameRecord(record)); err != nil {
+			return err
+		}
+		return expirationBkt.Put(makeExpirationKey(record.ExpiresAt, name), []byte{1})
 	})
-
 	if err == nil {
-		// Ensure Name field is set before caching
-		record.Name = name
-		// Update cache with new value
-		ndb.cache.Put(name, record)
+		cacheNameRecord(ndb.cache, name, record)
 	}
-
 	return err
+}
+
+// deleteOldExpirationIndex removes an existing expiration index entry before overwriting a name.
+func deleteOldExpirationIndex(namesBkt, expirationBkt *bbolt.Bucket, name string) error {
+	existingData := namesBkt.Get([]byte(name))
+	if existingData == nil {
+		return nil
+	}
+	existingRecord, err := decodeNameRecord(existingData)
+	if err != nil {
+		return fmt.Errorf("failed to decode existing record for %q: %w", name, err)
+	}
+	return expirationBkt.Delete(makeExpirationKey(existingRecord.ExpiresAt, name))
+}
+
+// cacheNameRecord sets the record name and updates the cache after a successful write.
+func cacheNameRecord(cache *lruCache, name string, record *NameRecord) {
+	record.Name = name
+	cache.Put(name, record)
 }
 
 // makeExpirationKey creates an expiration index key from height and name.
@@ -495,50 +491,162 @@ func (ndb *NameDatabase) StoreExpiredName(record *NameRecord, expiredAtHeight in
 		expiredHistBkt, expiredHistIdxBkt := bkts[2], bkts[3]
 		histIdxBkt, histBkt := bkts[4], bkts[5]
 
-		// Build the height+name composite key used by both the name bucket and the index.
-		nameBytes := []byte(record.Name)
-		heightKey := make([]byte, 4+len(nameBytes))
-		binary.BigEndian.PutUint32(heightKey[0:4], uint32(expiredAtHeight))
-		copy(heightKey[4:], nameBytes)
-
-		// Store the name record in the expired names bucket keyed by height+name.
-		data := encodeNameRecord(record)
-		if err := expiredBkt.Put(heightKey, data); err != nil {
+		heightKey := makeHeightNameKey(expiredAtHeight, record.Name)
+		if err := expiredBkt.Put(heightKey, encodeNameRecord(record)); err != nil {
 			return err
 		}
-
-		// Add to the height index (value is a presence marker).
 		if err := idxBkt.Put(heightKey, []byte{1}); err != nil {
 			return err
 		}
-
-		// Backup the history for this name so it can be restored on reorg.
-		txHashList := histIdxBkt.Get(nameBytes)
-		if len(txHashList) > 0 {
-			// Store the tx-hash list keyed by height+name.
-			txHashListCopy := make([]byte, len(txHashList))
-			copy(txHashListCopy, txHashList)
-			if err := expiredHistIdxBkt.Put(heightKey, txHashListCopy); err != nil {
-				return err
-			}
-
-			// Store each history record keyed by txHash.
-			for i := 0; i+txHashSize <= len(txHashList); i += txHashSize {
-				txHashBytes := txHashList[i : i+txHashSize]
-				histData := histBkt.Get(txHashBytes)
-				if histData == nil {
-					continue // Missing record – skip, best-effort backup.
-				}
-				histDataCopy := make([]byte, len(histData))
-				copy(histDataCopy, histData)
-				if err := expiredHistBkt.Put(txHashBytes, histDataCopy); err != nil {
-					return err
-				}
-			}
-		}
-
-		return nil
+		return backupExpiredHistory(heightKey, []byte(record.Name), histIdxBkt, histBkt, expiredHistIdxBkt, expiredHistBkt)
 	})
+}
+
+// copyBytes clones a byte slice so bbolt-backed memory is not retained or mutated.
+func copyBytes(data []byte) []byte {
+	return append([]byte(nil), data...)
+}
+
+// makeHeightNameKey builds the composite height+name key used by reorg backup buckets.
+func makeHeightNameKey(height int32, name string) []byte {
+	key := make([]byte, 4+len(name))
+	binary.BigEndian.PutUint32(key[:4], uint32(height))
+	copy(key[4:], name)
+	return key
+}
+
+// backupExpiredHistory stores the history index and records needed to restore an expired name.
+func backupExpiredHistory(heightKey, nameKey []byte, histIdxBkt, histBkt, expiredHistIdxBkt, expiredHistBkt *bbolt.Bucket) error {
+	txHashList := histIdxBkt.Get(nameKey)
+	if len(txHashList) == 0 {
+		return nil
+	}
+	if err := expiredHistIdxBkt.Put(heightKey, copyBytes(txHashList)); err != nil {
+		return err
+	}
+	return copyHistoryRecords(txHashList, histBkt, expiredHistBkt)
+}
+
+// copyHistoryRecords copies historical name records referenced by a tx-hash list.
+func copyHistoryRecords(txHashList []byte, src, dst *bbolt.Bucket) error {
+	for i := 0; i+txHashSize <= len(txHashList); i += txHashSize {
+		txHashBytes := txHashList[i : i+txHashSize]
+		histData := src.Get(txHashBytes)
+		if histData == nil {
+			continue
+		}
+		if err := dst.Put(txHashBytes, copyBytes(histData)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// collectKeysForHeight gathers height-prefixed backup keys for a single block height.
+func collectKeysForHeight(idxBkt *bbolt.Bucket, height int32) [][]byte {
+	heightPrefix := make([]byte, 4)
+	binary.BigEndian.PutUint32(heightPrefix, uint32(height))
+
+	var heightKeys [][]byte
+	c := idxBkt.Cursor()
+	for k, _ := c.Seek(heightPrefix); k != nil && bytes.HasPrefix(k, heightPrefix); k, _ = c.Next() {
+		heightKeys = append(heightKeys, copyBytes(k))
+	}
+	return heightKeys
+}
+
+// restoreExpiredNameRecord restores an expired name record to the live buckets.
+func restoreExpiredNameRecord(heightKey []byte, expiredBkt, namesBkt, expirationBkt *bbolt.Bucket) (string, error) {
+	data := expiredBkt.Get(heightKey)
+	if data == nil {
+		return "", nil
+	}
+	name := string(heightKey[4:])
+	record, err := decodeNameRecord(data)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode expired name %s: %w", name, err)
+	}
+	if err := namesBkt.Put([]byte(name), data); err != nil {
+		return "", fmt.Errorf("failed to restore name %s: %w", name, err)
+	}
+	if err := expirationBkt.Put(makeExpirationKey(record.ExpiresAt, name), []byte{1}); err != nil {
+		return "", fmt.Errorf("failed to restore expiration index for %s: %w", name, err)
+	}
+	return name, nil
+}
+
+// restoreExpiredHistory restores the history index and records for a previously expired name.
+func restoreExpiredHistory(heightKey []byte, name string, expiredHistIdxBkt, expiredHistBkt, histIdxBkt, histBkt *bbolt.Bucket) error {
+	txHashList := expiredHistIdxBkt.Get(heightKey)
+	if len(txHashList) == 0 {
+		return nil
+	}
+	if err := histIdxBkt.Put([]byte(name), copyBytes(txHashList)); err != nil {
+		return fmt.Errorf("failed to restore history index for %s: %w", name, err)
+	}
+	if err := moveHistoryRecords(name, txHashList, expiredHistBkt, histBkt); err != nil {
+		return err
+	}
+	if err := expiredHistIdxBkt.Delete(heightKey); err != nil {
+		return fmt.Errorf("failed to delete expired history index for %s: %w", name, err)
+	}
+	return nil
+}
+
+// moveHistoryRecords copies restored history entries and removes the backup copies.
+func moveHistoryRecords(name string, txHashList []byte, src, dst *bbolt.Bucket) error {
+	for i := 0; i+txHashSize <= len(txHashList); i += txHashSize {
+		txHashBytes := txHashList[i : i+txHashSize]
+		histData := src.Get(txHashBytes)
+		if histData == nil {
+			continue
+		}
+		if err := dst.Put(txHashBytes, copyBytes(histData)); err != nil {
+			return fmt.Errorf("failed to restore history record for %s: %w", name, err)
+		}
+		if err := src.Delete(txHashBytes); err != nil {
+			return fmt.Errorf("failed to delete restored history backup for %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// deleteExpiredBackup removes expired-name backup entries after successful restoration.
+func deleteExpiredBackup(heightKey []byte, expiredBkt, idxBkt *bbolt.Bucket) error {
+	if err := expiredBkt.Delete(heightKey); err != nil {
+		return fmt.Errorf("failed to delete from expired names bucket: %w", err)
+	}
+	if err := idxBkt.Delete(heightKey); err != nil {
+		return fmt.Errorf("failed to delete from expired names index: %w", err)
+	}
+	return nil
+}
+
+// collectKeysBeforeHeight gathers backup keys older than the reorg retention threshold.
+func collectKeysBeforeHeight(idxBkt *bbolt.Bucket, keepFromHeight int32) [][]byte {
+	var keys [][]byte
+	c := idxBkt.Cursor()
+	for k, _ := c.First(); k != nil; k, _ = c.Next() {
+		if len(k) < 4 || int32(binary.BigEndian.Uint32(k[:4])) >= keepFromHeight {
+			continue
+		}
+		keys = append(keys, copyBytes(k))
+	}
+	return keys
+}
+
+// deleteExpiredHistoryBackup removes backed-up history records and index state for a name.
+func deleteExpiredHistoryBackup(heightKey []byte, expiredHistIdxBkt, expiredHistBkt *bbolt.Bucket) error {
+	txHashList := expiredHistIdxBkt.Get(heightKey)
+	for i := 0; i+txHashSize <= len(txHashList); i += txHashSize {
+		if err := expiredHistBkt.Delete(txHashList[i : i+txHashSize]); err != nil {
+			return err
+		}
+	}
+	if len(txHashList) == 0 {
+		return nil
+	}
+	return expiredHistIdxBkt.Delete(heightKey)
 }
 
 // RestoreExpiredNamesForBlock restores all names that were expired at the given height.
@@ -550,17 +658,7 @@ func (ndb *NameDatabase) RestoreExpiredNamesForBlock(height int32) error {
 	defer ndb.mu.Unlock()
 
 	return ndb.db.Update(func(tx *bbolt.Tx) error {
-		bkts, err := requireBuckets(
-			tx,
-			namesBucket,
-			expirationBucket,
-			expiredNamesBucket,
-			expiredNamesIdxBucket,
-			expiredHistBucket,
-			expiredHistIdxBucket,
-			historyBucket,
-			historyIndexBucket,
-		)
+		bkts, err := requireBuckets(tx, namesBucket, expirationBucket, expiredNamesBucket, expiredNamesIdxBucket, expiredHistBucket, expiredHistIdxBucket, historyBucket, historyIndexBucket)
 		if err != nil {
 			return err
 		}
@@ -569,87 +667,22 @@ func (ndb *NameDatabase) RestoreExpiredNamesForBlock(height int32) error {
 		expiredHistBkt, expiredHistIdxBkt := bkts[4], bkts[5]
 		histBkt, histIdxBkt := bkts[6], bkts[7]
 
-		// Find all names expired at this height using the index.
-		heightPrefix := make([]byte, 4)
-		binary.BigEndian.PutUint32(heightPrefix, uint32(height))
-
-		c := idxBkt.Cursor()
-		var heightKeys [][]byte
-
-		// Collect all height+name keys for this height.
-		for k, _ := c.Seek(heightPrefix); k != nil && bytes.HasPrefix(k, heightPrefix); k, _ = c.Next() {
-			heightKeys = append(heightKeys, append([]byte(nil), k...))
-		}
-
-		// Restore each name.
-		for _, heightKey := range heightKeys {
-			name := string(heightKey[4:])
-
-			// Get the stored expired name record (keyed by height+name).
-			data := expiredBkt.Get(heightKey)
-			if data == nil {
-				continue // Already cleaned up or never stored.
-			}
-
-			// Decode the record.
-			record, err := decodeNameRecord(data)
+		for _, heightKey := range collectKeysForHeight(idxBkt, height) {
+			name, err := restoreExpiredNameRecord(heightKey, expiredBkt, namesBkt, expirationBkt)
 			if err != nil {
-				return fmt.Errorf("failed to decode expired name %s: %w", name, err)
+				return err
 			}
-			record.Name = name
-
-			// Restore to names bucket.
-			if err := namesBkt.Put([]byte(name), data); err != nil {
-				return fmt.Errorf("failed to restore name %s: %w", name, err)
+			if name == "" {
+				continue
 			}
-
-			// Restore to expiration index.
-			expirationKey := makeExpirationKey(record.ExpiresAt, name)
-			if err := expirationBkt.Put(expirationKey, []byte{1}); err != nil {
-				return fmt.Errorf("failed to restore expiration index for %s: %w", name, err)
+			if err := restoreExpiredHistory(heightKey, name, expiredHistIdxBkt, expiredHistBkt, histIdxBkt, histBkt); err != nil {
+				return err
 			}
-
-			// Restore history: put tx-hash list back into history index and
-			// each history record back into the history bucket.
-			txHashList := expiredHistIdxBkt.Get(heightKey)
-			if len(txHashList) > 0 {
-				txHashListCopy := make([]byte, len(txHashList))
-				copy(txHashListCopy, txHashList)
-				if err := histIdxBkt.Put([]byte(name), txHashListCopy); err != nil {
-					return fmt.Errorf("failed to restore history index for %s: %w", name, err)
-				}
-				for i := 0; i+txHashSize <= len(txHashList); i += txHashSize {
-					txHashBytes := txHashList[i : i+txHashSize]
-					histData := expiredHistBkt.Get(txHashBytes)
-					if histData == nil {
-						continue // Missing backup record – skip.
-					}
-					histDataCopy := make([]byte, len(histData))
-					copy(histDataCopy, histData)
-					if err := histBkt.Put(txHashBytes, histDataCopy); err != nil {
-						return fmt.Errorf("failed to restore history record for %s: %w", name, err)
-					}
-					if err := expiredHistBkt.Delete(txHashBytes); err != nil {
-						return fmt.Errorf("failed to delete restored history backup for %s: %w", name, err)
-					}
-				}
-				if err := expiredHistIdxBkt.Delete(heightKey); err != nil {
-					return fmt.Errorf("failed to delete expired history index for %s: %w", name, err)
-				}
+			if err := deleteExpiredBackup(heightKey, expiredBkt, idxBkt); err != nil {
+				return err
 			}
-
-			// Remove backup entries.
-			if err := expiredBkt.Delete(heightKey); err != nil {
-				return fmt.Errorf("failed to delete from expired names bucket: %w", err)
-			}
-			if err := idxBkt.Delete(heightKey); err != nil {
-				return fmt.Errorf("failed to delete from expired names index: %w", err)
-			}
-
-			// Invalidate cache entry since we're restoring the name.
 			ndb.cache.Delete(name)
 		}
-
 		return nil
 	})
 }
@@ -670,45 +703,14 @@ func (ndb *NameDatabase) CleanupOldExpiredNames(keepFromHeight int32) error {
 		expiredBkt, idxBkt := bkts[0], bkts[1]
 		expiredHistBkt, expiredHistIdxBkt := bkts[2], bkts[3]
 
-		c := idxBkt.Cursor()
-		var keysToDelete [][]byte
-
-		// Scan index for entries older than keepFromHeight.
-		for k, _ := c.First(); k != nil; k, _ = c.Next() {
-			if len(k) < 4 {
-				continue // Invalid key
-			}
-
-			entryHeight := int32(binary.BigEndian.Uint32(k[:4]))
-			if entryHeight < keepFromHeight {
-				keysToDelete = append(keysToDelete, append([]byte(nil), k...))
-			}
-		}
-
-		// Delete expired names, their history backups, and all index entries.
-		for _, heightKey := range keysToDelete {
-			// Remove history backup for this height+name entry.
-			txHashList := expiredHistIdxBkt.Get(heightKey)
-			if len(txHashList) > 0 {
-				for i := 0; i+txHashSize <= len(txHashList); i += txHashSize {
-					if err := expiredHistBkt.Delete(txHashList[i : i+txHashSize]); err != nil {
-						return err
-					}
-				}
-				if err := expiredHistIdxBkt.Delete(heightKey); err != nil {
-					return err
-				}
-			}
-
-			// Remove name backup and index entry (both keyed by height+name).
-			if err := expiredBkt.Delete(heightKey); err != nil {
+		for _, heightKey := range collectKeysBeforeHeight(idxBkt, keepFromHeight) {
+			if err := deleteExpiredHistoryBackup(heightKey, expiredHistIdxBkt, expiredHistBkt); err != nil {
 				return err
 			}
-			if err := idxBkt.Delete(heightKey); err != nil {
+			if err := deleteExpiredBackup(heightKey, expiredBkt, idxBkt); err != nil {
 				return err
 			}
 		}
-
 		return nil
 	})
 }
@@ -742,47 +744,40 @@ func (ndb *NameDatabase) ListNames() ([]*NameRecord, error) {
 func (ndb *NameDatabase) ScanNames(prefix string, count int) ([]*NameRecord, error) {
 	ndb.mu.RLock()
 	defer ndb.mu.RUnlock()
-
-	// Short-circuit for count <= 0 to avoid returning any results
 	if count <= 0 {
 		return nil, nil
 	}
 
 	var results []*NameRecord
-
 	err := ndb.db.View(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket(namesBucket)
 		if bucket == nil {
 			return nil
 		}
-
-		cursor := bucket.Cursor()
 		prefixBytes := []byte(prefix)
-
+		cursor := bucket.Cursor()
 		for k, v := cursor.Seek(prefixBytes); k != nil; k, v = cursor.Next() {
-			// Check if key still has prefix
-			if !bytes.HasPrefix(k, prefixBytes) {
+			if !bytes.HasPrefix(k, prefixBytes) || len(results) >= count {
 				break
 			}
-
-			record, decodeErr := decodeNameRecord(v)
-			if decodeErr != nil {
-				log.Printf("Warning: skipping corrupted name entry in ScanNames for key %q: %v", string(k), decodeErr)
-				continue
-			}
-			record.Name = string(k)
-
-			results = append(results, record)
-
-			if len(results) >= count {
-				break
+			if record := decodeScannedName(k, v); record != nil {
+				results = append(results, record)
 			}
 		}
-
 		return nil
 	})
-
 	return results, err
+}
+
+// decodeScannedName decodes a name entry for scanning and logs corrupt records.
+func decodeScannedName(key, value []byte) *NameRecord {
+	record, err := decodeNameRecord(value)
+	if err != nil {
+		log.Printf("Warning: skipping corrupted name entry in ScanNames for key %q: %v", string(key), err)
+		return nil
+	}
+	record.Name = string(key)
+	return record
 }
 
 // AddHistory adds a historical name operation and updates the name-to-history index.
@@ -1018,52 +1013,42 @@ func truncateHistoryIndex(indexBucket, histBucket *bbolt.Bucket, name string, in
 // Encoding format (version 3): version + value + txhash + outindex + height + expiresAt + address + timestamp + namenewheight
 // Uses buffer pool to reduce allocations.
 func encodeNameRecord(record *NameRecord) []byte {
-	// Get a buffer from the pool
 	buf := getBuffer()
 	defer putBuffer(buf)
-
-	// Pre-allocate a temporary 8-byte buffer for encoding integers
-	// This avoids multiple small allocations
 	tmp := make([]byte, 8)
 
-	// Version byte
 	buf.WriteByte(byte(NameRecordVersion))
-
-	// Value length + value
-	binary.LittleEndian.PutUint32(tmp[:4], uint32(len(record.Value)))
-	buf.Write(tmp[:4])
-	buf.WriteString(record.Value)
-
-	// TxHash
+	writeRecordString(buf, tmp, record.Value)
 	buf.Write(record.TxHash[:])
+	writeRecordUint32(buf, tmp, record.OutIndex)
+	writeRecordUint32(buf, tmp, uint32(record.Height))
+	writeRecordUint32(buf, tmp, uint32(record.ExpiresAt))
+	writeRecordString(buf, tmp, record.Address)
+	writeRecordUint64(buf, tmp, uint64(record.UpdatedAt.Unix()))
+	writeRecordUint32(buf, tmp, uint32(record.NameNewHeight))
+	return copyBufferBytes(buf)
+}
 
-	// OutIndex (new in v2)
-	binary.LittleEndian.PutUint32(tmp[:4], record.OutIndex)
+// writeRecordString appends a length-prefixed string to an encoded name record.
+func writeRecordString(buf *bytes.Buffer, tmp []byte, value string) {
+	writeRecordUint32(buf, tmp, uint32(len(value)))
+	buf.WriteString(value)
+}
+
+// writeRecordUint32 appends a uint32 field to an encoded name record.
+func writeRecordUint32(buf *bytes.Buffer, tmp []byte, value uint32) {
+	binary.LittleEndian.PutUint32(tmp[:4], value)
 	buf.Write(tmp[:4])
+}
 
-	// Height
-	binary.LittleEndian.PutUint32(tmp[:4], uint32(record.Height))
-	buf.Write(tmp[:4])
-
-	// ExpiresAt
-	binary.LittleEndian.PutUint32(tmp[:4], uint32(record.ExpiresAt))
-	buf.Write(tmp[:4])
-
-	// Address length + address
-	binary.LittleEndian.PutUint32(tmp[:4], uint32(len(record.Address)))
-	buf.Write(tmp[:4])
-	buf.WriteString(record.Address)
-
-	// Timestamp
-	binary.LittleEndian.PutUint64(tmp[:8], uint64(record.UpdatedAt.Unix()))
+// writeRecordUint64 appends a uint64 field to an encoded name record.
+func writeRecordUint64(buf *bytes.Buffer, tmp []byte, value uint64) {
+	binary.LittleEndian.PutUint64(tmp[:8], value)
 	buf.Write(tmp[:8])
+}
 
-	// NameNewHeight (new in v3)
-	binary.LittleEndian.PutUint32(tmp[:4], uint32(record.NameNewHeight))
-	buf.Write(tmp[:4])
-
-	// Return a copy of the buffer's bytes
-	// We need to copy because the buffer will be returned to the pool
+// copyBufferBytes copies pooled buffer contents before the buffer is returned.
+func copyBufferBytes(buf *bytes.Buffer) []byte {
 	result := make([]byte, buf.Len())
 	copy(result, buf.Bytes())
 	return result
@@ -1074,71 +1059,92 @@ func encodeNameRecord(record *NameRecord) []byte {
 // Supports both version 2 (without NameNewHeight) and version 3 (with NameNewHeight)
 // for backward compatibility during upgrades.
 func decodeNameRecord(data []byte) (*NameRecord, error) {
-	if len(data) < 1 {
-		return nil, fmt.Errorf("corrupt record: empty data")
+	version, err := validateRecordVersion(data)
+	if err != nil {
+		return nil, err
 	}
+	record := &NameRecord{}
+	r := &recordReader{data: data, offset: 1}
+	if err := decodeNameRecordCore(r, record); err != nil {
+		return nil, err
+	}
+	record.UpdatedAt = r.readOptionalTimestamp()
+	if record.NameNewHeight, err = r.readNameNewHeight(version); err != nil {
+		return nil, err
+	}
+	return record, nil
+}
 
+// validateRecordVersion validates the serialized name record header and returns its version.
+func validateRecordVersion(data []byte) (byte, error) {
+	if len(data) < 1 {
+		return 0, fmt.Errorf("corrupt record: empty data")
+	}
 	version := data[0]
 	if version != 2 && version != 3 {
-		return nil, fmt.Errorf("unsupported record version: %d (expected 2 or 3)", version)
+		return 0, fmt.Errorf("unsupported record version: %d (expected 2 or 3)", version)
 	}
+	return version, nil
+}
 
-	r := &recordReader{data: data, offset: 1}
-	record := &NameRecord{}
-
+// decodeNameRecordCore decodes the mandatory fields shared by all name record versions.
+func decodeNameRecordCore(r *recordReader, record *NameRecord) error {
 	var err error
-	record.Value, err = r.readString("value")
-	if err != nil {
-		return nil, err
+	if record.Value, err = r.readString("value"); err != nil {
+		return err
 	}
-
 	if err := r.readFixedBytes(record.TxHash[:], 32, "txhash"); err != nil {
-		return nil, err
+		return err
 	}
-
-	record.OutIndex, err = r.readUint32("outindex")
-	if err != nil {
-		return nil, err
+	if record.OutIndex, err = r.readUint32("outindex"); err != nil {
+		return err
 	}
-
-	heightU32, err := r.readUint32("height")
-	if err != nil {
-		return nil, err
+	if record.Height, err = r.readInt32("height"); err != nil {
+		return err
 	}
-	record.Height = int32(heightU32)
-
-	expiresU32, err := r.readUint32("expires_at")
-	if err != nil {
-		return nil, err
+	if record.ExpiresAt, err = r.readInt32("expires_at"); err != nil {
+		return err
 	}
-	record.ExpiresAt = int32(expiresU32)
-
 	record.Address, err = r.readString("address")
-	if err != nil {
-		return nil, err
-	}
-
-	if r.offset+8 <= len(r.data) {
-		ts := binary.LittleEndian.Uint64(r.data[r.offset : r.offset+8])
-		record.UpdatedAt = time.Unix(int64(ts), 0)
-		r.offset += 8
-	}
-
-	if version >= 3 {
-		if r.offset+4 > len(r.data) {
-			return nil, fmt.Errorf("corrupt record: version 3 requires NameNewHeight but data is truncated")
-		}
-		record.NameNewHeight = int32(binary.LittleEndian.Uint32(r.data[r.offset : r.offset+4]))
-		r.offset += 4
-	}
-
-	return record, nil
+	return err
 }
 
 // recordReader provides sequential reading from a byte slice with bounds checking.
 type recordReader struct {
 	data   []byte
 	offset int
+}
+
+// readInt32 reads an int32 field encoded as little-endian uint32.
+func (r *recordReader) readInt32(field string) (int32, error) {
+	value, err := r.readUint32(field)
+	if err != nil {
+		return 0, err
+	}
+	return int32(value), nil
+}
+
+// readOptionalTimestamp reads an optional unix timestamp if present.
+func (r *recordReader) readOptionalTimestamp() time.Time {
+	if r.offset+8 > len(r.data) {
+		return time.Time{}
+	}
+	ts := binary.LittleEndian.Uint64(r.data[r.offset : r.offset+8])
+	r.offset += 8
+	return time.Unix(int64(ts), 0)
+}
+
+// readNameNewHeight reads the version-3 NameNewHeight field when present.
+func (r *recordReader) readNameNewHeight(version byte) (int32, error) {
+	if version < 3 {
+		return 0, nil
+	}
+	if r.offset+4 > len(r.data) {
+		return 0, fmt.Errorf("corrupt record: version 3 requires NameNewHeight but data is truncated")
+	}
+	value := int32(binary.LittleEndian.Uint32(r.data[r.offset : r.offset+4]))
+	r.offset += 4
+	return value, nil
 }
 
 // readUint32 reads a uint32 at the current offset.
