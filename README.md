@@ -101,7 +101,7 @@ When run as a standalone daemon, nmcd provides:
 - **Transaction Mempool**: Validates and relays unconfirmed transactions with automatic expiration
 - **JSON-RPC Server**: Standard library net/http for RPC interface
 - **Thread-Safe**: Mutex protection for all shared state
-- **Focused Implementation**: ~10,500 logical lines of production code (excluding tests); ~21,400 raw lines
+- **Focused Implementation**: ~10,500 logical lines (non-comment, non-blank lines in non-test Go files); ~21,400 raw lines (all lines in non-test Go files)
 
 ### Block Synchronization
 
@@ -547,19 +547,19 @@ curl -X POST http://127.0.0.1:8336 \
 Beyond the standard, name, and wallet methods above, nmcd also provides:
 
 **Blockchain Methods:**
-- `getblock` - Get block information by hash or height (verbose and raw modes)
+- `getblock` - Get block information by hash (verbose and raw modes; use `getblockhash` for height lookup)
 - `getblockhash` - Get block hash at a specified height
-- `getrawtransaction` - Get transaction data in raw format
+- `getrawtransaction` - Get transaction data in raw hex or verbose JSON (`verbose=true`)
 - `sendrawtransaction` - Broadcast a raw transaction to the network
 
 **Name Query Methods:**
-- `name_scan` - Scan names matching a pattern (similar to name_list with pattern matching)
+- `name_scan` - Scan names by prefix (`start`) with pagination (`count`, default 500)
 - `name_pending` - Get transactions pending in the mempool related to names
 
 **Utility Methods:**
 - `getbalance` - Get total balance across all wallet addresses
 - `listunspent` - List unspent transaction outputs (UTXOs) available for spending
-- `getmetrics` - Get Prometheus metrics in JSON format for monitoring and observability
+- `getmetrics` - Get internal metrics snapshot as JSON (Prometheus format is available at `/metrics`)
 
 **📚 See [docs/API.md](docs/API.md) for complete method documentation, parameters, and examples.**
 
