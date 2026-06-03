@@ -101,7 +101,7 @@ When run as a standalone daemon, nmcd provides:
 - **Transaction Mempool**: Validates and relays unconfirmed transactions with automatic expiration
 - **JSON-RPC Server**: Standard library net/http for RPC interface
 - **Thread-Safe**: Mutex protection for all shared state
-- **Focused Implementation**: ~18,000 lines of production code (excluding tests)
+- **Focused Implementation**: ~10,500 logical lines of production code (excluding tests); ~21,400 raw lines
 
 ### Block Synchronization
 
@@ -542,6 +542,27 @@ curl -X POST http://127.0.0.1:8336 \
   - Use strong passwords (12+ characters recommended)
   - Backup encrypted wallet file regularly
 
+### Additional Methods
+
+Beyond the standard, name, and wallet methods above, nmcd also provides:
+
+**Blockchain Methods:**
+- `getblock` - Get block information by hash or height (verbose and raw modes)
+- `getblockhash` - Get block hash at a specified height
+- `getrawtransaction` - Get transaction data in raw format
+- `sendrawtransaction` - Broadcast a raw transaction to the network
+
+**Name Query Methods:**
+- `name_scan` - Scan names matching a pattern (similar to name_list with pattern matching)
+- `name_pending` - Get transactions pending in the mempool related to names
+
+**Utility Methods:**
+- `getbalance` - Get total balance across all wallet addresses
+- `listunspent` - List unspent transaction outputs (UTXOs) available for spending
+- `getmetrics` - Get Prometheus metrics in JSON format for monitoring and observability
+
+**📚 See [docs/API.md](docs/API.md) for complete method documentation, parameters, and examples.**
+
 ### Health and Readiness Endpoints
 
 nmcd provides HTTP health check endpoints suitable for Kubernetes liveness and readiness probes, load balancers, and monitoring systems.
@@ -914,10 +935,10 @@ go build -o permamail ./cmd/permamail
 ### Usage
 
 ```bash
-# Register a new .bit email address
+# Register a new .bit email address (prepares config; completion requires nmcd RPC)
 permamail register alice --forward user@gmail.com
 
-# Update forwarding configuration with backup
+# Update forwarding configuration (prepares config; completion requires nmcd RPC)
 permamail update alice --forward newemail@proton.me --backup backup@proton.me
 
 # Look up current configuration
@@ -1058,17 +1079,17 @@ go tool cover -html=coverage.out -o coverage.html
 ### Test Coverage Status
 
 **Critical Packages:**
-- chain: 68.1% (core blockchain and name validation)
-- rpc: 45.8% (RPC server and methods)
-- network: 43.5% (P2P networking and mempool)
-- namedb: 87.3% ✅ (name database operations)
+- chain: 79.8% ✅ (core blockchain and name validation)
+- rpc: 81.0% ✅ (RPC server and methods)
+- network: 75.9% ✅ (P2P networking and mempool)
+- namedb: 81.9% ✅ (name database operations)
 
 **Other Packages:**
 - bridge: 100.0% ✅ (email bridge)
-- client: 82.9% ✅ (client library)
-- config: 98.6% ✅ (configuration)
+- client: 82.5% ✅ (client library)
+- config: 94.9% ✅ (configuration)
 - metrics: 83.9% ✅ (Prometheus metrics)
-- wallet: 69.7% (wallet operations)
+- wallet: 83.7% ✅ (wallet operations)
 
 **Note:** Command-line entry points (cmd/*) and integration components have lower coverage by design, as they primarily wire together well-tested components.
 
